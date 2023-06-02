@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namePrefix: ul2-
+
+commonLabels:
+  app: text-gen-ul2
+
+resources:
+  - ../../base
+
+patchesStrategicMerge:
+  - ../../base/patches/gpus/1-gpu.yaml
+  - ../../base/patches/limits/t5-xxl.yaml
+  - |-
+   apiVersion: apps/v1
+   kind: Deployment
+   metadata:
+     name: inference-server
+   spec:
+     template:
+       spec:
+         containers:
+           - name: server
+             env:
+             - name: MODEL_NAME
+               value: google/ul2
+             - name: MAX_BATCH_WEIGHT
+               value: "34543200"

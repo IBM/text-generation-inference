@@ -1,0 +1,31 @@
+# Overlay to use 2 GPUs
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference-server
+spec:
+  template:
+    spec:
+      containers:
+        - name: server
+          env:
+            - name: NUM_GPUS
+              value: "2"
+            - name: CUDA_VISIBLE_DEVICES
+              value: "0,1"
+
+          resources:
+            requests:
+              cpu: "16"
+            limits:
+              memory: 128Gi  # for now
+              nvidia.com/gpu: "2"
+              cpu: "24"
+
+          startupProbe:
+            httpGet:
+              port: http
+              path: /health
+            # Allow 20 minutes to start
+            failureThreshold: 40
+            periodSeconds: 30

@@ -1,0 +1,19 @@
+# These must be set in conjunction with an appropriate MAX_BATCH_WEIGHT value
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference-server
+spec:
+  template:
+    spec:
+      containers:
+        - name: server
+          env:
+            - name: MAX_SEQUENCE_LENGTH
+              value: "4096"
+            - name: MAX_INPUT_LENGTH
+              value: "1536"
+            - name: MAX_BATCH_SIZE
+              value: "128"
+            - name: MAX_CONCURRENT_REQUESTS
+              value: "200"

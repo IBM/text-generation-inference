@@ -1,12 +1,16 @@
 /// Single shard Client
+use std::time::Duration;
 use crate::pb::generate::v1::text_generation_service_client::TextGenerationServiceClient;
 use crate::pb::generate::v1::*;
-use crate::Result;
+use crate::{ClientError, Result};
 use tonic::transport::{Channel, Uri};
 use tracing::*;
+use crate::pb::generate::v1::model_info_response::ModelType;
+
+const PREFIX_LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Text Generation Inference gRPC client
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Client {
     stub: TextGenerationServiceClient<Channel>,
 }
@@ -68,38 +72,83 @@ impl Client {
         Ok(())
     }
 
+    /// Get shard model info
+    #[instrument(skip(self))]
+    pub async fn model_info(&mut self) -> Result<(ModelType, u32, bool)> {
+        let request = tonic::Request::new(ModelInfoRequest {});
+        let response = self.stub
+            .model_info(request)
+            .instrument(info_span!("model_info"))
+            .await?
+            .into_inner();
+        ModelType::from_i32(response.model_type)
+            .map(|mt| (mt, response.eos_token, response.batch_padding))
+            .ok_or(ClientError::Generation("Unrecognized model type".to_string()))
+    }
+
+    /// Get model health
+    #[instrument(skip(self))]
+    pub async fn health(&mut self) -> Result<HealthResponse> {
+        let request = tonic::Request::new(HealthRequest {});
+        let response = self.stub.health(request).await?.into_inner();
+        Ok(response)
+    }
+
+    /// Get shard model info
+    #[instrument(skip(self))]
+    pub async fn prefix_lookup(&mut self, prefix_id: String) -> Result<u32> {
+        let mut request = tonic::Request::new(PrefixLookupRequest {
+            prefix_id
+        });
+        request.set_timeout(PREFIX_LOOKUP_TIMEOUT);
+        let response = self.stub
+            .prefix_lookup(request)
+            .instrument(info_span!("prefix_lookup"))
+            .await?
+            .into_inner();
+        Ok(response.prefix_length)
+    }
+
     /// Generate one token for each request in the given batch
     ///
-    /// Returns a list of generated texts of request that met their stopping criteria
-    /// and the next cached batch
+    /// Returns first generated token for each request in the batch, id of the next cached batch,
+    /// and input token info if requested
     #[instrument(skip(self))]
-    pub async fn generate(&mut self, batch: Batch) -> Result<(Vec<GeneratedText>, Option<Batch>)> {
-        let request = tonic::Request::new(GenerateRequest { batch: Some(batch) });
+    pub async fn prefill(
+        &mut self, batch: Batch, to_prune: Vec<CachedBatch>,
+    ) -> Result<(Vec<Token>, Vec<InputTokens>, Vec<GenerateError>, u64)> {
+        let request = tonic::Request::new(PrefillRequest{
+            batch: Some(batch), to_prune,
+        });
         let response = self
             .stub
-            .generate(request)
+            .prefill(request)
             .instrument(info_span!("generate"))
             .await?
             .into_inner();
-        Ok((response.generated_texts, response.batch))
+        let result = response
+            .result
+            .ok_or_else(|| ClientError::Generation("Unexpected empty response".into()))?;
+        Ok((result.output_tokens, response.input_tokens, result.errors, result.batch_id))
     }
 
-    /// Generate one token for each request in the given cached batch
+    /// Generate one token for each request in the given cached batch(es)
     ///
-    /// Returns a list of generated texts of request that met their stopping criteria
-    /// and the next cached batch
+    /// Returns next generated token of each request in the batches and id of the next cached batch
     #[instrument(skip(self))]
-    pub async fn generate_with_cache(
+    pub async fn next_token(
         &mut self,
-        batches: Vec<Batch>,
-    ) -> Result<(Vec<GeneratedText>, Option<Batch>)> {
-        let request = tonic::Request::new(GenerateWithCacheRequest { batches });
+        batches: Vec<CachedBatch>,
+    ) -> Result<Option<(Vec<Token>, Vec<InputTokens>, Vec<GenerateError>, u64)>> {
+        let request = tonic::Request::new(
+            NextTokenRequest { batches }
+        );
         let response = self
             .stub
-            .generate_with_cache(request)
+            .next_token(request)
             .instrument(info_span!("generate_with_cache"))
             .await?
             .into_inner();
-        Ok((response.generated_texts, response.batch))
+        Ok(response.result.map(|r| (r.output_tokens, vec![], r.errors, r.batch_id)))
     }
 }

@@ -1,0 +1,20 @@
+# Overlay for shared memory (possibly used by NCCL)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference-server
+spec:
+  template:
+    spec:
+      containers:
+        - name: server
+
+          volumeMounts:
+            - mountPath: /shm
+              name: shm
+
+      volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Gi

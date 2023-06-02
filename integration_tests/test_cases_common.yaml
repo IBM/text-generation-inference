@@ -1,0 +1,16 @@
+# Request for _test_multi_input_seeds
+seed_test:
+  name: Multiple identical inputs with sampling
+  request:
+    params:
+      method: SAMPLE
+      sampling:
+        topK: 20
+      stopping:
+        maxNewTokens: 8
+    requests:
+      - {"text": "The same input multiple times:\n"}
+      - {"text": "The same input multiple times:\n"}
+      - {"text": "The same input multiple times:\n"}
+      - {"text": "The same input multiple times:\n"}
+      - {"text": "The same input multiple times:\n"}

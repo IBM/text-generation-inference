@@ -1,0 +1,36 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namePrefix: mpt-7b-
+
+commonLabels:
+  app: text-gen-mpt-7b
+
+resources:
+  - ../../base
+
+patchesStrategicMerge:
+  - ../../base/patches/gpus/1-gpu.yaml
+  - |-
+   apiVersion: apps/v1
+   kind: Deployment
+   metadata:
+     name: inference-server
+   spec:
+     template:
+       spec:
+         containers:
+           - name: server
+             env:
+             - name: MODEL_NAME
+               value: mosaicml/mpt-7b
+             - name: TRUST_REMOTE_CODE
+               value: "true"
+             - name: MAX_SEQUENCE_LENGTH
+               value: "2048"
+             - name: DEPLOYMENT_FRAMEWORK
+               value: "hf_transformers"
+             #- name: OUTPUT_SPECIAL_TOKENS
+             #  value: "true"
+             #- name: DTYPE_STR
+             #  value: bfloat16

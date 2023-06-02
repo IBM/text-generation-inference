@@ -2,8 +2,9 @@
 name = "text-generation-router"
 version = "0.1.0"
 edition = "2021"
-authors = ["Olivier Dehaene"]
-description = "Text Generation Webserver"
+authors = ["Olivier Dehaene", "Nick Hill"]
+description = "Text Generation Batcher"
+build="build.rs"
 
 [lib]
 path = "src/lib.rs"
@@ -13,16 +14,34 @@ name = "text-generation-router"
 path = "src/main.rs"
 
 [dependencies]
-axum = { version = "0.5.16", features = ["json", "serde_json"] }
+axum = { version = "0.6.17", features = ["json"] }
 text-generation-client = { path = "client" }
-clap = { version = "4.0.15", features = ["derive", "env"] }
-futures = "0.3.24"
-parking_lot = "0.12.1"
-serde = "1.0.145"
-serde_json = "1.0.85"
-thiserror = "1.0.37"
-tokenizers = "0.13.0"
-tokio = { version = "1.21.1", features = ["rt", "rt-multi-thread", "parking_lot", "signal", "sync"] }
-tracing = "0.1.36"
-tracing-subscriber = { version = "0.3.15", features = ["json"] }
+clap = { version = "^4.2.7", features = ["derive", "env"] }
+futures = "^0.3.28"
+moka = { version = "0.11.1", features = ["future"] }
+nohash-hasher = "^0.2.0"
+num = "^0.4.0"
+hyper = "^0.14.26" # Override to address CVE-2023-26964
+openssl = "^0.10.50" # Override to address WS-2023-0082, WS-2023-0083
+openssl-sys = "^0.9.85" # Override to address WS-2023-0082, WS-2023-0083
+parking_lot = "^0.12.1"
+rand = "^0.8.5"
+serde = "^1.0.163"
+serde_json = "^1.0.96"
+# Attempt to address WS-2023-0094
+# spin comes in via tonic->tokio-rustls->rustls->ring but this pins a specific old version 0.5.2 :(
+#spin = "=0.9.8"
+thiserror = "^1.0.40"
+tokenizers = "^0.13.3"
+tokio = { version = "^1.28.2", features = ["rt", "rt-multi-thread", "parking_lot", "signal", "sync", "fs"] }
+tracing = "^0.1.37"
+tracing-subscriber = { version = "0.3.16", features = ["json"] }
+prost = "^0.11.9"
+tonic = { version = "^0.9.2", features = ["tls"] }
+tokio-stream ="^0.1.14"
+unicode-segmentation = "^1.10.1"
+unicode-truncate = "^0.2.0"
 
+[build-dependencies]
+tonic-build = "0.9.2"
+tempfile = "^3.5.0" # Override 0.3.3 version from tonic-build/prost-build, due to RUSTSEC-2023-0018

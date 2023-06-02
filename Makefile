@@ -1,3 +1,11 @@
+SHELL := /bin/bash
+
+build:
+	DOCKER_BUILDKIT=1 docker build --progress=plain --target=server-release -t text-gen-server:0 .
+	docker images
+
+all: help
+
 install-server:
 	cd server && make install
 
@@ -19,7 +27,7 @@ run-bloom-560m:
 	text-generation-launcher --model-name bigscience/bloom-560m --num-shard 2
 
 run-bloom-560m-quantize:
-	text-generation-launcher --model-name bigscience/bloom-560m --num-shard 2 --quantize
+	text-generation-launcher --model-name bigscience/bloom-560m --num-shard 2 --dtype-str int8
 
 download-bloom:
 	text-generation-server download-weights bigscience/bloom
@@ -28,4 +36,22 @@ run-bloom:
 	text-generation-launcher --model-name bigscience/bloom --num-shard 8
 
 run-bloom-quantize:
-	text-generation-launcher --model-name bigscience/bloom --num-shard 8 --quantize
+	text-generation-launcher --model-name bigscience/bloom --num-shard 8 --dtype-str int8
+
+build-test-image:
+	DOCKER_BUILDKIT=1 docker build --progress=plain --target=cpu-tests -t cpu-tests:0 .
+
+integration-tests: build-test-image
+	mkdir -p /tmp/transformers_cache
+	docker run --rm -v /tmp/transformers_cache:/transformers_cache \
+		-e HUGGINGFACE_HUB_CACHE=/transformers_cache \
+		-e TRANSFORMERS_CACHE=/transformers_cache -w /usr/src/integration_tests cpu-tests:0 make test
+
+python-tests: build-test-image
+	mkdir -p /tmp/transformers_cache
+	docker run --rm -v /tmp/transformers_cache:/transformers_cache \
+		-e HUGGINGFACE_HUB_CACHE=/transformers_cache \
+		-e TRANSFORMERS_CACHE=/transformers_cache cpu-tests:0 pytest -sv --ignore=server/tests/test_utils.py server/tests
+
+
+.PHONY: build build-test-image integration-tests python-tests

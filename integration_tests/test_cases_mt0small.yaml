@@ -1,0 +1,1122 @@
+# Test empty requests
+- name: Empty 1
+  request: {}
+  response: {}
+- name: Empty 2
+  request:
+    params: {}
+    requests: []
+  response: {}
+
+
+# Basic Greedy (implicit)
+- name: Basic Greedy, max new tokens (implicit)
+  request:
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 20
+        inputTokenCount: 8
+        stopReason: MAX_TOKENS
+        text: 'The very long story is written by a very long story. The story is '
+
+
+# Basic Greedy (explicit)
+- name: Basic Greedy, max new tokens (explicit)
+  request:
+    params:
+      method: GREEDY
+      stopping: {"maxNewTokens": 20}
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 20
+        inputTokenCount: 8
+        stopReason: MAX_TOKENS
+        text: 'The very long story is written by a very long story. The story is '
+
+
+# Prompt prefix - encoder and decoder
+- name: Greedy with tuned prompt prefix for encoder and decoder
+  request:
+    prefixId: mt0_sentiment_both
+    params:
+      method: GREEDY
+      stopping: {"maxNewTokens": 20}
+    requests:
+      - {"text": "What a wonderful day!:\nSentiment:"}
+  response:
+    responses:
+      - generatedTokenCount: 5
+        inputTokenCount: 12
+        stopReason: EOS_TOKEN
+        text: Wonderful day.
+
+
+
+
+# Prompt prefix - encoder only
+- name: Greedy with tuned prompt prefix for encoder only
+  request:
+    prefixId: mt0_sentiment_encoder_only
+    params:
+      method: GREEDY
+      stopping: {"maxNewTokens": 20}
+    requests:
+      - {"text": "What a wonderful day!:\nSentiment:"}
+  response:
+    responses:
+      - generatedTokenCount: 2
+        inputTokenCount: 12
+        stopReason: EOS_TOKEN
+        text: positive
+
+
+# Prompt prefix - decoder only
+- name: Greedy with tuned prompt prefix for decoder only
+  request:
+    prefixId: mt0_sentiment_decoder_only
+    params:
+      method: GREEDY
+      stopping: {"maxNewTokens": 20}
+    requests:
+      - {"text": "What a wonderful day!:\nSentiment:"}
+  response:
+    responses:
+      - generatedTokenCount: 10
+        inputTokenCount: 12
+        stopReason: EOS_TOKEN
+        text: They are a wonderful day.
+
+
+# Prompt prefix returning input and generated tokens
+- name: Greedy with tuned prompt prefix and returned tokens
+  request:
+    prefixId: mt0_sentiment_both
+    params:
+      method: GREEDY
+      stopping:
+        maxNewTokens: 20
+        stopSequences:
+          - "Won't occur"
+      response:
+        inputTokens: true
+        generatedTokens: true
+        tokenLogprobs: true
+        tokenRanks: true
+        topNTokens: 2
+    requests:
+      - {"text": "What a wonderful day!:\nSentiment:"}
+  response:
+    responses:
+      - generatedTokenCount: 5
+        inputTokenCount: 12
+        inputTokens:
+          - logprob: NaN
+            text: <pad>
+          - logprob: NaN
+            text: <pad>
+          - logprob: NaN
+            text: <pad>
+          - logprob: NaN
+            text: <pad>
+          - logprob: NaN
+            text: <pad>
+          - logprob: NaN
+            text: <pad>
+          - logprob: NaN
+            text: <pad>
+          - logprob: NaN
+            text: <pad>
+          - logprob: NaN
+            text: "\u2581What"
+          - logprob: NaN
+            text: "\u2581"
+          - logprob: NaN
+            text: a
+          - logprob: NaN
+            text: "\u2581"
+          - logprob: NaN
+            text: wonderful
+          - logprob: NaN
+            text: "\u2581day"
+          - logprob: NaN
+            text: '!'
+          - logprob: NaN
+            text: ':'
+          - logprob: NaN
+            text: "\u2581Senti"
+          - logprob: NaN
+            text: ment
+          - logprob: NaN
+            text: ':'
+          - logprob: NaN
+            text: </s>
+        stopReason: EOS_TOKEN
+        text: Wonderful day.
+        tokens:
+          - logprob: -0.9899374
+            rank: 1
+            text: "\u2581"
+            topTokens:
+              - logprob: -0.9899374
+                text: "\u2581"
+              - logprob: -2.9879007
+                text: "\u2581The"
+          - logprob: -2.7959416
+            rank: 1
+            text: Wonderful
+            topTokens:
+              - logprob: -2.7959416
+                text: Wonderful
+              - logprob: -2.9358518
+                text: a
+          - logprob: -0.78635013
+            rank: 1
+            text: "\u2581day"
+            topTokens:
+              - logprob: -0.78635013
+                text: "\u2581day"
+              - logprob: -0.980791
+                text: "\u2581Day"
+          - logprob: -1.1493781
+            rank: 1
+            text: .
+            topTokens:
+              - logprob: -1.1493781
+                text: .
+              - logprob: -1.8422601
+                text: '!'
+          - logprob: -0.24549222
+            rank: 1
+            text: </s>
+            topTokens:
+              - logprob: -0.24549222
+                text: </s>
+              - logprob: -3.0699875
+                text: "\u2581"
+
+
+# Error case - invalid prefix id
+- name: Error case - invalid prefix id
+  request:
+    prefixId: invalid_prefix_id
+    params:
+      method: GREEDY
+      stopping: {"maxNewTokens": 20}
+    requests:
+      - {"text": "What a wonderful day!:\nSentiment:"}
+  error:
+    code: INVALID_ARGUMENT
+    message: "can't retrieve prompt prefix with id 'invalid_prefix_id': prefix id \"invalid_prefix_id\" not found"
+
+
+# Instruction Greedy
+- name: Instruction Greedy
+  request:
+    params:
+      stopping:
+        stopSequences:
+          - "Won't occur"
+    requests:
+      - {"text": "Translate to English: Je t’aime."}
+  response:
+    responses:
+      - generatedTokenCount: 5
+        inputTokenCount: 11
+        stopReason: EOS_TOKEN
+        text: 'I love you.'
+
+
+# Include generated tokens
+- name: Include generated tokens
+  request:
+    params:
+      method: GREEDY
+      stopping: {"maxNewTokens": 4}
+      response:
+        generatedTokens: true
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 4
+        inputTokenCount: 8
+        stopReason: MAX_TOKENS
+        text: The very long
+        tokens:
+          - text: "\u2581The"
+          - text: "\u2581"
+          - text: very
+          - text: "\u2581long"
+
+
+# Include input tokens
+- name: Include input tokens
+  request:
+    params:
+      method: GREEDY
+      stopping: {"maxNewTokens": 4}
+      response:
+        inputTokens: true
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+    - generatedTokenCount: 4
+      inputTokenCount: 8
+      inputTokens:
+        - text: "\u2581A"
+        - text: "\u2581"
+        - text: very
+        - text: "\u2581long"
+        - text: "\u2581story"
+        - text: ':'
+        - text: "\u2581"
+        - text: </s>
+      stopReason: MAX_TOKENS
+      text: The very long
+
+
+# Include input tokens with logprobs
+- name: Include input tokens with logprobs
+  request:
+    params:
+      method: GREEDY
+      stopping: {"maxNewTokens": 2}
+      response:
+        inputTokens: true
+        tokenLogprobs: true
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 2
+        inputTokenCount: 8
+        inputTokens:
+          - logprob: NaN
+            text: "\u2581A"
+          - logprob: NaN
+            text: "\u2581"
+          - logprob: NaN
+            text: very
+          - logprob: NaN
+            text: "\u2581long"
+          - logprob: NaN
+            text: "\u2581story"
+          - logprob: NaN
+            text: ':'
+          - logprob: NaN
+            text: "\u2581"
+          - logprob: NaN
+            text: </s>
+        stopReason: MAX_TOKENS
+        text: 'The '
+
+
+# Attempt unsupported parameter combo
+- name: Unsupported parameter combo
+  request:
+    params:
+      method: GREEDY
+      stopping: {"maxNewTokens": 4}
+      response:
+        tokenLogprobs: true
+    requests:
+      - {"text": "A very long story:\n"}
+  error:
+    code: INVALID_ARGUMENT
+    message: must request input and/or generated tokens to request extra token detail
+
+
+# Include logprobs
+- name: Include logprobs
+  request:
+    params:
+      method: GREEDY
+      stopping: {"maxNewTokens": 4}
+      response:
+        generatedTokens: true
+        tokenLogprobs: true
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 4
+        inputTokenCount: 8
+        stopReason: MAX_TOKENS
+        text: The very long
+        tokens:
+          - logprob: -1.4568207
+            text: "\u2581The"
+          - logprob: -1.8849949
+            text: "\u2581"
+          - logprob: -4.409372
+            text: very
+          - logprob: -0.5911009
+            text: "\u2581long"
+
+
+# Include logprobs with sampling top_k=1
+- name: Include logprobs with sampling top_k=1
+  request:
+    params:
+      method: SAMPLE
+      sampling:
+        seed: 99
+        topK: 1
+      stopping: {"maxNewTokens": 4}
+      response:
+        generatedTokens: true
+        tokenLogprobs: true
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 4
+        inputTokenCount: 8
+        seed: '99'
+        stopReason: MAX_TOKENS
+        text: The very long
+        tokens:
+          - text: "\u2581The"
+          - text: "\u2581"
+          - text: very
+          - text: "\u2581long"
+
+
+# Include ranks
+- name: Include ranks
+  request:
+    params:
+      method: SAMPLE
+      sampling:
+        seed: 33
+      stopping: {"maxNewTokens": 4}
+      response:
+        generatedTokens: true
+        tokenRanks: true
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 4
+        inputTokenCount: 8
+        seed: '33'
+        stopReason: MAX_TOKENS
+        text: 'The circus '
+        tokens:
+          - rank: 1
+            text: "\u2581The"
+          - rank: 283
+            text: "\u2581circ"
+          - rank: 1
+            text: us
+          - rank: 2
+            text: "\u2581"
+
+
+
+# Include ranks and top n
+- name: Include ranks and top n
+  request:
+    params:
+      method: SAMPLE
+      sampling:
+        seed: 33
+      stopping: {"maxNewTokens": 4}
+      response:
+        generatedTokens: true
+        tokenRanks: true
+        topNTokens: 3
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 4
+        inputTokenCount: 8
+        seed: '33'
+        stopReason: MAX_TOKENS
+        text: 'The circus '
+        tokens:
+        - rank: 1
+          text: "\u2581The"
+          topTokens:
+            - text: "\u2581"
+            - text: "\u2581The"
+            - text: "\u2581It"
+        - rank: 283
+          text: "\u2581circ"
+          topTokens:
+            - text: "\u2581"
+            - text: "\u2581story"
+            - text: "\u2581narra"
+        - rank: 1
+          text: us
+          topTokens:
+            - text: us
+            - text: ling
+            - text: adian
+        - rank: 2
+          text: "\u2581"
+          topTokens:
+            - text: "\u2581"
+            - text: "\u2581is"
+            - text: "\u2581was"
+
+
+# Include ranks and top n and logprobs
+- name: Include ranks and top n and logprobs
+  request:
+    params:
+      method: SAMPLE
+      sampling:
+        seed: 33
+      stopping: {"maxNewTokens": 4}
+      response:
+        generatedTokens: true
+        tokenRanks: true
+        tokenLogprobs: true
+        topNTokens: 3
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 4
+        inputTokenCount: 8
+        seed: '33'
+        stopReason: MAX_TOKENS
+        text: 'The circus '
+        tokens:
+          - logprob: -1.4568206
+            rank: 1
+            text: "\u2581The"
+            topTokens:
+              - logprob: -1.4568206
+                text: "\u2581The"
+              - logprob: -2.1679888
+                text: "\u2581"
+              - logprob: -2.5919237
+                text: "\u2581It"
+          - logprob: -7.861493
+            rank: 283
+            text: "\u2581circ"
+            topTokens:
+              - logprob: -1.8849936
+                text: "\u2581"
+              - logprob: -2.5441146
+                text: "\u2581story"
+              - logprob: -3.421887
+                text: "\u2581narra"
+          - logprob: -0.4958791
+            rank: 1
+            text: us
+            topTokens:
+              - logprob: -0.4958791
+                text: us
+              - logprob: -1.2825785
+                text: adian
+              - logprob: -2.8999472
+                text: ling
+          - logprob: -1.9879448
+            rank: 2
+            text: "\u2581"
+            topTokens:
+              - logprob: -1.4662254
+                text: "\u2581is"
+              - logprob: -1.9879448
+                text: "\u2581"
+              - logprob: -2.4041417
+                text: "\u2581was"
+
+
+# Include ranks and top n and logprobs and input tokens, with top_k < top_n
+- name: Include ranks and top n and logprobs and input tokens, with top_k < top_n
+  request:
+    params:
+      method: SAMPLE
+      sampling:
+        seed: 33
+        top_k: 1
+      stopping: {"maxNewTokens": 4}
+      response:
+        generatedTokens: true
+        inputTokens: true
+        tokenRanks: true
+        tokenLogprobs: true
+        topNTokens: 2
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 4
+        inputTokenCount: 8
+        inputTokens:
+          - logprob: NaN
+            text: "\u2581A"
+          - logprob: NaN
+            text: "\u2581"
+          - logprob: NaN
+            text: very
+          - logprob: NaN
+            text: "\u2581long"
+          - logprob: NaN
+            text: "\u2581story"
+          - logprob: NaN
+            text: ':'
+          - logprob: NaN
+            text: "\u2581"
+          - logprob: NaN
+            text: </s>
+        seed: '33'
+        stopReason: MAX_TOKENS
+        text: The very long
+        tokens:
+          - rank: 1
+            text: "\u2581The"
+            topTokens:
+              - text: "\u2581The"
+          - rank: 1
+            text: "\u2581"
+            topTokens:
+              - text: "\u2581"
+          - rank: 1
+            text: very
+            topTokens:
+              - text: very
+          - rank: 1
+            text: "\u2581long"
+            topTokens:
+              - text: "\u2581long"
+
+
+# Multiple inputs with token info
+- name: Multiple inputs with token info
+  request:
+    params:
+      method: GREEDY
+      stopping: {"maxNewTokens": 2}
+      response:
+        generatedTokens: true
+        tokenLogprobs: true
+        topNTokens: 2
+    requests:
+      - {"text": "A very long story:\n"}
+      - {"text": "Test"}
+  response:
+    responses:
+      - generatedTokenCount: 2
+        inputTokenCount: 8
+        stopReason: MAX_TOKENS
+        text: 'The '
+        tokens:
+          - logprob: -1.4568204
+            text: "\u2581The"
+            topTokens:
+              - logprob: -1.4568204
+                text: "\u2581The"
+              - logprob: -2.1679869
+                text: "\u2581"
+          - logprob: -1.8849944
+            text: "\u2581"
+            topTokens:
+              - logprob: -1.8849944
+                text: "\u2581"
+              - logprob: -2.544114
+                text: "\u2581story"
+      - generatedTokenCount: 2
+        inputTokenCount: 2
+        stopReason: MAX_TOKENS
+        text: a
+        tokens:
+          - logprob: -1.5735334
+            text: "\u2581"
+            topTokens:
+              - logprob: -1.5735334
+                text: "\u2581"
+              - logprob: -3.1347408
+                text: "\u2581The"
+          - logprob: -3.2606153
+            text: a
+            topTokens:
+              - logprob: -3.2606153
+                text: a
+              - logprob: -4.4444776
+                text: They
+
+
+# Emojis
+- name: Emojis
+  request:
+    requests:
+      - {"text": "Convert movie titles into emoji.\n\nBack to the Future:
+      👨👴🚗🕒 \nBatman: 🤵🦇 \nTransformers: 🚗🤖 \nStar Wars:"}
+  response:
+    responses:
+      - generatedTokenCount: 7
+        inputTokenCount: 33
+        stopReason: EOS_TOKEN
+        text: "Transformers: 🎬🎭"
+
+# Emoji and stop seqs
+- name: Emojis and stop seq
+  request:
+    params:
+      response:
+        inputText: true
+      stopping:
+        stop_sequences:
+          - "zz"
+          - "much longer stop sequence here"
+          - "one with an emoji 🤵🤵"
+          - "🤵🤵"
+          - "🎭"
+    requests:
+      - {"text": "Convert movie titles into emoji.\n\nBack to the Future:
+      👨👴🚗🕒 \nBatman: 🤵🦇 \nTransformers: 🚗🤖 \nStar Wars:"}
+  response:
+    responses:
+      - generatedTokenCount: 6
+        inputTokenCount: 33
+        stopReason: STOP_SEQUENCE
+        text: "Convert movie titles into emoji.\n\nBack to the Future:
+        👨👴🚗🕒 \nBatman: 🤵🦇 \nTransformers: 🚗🤖 \nStar Wars:\n\nTransformers: 🎬🎭"
+
+# Single token input
+- name: Single token input
+  request:
+    params:
+      stopping: {"maxNewTokens": 1}
+    requests:
+      - {"text": "Test"}
+  response:
+    responses:
+      - generatedTokenCount: 1
+        inputTokenCount: 2
+        stopReason: MAX_TOKENS
+#        text: ""   # This ends up as just BOS token => nothing I think .. TBD we should probably exclude from the token count
+
+
+# EOS Token
+- name: EOS Token
+  request:
+    params:
+      stopping: {"maxNewTokens": 20}
+    requests:
+      - {"text": "The capital of France is"}
+  response:
+    responses:
+      - generatedTokenCount: 2
+        inputTokenCount: 6
+        stopReason: EOS_TOKEN
+        text: 'France'
+
+
+# Min new tokens
+- name: Min new tokens = 20
+  request:
+    params:
+      stopping:
+        maxNewTokens: 30
+        minNewTokens: 20
+    requests:
+      - {"text": "The capital of France is"}
+  response:
+    responses:
+      - generatedTokenCount: 21
+        inputTokenCount: 6
+        stopReason: EOS_TOKEN
+        text: "France (France) is a french capital of France. It is the capital of France."
+
+
+  # Max new tokens
+- name: Max new tokens = 1
+  request:
+    params:
+      stopping: {"maxNewTokens": 1}
+    requests:
+      - {"text": "There once was a"}
+  response:
+    responses:
+      - generatedTokenCount: 1
+        inputTokenCount: 7
+        stopReason: MAX_TOKENS
+        text: "The"
+
+
+# Sampling top_k no seed
+- name: Sampling top_k = 10 - no seed
+  skip_check: true  # don't check output since it will be random
+  request:
+    params:
+      method: "SAMPLE"
+      sampling:
+        top_k: 10
+      stopping:
+        maxNewTokens: 6
+    requests:
+      - {"text": "I imagine that"}
+  response:
+    responses:
+      - inputTokenCount: 4
+
+# Sampling top_k
+- name: Sampling top_k = 10
+  request:
+    params:
+      method: "SAMPLE"
+      sampling:
+        seed: 11
+        top_k: 10
+      stopping:
+        maxNewTokens: 6
+    requests:
+      - {"text": "I imagine that"}
+  response:
+    responses:
+      - generatedTokenCount: 6
+        inputTokenCount: 4
+        seed: '11'
+        stopReason: MAX_TOKENS
+        text: I would like that for
+
+
+# Sampling top_p
+- name: Sampling top_p = 0.7
+  request:
+    params:
+      method: "SAMPLE"
+      sampling:
+        seed: 55
+        top_p: 0.7
+      stopping:
+        maxNewTokens: 6
+    requests:
+      - {"text": "I imagine that"}
+  response:
+    responses:
+      - generatedTokenCount: 6
+        inputTokenCount: 4
+        seed: '55'
+        stopReason: MAX_TOKENS
+        text: There are many different ways
+
+
+# Sampling
+- name: Sampling top_p = 0.7, temp = 0.5
+  request:
+    params:
+      method: "SAMPLE"
+      sampling:
+        seed: 55
+        top_p: 0.7
+        temperature: 0.5
+      stopping:
+        maxNewTokens: 6
+    requests:
+      - {"text": "I imagine that"}
+  response:
+    responses:
+      - generatedTokenCount: 6
+        inputTokenCount: 4
+        seed: '55'
+        stopReason: MAX_TOKENS
+        text: I think I would like
+
+# Don't include input
+- name: Don't include input
+  request:
+    params:
+      response:
+        inputText: false
+      stopping:
+        maxNewTokens: 4
+    requests:
+      - {"text": "Hello there"}
+  response:
+    responses:
+      - generatedTokenCount: 4
+        inputTokenCount: 3
+        stopReason: MAX_TOKENS
+        text: 'They are '
+
+# Include input
+- name: Include Input
+  request:
+    params:
+      response:
+        inputText: true
+      stopping:
+        maxNewTokens: 4
+    requests:
+      - {"text": "Hello there"}
+  response:
+    responses:
+      - generatedTokenCount: 4
+        inputTokenCount: 3
+        stopReason: MAX_TOKENS
+        text: "Hello there\n\nThey are "
+
+
+# Stop sequence
+- name: Stop sequence 1
+  request:
+    params:
+      stopping:
+        maxNewTokens: 20
+        stopSequences:
+          - "written"
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 8
+        inputTokenCount: 8
+        stopReason: STOP_SEQUENCE
+        text: 'The very long story is written'
+
+- name: Stop sequence 2
+  request:
+    params:
+      stopping:
+        maxNewTokens: 20
+        stopSequences:
+          - "not this one"
+          - "."
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 16
+        inputTokenCount: 8
+        stopReason: STOP_SEQUENCE
+        text: 'The very long story is written by a very long story.'
+
+# Repetition penalty
+- name: Repetition penalty
+  request:
+    params:
+      decoding:
+        repetitionPenalty: 2.5
+      stopping:
+        maxNewTokens: 20
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 13
+        inputTokenCount: 8
+        stopReason: EOS_TOKEN
+        text: 'The very long story is about the past two years.'
+
+
+# Length penalty
+- name: Length penalty
+  request:
+    params:
+      decoding:
+        repetition_penalty: 2.5
+        length_penalty:
+          start_index: 3
+          decay_factor: 4.0
+      stopping:
+        maxNewTokens: 20
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 7
+        inputTokenCount: 8
+        stopReason: EOS_TOKEN
+        text: The very long story is
+
+
+
+# Multiple inputs
+- name: Multiple inputs
+  request:
+    params:
+      method: GREEDY
+      stopping: {"maxNewTokens": 8}
+    requests:
+      - {"text": "A very long story:\n"}
+      - {"text": "Test"}
+      - {"text": "One plus one is"}
+      - {"text": "Somewhere,\nover the rainbow,\nthere is"}
+  response:
+    responses:
+      - generatedTokenCount: 8
+        inputTokenCount: 8
+        stopReason: MAX_TOKENS
+        text: 'The very long story is written'
+      - generatedTokenCount: 7
+        inputTokenCount: 2
+        stopReason: EOS_TOKEN
+        text: 'a few weeks'
+      - generatedTokenCount: 2
+        inputTokenCount: 5
+        stopReason: EOS_TOKEN
+        text: 'One'
+      - generatedTokenCount: 5
+        inputTokenCount: 11
+        stopReason: EOS_TOKEN
+        text: 'a rainbow'
+
+# Multiple inputs
+- name: Multiple inputs with stop sequence
+  request:
+    params:
+      method: SAMPLE
+      sampling:
+        seed: 22
+        topK: 2
+      stopping:
+        maxNewTokens: 10
+        stopSequences: ["is ", "ant"]
+    requests:
+      - {"text": "A very long story:\n"}
+      - {"text": "Test"}
+      - {"text": "One plus one is"}
+      - {"text": "Somewhere,\nover the rainbow,\nthere is"}
+  response:
+    responses:
+    - generatedTokenCount: 7
+      inputTokenCount: 8
+      seed: '22'
+      stopReason: STOP_SEQUENCE
+      text: 'The very long story is '
+    - generatedTokenCount: 3
+      inputTokenCount: 2
+      seed: '22'
+      stopReason: STOP_SEQUENCE
+      text: The Giant
+    - generatedTokenCount: 10
+      inputTokenCount: 5
+      seed: '22'
+      stopReason: MAX_TOKENS
+      text: One of the largest cities in the world
+    - generatedTokenCount: 4
+      inputTokenCount: 11
+      seed: '22'
+      stopReason: EOS_TOKEN
+      text: The rainbow
+
+## TODO move to separate test
+
+## Immediate timeout
+#- name: Immediate timeout
+#  request:
+#    params:
+#      stopping:
+#        minNewTokens: 10
+#        maxNewTokens: 30
+#        timeLimitMillis: 20
+#    requests:
+#      - {"text": "A very long story:\n"}
+#  response:
+#    responses:
+#      - generatedTokenCount: 1
+#        inputTokenCount: 8
+#        stopReason: TIME_LIMIT
+#        text: 'The'
+
+# Error case
+- name: Token max < min
+  request:
+    params:
+      stopping:
+        minNewTokens: 20
+        maxNewTokens: 10
+    requests:
+      - {"text": "A very long story:\n"}
+  error:
+    code: INVALID_ARGUMENT
+    message: min_new_tokens must be <= max_new_tokens
+
+# Error case
+- name: Token max > 169 limit
+  request:
+    params:
+      stopping:
+        maxNewTokens: 170
+    requests:
+      - {"text": "A very long story:\n"}
+  error:
+    code: INVALID_ARGUMENT
+    message: max_new_tokens must be <= 169
+
+# Empty stop seq
+- name: Empty stop seq
+  request:
+    params:
+      stopping:
+        maxNewTokens: 30
+        stopSequences:
+          - "empty not allowed"
+          - ""
+    requests:
+      - {"text": "A very long story:\n"}
+  error:
+    code: INVALID_ARGUMENT
+    message: can specify at most 6 non-empty stop sequences, each not more than 40 tokens
+
+
+# Long input with input tokens truncated
+- name: Long input with input tokens truncated
+  request:
+    params:
+      truncateInputTokens: 50
+      stopping:
+        maxNewTokens: 10
+      response:
+        inputText: true
+    requests:
+      - text: >
+          The hallway smelt of boiled cabbage and old rag mats. At one end of it a coloured poster, too large for
+          indoor display, had been tacked to the wall. It depicted simply an enormous face, more than a metre wide:
+          the face of a man of about forty-five, with a heavy black moustache and ruggedly handsome features.
+          Winston made for the stairs. It was no use trying the lift. Even at the best of times it was seldom working,
+          and at present the electric current was cut off during daylight hours. It was part of the economy drive in
+          preparation for Hate Week. The flat was seven flights up, and Winston, who was thirty-nine and had a
+          varicose ulcer above his right ankle, went slowly, resting several times on the way. On each landing,
+          opposite the lift-shaft, the poster with the enormous face gazed from the wall.
+          The hallway smelt of boiled cabbage and old rag mats. At one end of it a coloured poster, too large for
+          indoor display, had been tacked to the wall. It depicted simply an enormous face, more than a metre wide:
+          the face of a man of about forty-five, with a heavy black moustache and ruggedly handsome features.
+          Winston made for the stairs. It was no use trying the lift. Even at the best of times it was seldom working,
+          and at present the electric current was cut off during daylight hours. It was part of the economy drive in
+          preparation for Hate Week. The flat was seven flights up, and Winston, who was thirty-nine and had a
+          varicose ulcer above his right ankle, went slowly, resting several times on the way. On each landing,
+          opposite the lift-shaft, the poster with the enormous face gazed from the wall.
+  response:
+    responses:
+      - generatedTokenCount: 8
+        inputTokenCount: 50
+        stopReason: EOS_TOKEN
+        text: 'The hallway smelt of boiled cabbage and old rag mats. At one end of it a
+          coloured poster, too large for indoor display, had been tacked to the wall. It
+          depicted simply an enormous face, more than a metre wide: the face of a man of
+          about forty-five, with a heavy black moustache and ruggedly handsome features.
+          Winston made for the stairs. It was no use trying the lift. Even at the best of
+          times it was seldom working, and at present the electric current was cut off during
+          daylight hours. It was part of the economy drive in preparation for Hate Week.
+          The flat was seven flights up, and Winston, who was thirty-nine and had a varicose
+          ulcer above his right ankle, went slowly, resting several times on the way. On
+          each landing, opposite the lift-shaft, the poster with the enormous face gazed
+          from the wall. The hallway smelt of boiled cabbage and old rag mats. At one end
+          of it a coloured poster, too large for indoor display, had been tacked to the
+          wall. It depicted simply an enormous face, more than a metre wide: the face of
+          a man of about forty-five, with a heavy black moustache and ruggedly handsome
+          features. Winston made for the stairs. It was no use trying the lift. Even at
+          the best of times it was seldom working, and at present the electric current was
+          cut off during daylight hours. It was part of the economy drive in preparation
+          for Hate Week. The flat was seven flights up, and Winston, who was thirty-nine
+          and had a varicose ulcer above his right ankle, went slowly, resting several times
+          on the way. On each landing, opposite the lift-shaft, the poster with the enormous
+          face gazed from the wall.
+
+
+
+          ulcer above his right ankle'

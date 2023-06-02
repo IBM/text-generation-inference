@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference-server
+  labels:
+    component: text-gen-inference-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inference-server
+      component: text-gen-inference-server
+  template:
+    metadata:
+      labels:
+        app: inference-server
+        component: text-gen-inference-server
+    spec:
+      containers:
+        # For now we'll run in a single container, could later possibly run batcher in separate container
+        - name: server
+          image: text-gen-server
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop:
+                - ALL
+
+          ports:
+            # Used for health probe
+            - name: http
+              containerPort: 3000
+            - name: grpc
+              containerPort: 8033
+
+          env:
+            - name: DTYPE_STR
+              value: float16
+            - name: MAX_SEQUENCE_LENGTH
+              value: "2048"
+            - name: MAX_BATCH_SIZE
+              value: "12"
+            - name: MAX_CONCURRENT_REQUESTS
+              value: "64"
+
+          resources:
+            requests:
+              cpu: "4"
+            limits:
+              memory: 512Gi  # for now
+              nvidia.com/gpu: "8"
+              cpu: "16"
+
+          startupProbe:
+            httpGet:
+              port: http
+              path: /health
+            # Allow up to 60 minutes to start
+            failureThreshold: 120
+            periodSeconds: 30
+
+          readinessProbe:
+            httpGet:
+              port: http
+              path: /health
+            periodSeconds: 30
+            timeoutSeconds: 5
+
+          livenessProbe:
+            httpGet:
+              port: http
+              path: /health
+            periodSeconds: 100
+            timeoutSeconds: 8
+
+      terminationGracePeriodSeconds: 120
+
+  strategy:
+    rollingUpdate:
+      maxSurge: 1

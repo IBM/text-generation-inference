@@ -1,0 +1,36 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namePrefix: bloomchat-v1-
+
+commonLabels:
+  app: text-gen-bloomchat-v1
+
+resources:
+  - ../../base
+
+patchesStrategicMerge:
+  - ../../base/patches/gpus/8-gpu.yaml
+  - ../../base/patches/shm.yaml
+  - |-
+   apiVersion: apps/v1
+   kind: Deployment
+   metadata:
+     name: inference-server
+   spec:
+     replicas: 1
+     template:
+       spec:
+         containers:
+           - name: server
+             env:
+             - name: MODEL_NAME
+               value: sambanovasystems/BLOOMChat-176B-v1
+             - name: DEPLOYMENT_FRAMEWORK
+               value: hf_custom_tp
+             - name: DTYPE_STR
+               value: float16
+             - name: MAX_BATCH_SIZE
+               value: "5"
+             - name: MAX_CONCURRENT_REQUESTS
+               value: "32"

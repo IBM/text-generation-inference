@@ -1,94 +1,55 @@
-# Text Generation Inference
+## Text Generation Inference Server
 
-<div align="center">
+This repo is an early fork of https://github.com/huggingface/text-generation-inference.
 
-![architecture](assets/architecture.jpg)
+It was developed internally in IBM and diverged somewhat from the original repo, but we have tried to keep aligned as much as possible - pulling in relevant upstream changes and contributing features/improvements back. This is an ongoing process and there's a backlog in both directions which we hope to work through quickly.
 
-</div>
+It's not clear yet whether/when we will be able to reconcile the repos completely because goals/priorities of the projects may differ in some cases. Decisions related to design or implementation approaches are also sometimes different.
 
-A Rust and gRPC server for text generation inference. Used in production at [HuggingFace](https://huggingface.co) 
-to power Bloom, BloomZ and MT0-XXL api-inference widgets.
+Some features here are similar/equivalent to those in the upstream repo but are implemented differently. This is generally because we had implemented them first internally, and they were subsequently implemented independently in the upstream repo before we had had a chance to contribute back that feature. One example of this is response streaming. In some other cases we had opened PRs against the upstream repo but the maintainers decided to reimplement in another way.
 
-## Features
+Some upstream changes were intentionally not pulled in because they weren't required for our current usage, for example LLaMA model support. Others we have just not caught up with and ported back yet.
 
-- [Dynamic batching of incoming requests](https://github.com/huggingface/text-generation-inference/blob/main/router/src/batcher.rs#L88) for increased total throughput
-- Quantization with [bitsandbytes](https://github.com/TimDettmers/bitsandbytes)
-- [Safetensors](https://github.com/huggingface/safetensors) weight loading
-- 45ms per token generation for BLOOM with 8xA100 80GB
+---
 
-## Officially supported models
+### Some of the differences in this repo
+- gRPC front-end interface instead of REST, different arrangement of API parameters
+- Support for batch inputs in the API
+- Tokenization API
+- More comprehensive CI tests (excluding flash attention impls)
+- Configurable inference engine abstraction
+- UBI based container image
 
-- [BLOOM](https://huggingface.co/bigscience/bloom)
-- [BLOOMZ](https://huggingface.co/bigscience/bloomz)
-- [MT0-XXL](https://huggingface.co/bigscience/mt0-xxl)
 
-Other models are supported on a best effort basis using:
+### Some of the changes we're contributing back or plan to contribute back soon
+- Dynamic batch sizing (upstream [PR](https://github.com/huggingface/text-generation-inference/pull/210))
+- Detokenization and stopping evaluation done on rust side (upstream [PR](https://github.com/huggingface/text-generation-inference/pull/138))
+  - Includes parity of streaming and non-streaming output
+- More granular "extra token details" options
+- "top n" candidate token output option
+- Return token ranks in addition to logprobs
+- Length penalty, min new tokens parameters
+- Optimum integration (for Onnx Runtime and BetterTransformer)
+- Support for tuned prompts, as trained via the PEFT library (not for flash or sharded impls yet)
 
-`AutoModelForCausalLM.from_pretrained(<model>, device_map="auto")`
 
-or
+---
 
-`AutoModelForSeq2SeqLM.from_pretrained(<model>, device_map="auto")`
-
-## Load Tests for BLOOM
-
-See `k6/load_test.js`
-
-|                                                              | avg       | min          | med       | max        | p(90)     | p(95)     | RPS      |
-|--------------------------------------------------------------|-----------|--------------|-----------|------------|-----------|-----------|----------|
-| [Original code](https://github.com/huggingface/transformers_bloom_parallel) | 8.9s      | 1s           | 9.12s     | 16.69s     | 13.7s     | 14.26s    | 5.9      |
-| New batching logic                                           | **5.44s** | **959.53ms** | **5.28s** | **13.12s** | **7.78s** | **8.92s** | **9.08** |
-
-## Install
+### Run the integration tests
 
 ```shell
-make install
+make integration-tests
 ```
 
-## Run 
-
-### BLOOM 560-m
+### Build the final container image
 
 ```shell
-make run-bloom-560m
+make build
 ```
 
-### BLOOM
-
-First you need to download the weights:
+### Deploy model in Kubernetes/OpenShift
 
 ```shell
-make download-bloom
+cd deployment
+./deploy_model.sh <model-subdir-name>
 ```
-
-```shell
-make run-bloom # Requires 8xA100 80GB
-```
-
-You can also quantize the weights with bitsandbytes to reduce the VRAM requirement:
-
-```shell
-make run-bloom-quantize # Requires 8xA100 40GB
-```
-
-## Test
-
-```shell
-curl 127.0.0.1:3000/generate \
-    -v \
-    -X POST \
-    -d '{"inputs":"Testing API","parameters":{"max_new_tokens":9}}' \
-    -H 'Content-Type: application/json'
-```
-
-## Develop
-
-```shell
-make server-dev
-make router-dev
-```
-
-## TODO:
-
-- [ ] Add tests for the `server/model` logic
-- [ ] Backport custom CUDA kernels to Transformers

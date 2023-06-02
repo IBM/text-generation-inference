@@ -1,0 +1,31 @@
+# Overlay to use 1 GPU
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference-server
+spec:
+  template:
+    spec:
+      containers:
+        - name: server
+          env:
+            - name: NUM_GPUS
+              value: "1"
+            - name: CUDA_VISIBLE_DEVICES
+              value: "0"
+
+          resources:
+            requests:
+              cpu: "8"
+            limits:
+              memory: 128Gi  # for now
+              nvidia.com/gpu: "1"
+              cpu: "16"
+
+          startupProbe:
+            httpGet:
+              port: http
+              path: /health
+            # Allow 12 minutes to start
+            failureThreshold: 24
+            periodSeconds: 30

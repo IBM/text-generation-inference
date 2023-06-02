@@ -1,0 +1,23 @@
+# Overlay to use 8 GPUs
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference-server
+spec:
+  template:
+    spec:
+      containers:
+        - name: server
+          env:
+            - name: NUM_GPUS
+              value: "8"
+            - name: CUDA_VISIBLE_DEVICES
+              value: "0,1,2,3,4,5,6,7"
+
+          resources:
+            requests:
+              cpu: "64"
+            limits:
+              memory: 512Gi  # for now
+              nvidia.com/gpu: "8"
+              cpu: "64"

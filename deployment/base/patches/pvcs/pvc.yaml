@@ -1,0 +1,26 @@
+# Overlay for the models-pvc PVC
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference-server
+spec:
+  template:
+    spec:
+      containers:
+        - name: server
+
+          env:
+            - name: TRANSFORMERS_CACHE
+              value: /shared_model_storage/transformers_cache
+            - name: HUGGINGFACE_HUB_CACHE
+              value: $(TRANSFORMERS_CACHE)
+
+          volumeMounts:
+            - mountPath: /shared_model_storage
+              name: models-pvc
+              readOnly: true
+
+      volumes:
+        - name: models-pvc
+          persistentVolumeClaim:
+            claimName: models-pvc

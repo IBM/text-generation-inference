@@ -6,7 +6,12 @@ mod pb;
 mod sharded_client;
 
 pub use client::Client;
-pub use pb::generate::v1::{Batch, GeneratedText, LogitsWarperParameters, Request};
+pub use pb::generate::v1::{
+    Batch, Token, InputTokens, NextTokenChooserParameters, RequestedDetails,
+    Request, StopSequence, CachedBatch, RequestsStatus, GenerateError,
+    HealthResponse,
+};
+pub use pb::generate::v1::next_token_chooser_parameters::LengthPenalty;
 pub use sharded_client::ShardedClient;
 use thiserror::Error;
 use tonic::transport;
@@ -14,9 +19,9 @@ use tonic::Status;
 
 #[derive(Error, Debug, Clone)]
 pub enum ClientError {
-    #[error("Could not connect to Text Generation server: {0:?}")]
+    #[error("Could not connect to Text Generation server: {0}")]
     Connection(String),
-    #[error("Server error: {0:?}")]
+    #[error("{0}")]
     Generation(String),
 }
 

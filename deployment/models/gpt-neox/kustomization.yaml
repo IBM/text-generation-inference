@@ -1,0 +1,41 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namePrefix: gpt-neox-
+
+commonLabels:
+  app: text-gen-gpt-neox-20b
+
+resources:
+  - ../../base
+
+patchesStrategicMerge:
+  - ../../base/patches/gpus/1-gpu.yaml
+  - ../../base/patches/flash-attention.yaml
+  - |-
+   apiVersion: apps/v1
+   kind: Deployment
+   metadata:
+     name: inference-server
+   spec:
+     template:
+       spec:
+         containers:
+           - name: server
+             env:
+             - name: MODEL_NAME
+               value: EleutherAI/gpt-neox-20b
+   
+             # Dynamic batch size changes
+             - name: MAX_BATCH_SIZE
+               value: "256"
+             - name: MAX_CONCURRENT_REQUESTS
+               value: "320"
+             - name: MAX_BATCH_WEIGHT
+               value: "10000"
+             - name: MAX_SEQUENCE_LENGTH
+               value: "8192"
+             - name: MAX_PREFILL_WEIGHT
+               value: "8192"
+             - name: MAX_NEW_TOKENS
+               value: "1536"

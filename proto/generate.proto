@@ -7,11 +7,22 @@ service TextGenerationService {
     rpc ServiceDiscovery (ServiceDiscoveryRequest) returns (ServiceDiscoveryResponse) {}
     /// Empties batch cache
     rpc ClearCache (ClearCacheRequest) returns (ClearCacheResponse);
-    /// Generate tokens for a batch
-    rpc Generate (GenerateRequest) returns (GenerateResponse);
-    /// Generate tokens for a list of cached batches
-    rpc GenerateWithCache (GenerateWithCacheRequest) returns (GenerateWithCacheResponse);
+    /// Empties batch cache
+    rpc ModelInfo (ModelInfoRequest) returns (ModelInfoResponse);
+    /// Prefill batch and generate first token
+    rpc Prefill (PrefillRequest) returns (PrefillResponse);
+    /// Generate next token for a list of prefilled batches
+    rpc NextToken (NextTokenRequest) returns (NextTokenResponse);
+    /// Prune batch
+    rpc PruneBatch (PruneBatchRequest) returns (PruneBatchResponse);
+    /// Lookup prompt prefix
+    rpc PrefixLookup (PrefixLookupRequest) returns (PrefixLookupResponse);
+    /// Health check
+    rpc Health (HealthRequest) returns (HealthResponse);
 }
+
+message HealthRequest {}
+message HealthResponse {}
 
 /// Empty request
 message ServiceDiscoveryRequest {}
@@ -27,24 +38,76 @@ message ClearCacheRequest {}
 /// Empty response
 message ClearCacheResponse {}
 
-message LogitsWarperParameters {
+/// Empty request
+message ModelInfoRequest {}
+
+message ModelInfoResponse {
+    enum ModelType {
+        CAUSAL_LM = 0;
+        SEQ2SEQ_LM = 1;
+    }
+
+    ModelType model_type = 1;
+    uint32 eos_token = 2;
+    /// Whether batches are rectangular/padded (false for flash attention)
+    bool batch_padding = 3;
+}
+
+message NextTokenChooserParameters {
+    message LengthPenalty {
+        uint32 start_index = 1;
+        float decay_factor = 2;
+    }
+
+    /// exponential scaling output probability distribution
     float temperature = 1;
+    /// restricting to the k highest probability elements
     uint32 top_k = 2;
+    /// restricting to top tokens summing to prob_cut_off <= prob_cut_off
     float top_p = 3;
-    bool do_sample = 4;
+
+    /// Minimum tokens to generate
+    uint32 min_new_tokens = 100;
+    /// optional random seed for sampling
+    optional uint64 seed = 101;
+    /// optional repetition penalty
+    optional float repetition_penalty = 102;
+    // optional decay length penalty
+    optional LengthPenalty length_penalty = 103;
+}
+
+message RequestedDetails {
+    bool input_toks = 1;
+    bool logprobs = 2;
+    bool ranks = 3;
+    uint32 top_n_toks = 4;
 }
 
 message Request {
     /// Request ID
     uint64 id = 1;
+    /// Optional prefix ID
+    string prefix_id = 2;
     /// The generation context
-    string inputs = 2;
+    string inputs = 3;
     /// The number of tokens inside inputs
-    uint32 input_length = 3;
-    /// Logits Warper Parameters
-    LogitsWarperParameters parameters = 4;
-    /// Stopping criteria
-    uint32 max_new_tokens = 5;
+    /// May be fewer if truncation was requested
+    uint32 input_length = 4;
+    /// Whether input should be truncated (to input_length tokens)
+    bool truncate = 5;
+    /// Value of request's max_new_tokens
+    uint32 max_output_length = 6;
+    /// Next Token Chooser Parameters
+    NextTokenChooserParameters parameters = 7;
+
+    /// Whether to return tokens individually
+    bool stream_response = 100;
+    /// Additional details to include in response
+    RequestedDetails details = 101;
+}
+
+message StopSequence {
+    repeated uint32 tokens = 1;
 }
 
 message Batch {
@@ -52,39 +115,92 @@ message Batch {
     uint64 id = 1;
     /// Individual requests
     repeated Request requests = 2;
-    /// Batch size (==len(requests))
-    uint32 size = 3;
 }
 
-message GeneratedText {
-    /// Request
-    Request request = 1;
-    /// Output
-    string output = 2;
-    /// Number of generated tokens
-    uint32 tokens = 3;
+message TopToken {
+    uint32 token_id = 1;
+    float logprob = 2;
 }
 
-message GenerateRequest {
+message Token {
+    /// Request id - not included here for input tokens
+    uint64 request_id = 1;
+    uint32 token_id = 2;
+
+    // Optional - zero if unset
+    float logprob = 3;
+    uint32 rank = 4;
+    repeated TopToken top_tokens = 5;
+}
+
+message GenerateError {
+    uint64 request_id = 1;
+    string message = 2;
+}
+
+message InputTokens {
+    uint64 request_id = 1;
+    repeated Token tokens = 2;
+}
+
+message PrefillRequest {
     /// Batch
     Batch batch = 1;
+    /// Optional existing batches with completed requests to be pruned
+    repeated CachedBatch to_prune = 2;
 }
 
-message GenerateResponse {
-    /// Finished requests
-    repeated GeneratedText generated_texts = 1;
-    /// Next batch (cached)
-    optional Batch batch = 2;
+message GenerateResult {
+    /// Next tokens
+    repeated Token output_tokens = 1;
+    repeated GenerateError errors = 2;
+    uint64 batch_id = 3;
 }
 
-message GenerateWithCacheRequest {
+message PrefillResponse {
+    GenerateResult result = 1;
+    
+    repeated InputTokens input_tokens = 2; // optional
+}
+
+message RequestsStatus {
+    /// Ids of finished requests, if any
+    repeated uint64 completed_ids = 3;
+}
+
+message CachedBatch {
+    uint64 batch_id = 1;
+    /// If absent, batch is finished
+    optional RequestsStatus status = 2;
+}
+
+message NextTokenRequest {
     /// Cached batches
-    repeated Batch batches = 1;
+    repeated CachedBatch batches = 1;
 }
 
-message GenerateWithCacheResponse {
-    /// Finished requests
-    repeated GeneratedText generated_texts = 1;
-    /// Next batch (cached)
-    optional Batch batch = 2;
+
+message NextTokenResponse {
+    /// Won't be set if batch is completed
+    optional GenerateResult result = 1;
+}
+
+message PruneBatchRequest {
+    /// Batch
+    CachedBatch batch = 1;
+}
+
+message PruneBatchResponse {
+    /// Won't be set if batch is completed
+    optional uint64 batch_id = 1;
+}
+
+/// Empty request
+message PrefixLookupRequest {
+    string prefix_id = 1;
+}
+
+/// Empty response
+message PrefixLookupResponse {
+    uint32 prefix_length = 1;
 }

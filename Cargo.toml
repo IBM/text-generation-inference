@@ -12,4 +12,5 @@ exclude = [
 debug = 1
 incremental = true
 lto = "off"
-panic = "abort"
+#lto = "fat"
+#panic = "abort"
