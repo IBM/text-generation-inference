@@ -238,7 +238,8 @@ COPY --from=launcher-builder /usr/local/cargo/bin/text-generation-launcher /usr/
 
 ENV PORT=3000 \
     GRPC_PORT=8033 \
-    HOME=/homedir
+    HOME=/homedir \
+    TRANSFORMERS_CACHE="/tmp/transformers_cache"
 
 # Runs as arbitrary user in OpenShift
 RUN mkdir /homedir && chmod g+wx /homedir
