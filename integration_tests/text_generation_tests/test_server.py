@@ -268,6 +268,10 @@ async def run_test_cases_async(test_cases, seq2seq_model=False):
             d.result()  # will raise if failed
         assert unfinished == 0, f"{unfinished} tests not finished before timeout of {TESTS_TIMEOUT}s"
 
+        # Verify metrics endpoint
+        response = requests.get(f'http://localhost:{3000}/metrics')
+        assert response.status_code == 200
+
 
 async def _test_multi_input_seeds(stub):
     # Ensure that sending a batch of identical inputs in sampling mode results

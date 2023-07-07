@@ -33,14 +33,20 @@ class FlashCausalLMBatch(Batch):
     position_ids: torch.Tensor
     # cumulative sequence lengths
     cu_seqlens: torch.Tensor
-    max_seqlen: int
+    # cumulative query sequence lengths, only used in decode
+    cu_seqlens_q: Optional[torch.Tensor]
+    # past key values, only used in decode
     past_key_values: Optional[torch.Tensor]
+    max_seqlen: int
 
     # All tokens
     all_input_ids_tensor: List[torch.Tensor]
 
     # Lengths of all generations present in the batch
     input_lengths: List[int]
+
+    # Used for resizing preallocated kv-cache when pruning
+    original_input_lengths: List[int]
 
     # Generation helpers
     next_token_choosers: List[NextTokenChooser]
@@ -58,11 +64,31 @@ class FlashCausalLMBatch(Batch):
         prefix_cache: Optional[PrefixCache],
         use_position_ids: bool = True,
     ) -> Tuple[Optional["FlashCausalLMBatch"], List[GenerateError]]:
+        errors = []
+        batch_inputs = []
+        max_seqlen = 0
+        for r in pb.requests:
+            if r.prefix_id:
+                message = f"Prompt prefixes not yet supported with flash attention (request #{r.id})"
+                logging.error(message)
+                # Exclude this request from the batch, return an error
+                errors.append(GenerateError(request_id=r.id, message=message))
+                continue
+            batch_inputs.append(r.inputs)
+            max_seqlen = max(max_seqlen, r.input_length)
+
+        if errors:
+            requests = [r for r in pb.requests if not any(r.id == er.request_id for er in errors)]
+            if not requests:
+                return None, errors
+
+        batch_tokenized_inputs = tokenizer(
+            batch_inputs, truncation=True, max_length=max_seqlen, return_token_type_ids=False
+        )["input_ids"]
+
         input_ids = []
         position_ids = []
         cu_seqlens = [0]
-        max_seqlen = 0
-        errors = []
 
         input_lengths = []
         all_input_ids_tensor = []
@@ -74,23 +100,11 @@ class FlashCausalLMBatch(Batch):
 
         # Parse batch
         requests = pb.requests
-        for r in requests:
+        for r, tokenized_input in zip(requests, batch_tokenized_inputs):
             input_length = r.input_length
-            if r.prefix_id:
-                message = f"Prompt prefixes not yet supported with flash attention (request #{r.id})"
-                logging.error(message)
-                # Exclude this request from the batch, return an error
-                errors.append(GenerateError(request_id=r.id, message=message))
-                continue
 
-            tokenized_input = tokenizer(
-                r.inputs,
-                truncation=True,
-                max_length=input_length,
-                return_token_type_ids=False,
-            )["input_ids"]
+            tokenized_input = tokenized_input[-input_length:]
 
-            max_seqlen = max(max_seqlen, input_length)
             input_lengths.append(input_length)
 
             tokenized_input = torch.tensor(tokenized_input, device=device)
@@ -102,19 +116,16 @@ class FlashCausalLMBatch(Batch):
             # Add cumulative lengths of all previous inputs
             cu_seqlens.append(cumulative_length + input_length)
 
-            next_token_choosers.append(NextTokenChooser.from_pb(r.parameters, tokenizer, device))
+            next_token_choosers.append(
+                NextTokenChooser.from_pb(r.parameters, r.details.logprobs, tokenizer, device)
+            )
             all_input_ids_tensor.append(F.pad(tokenized_input, (0, r.max_output_length)))
 
             cumulative_length += input_length
 
-        if errors:
-            requests = [r for r in pb.requests if not any(r.id == er.request_id for er in errors)]
-            if not requests:
-                return None, errors
-
         input_ids = torch.cat(input_ids)
-        position_ids = torch.cat(position_ids)
-        cu_seqlens = torch.tensor(cu_seqlens, dtype=torch.int32)
+        position_ids = torch.cat(position_ids).to(device, non_blocking=True)
+        cu_seqlens = torch.tensor(cu_seqlens, dtype=torch.int32, device=device)
 
         return cls(
             batch_id=pb.id,
@@ -122,9 +133,11 @@ class FlashCausalLMBatch(Batch):
             input_ids=input_ids,
             position_ids=position_ids,
             cu_seqlens=cu_seqlens,
+            cu_seqlens_q=None,
             max_seqlen=max_seqlen,
             past_key_values=None,
             input_lengths=input_lengths,
+            original_input_lengths=input_lengths.copy(),
             all_input_ids_tensor=all_input_ids_tensor,
             next_token_choosers=next_token_choosers,
         ), errors
@@ -134,22 +147,26 @@ class FlashCausalLMBatch(Batch):
         # Batch attributes
         requests = []
         input_lengths = []
+        original_input_lengths = []
         all_input_ids_tensor = []
         next_token_choosers = []
+
+        device = batches[0].cu_seqlens_q.device
 
         # Batch tensors
         input_ids = []
         position_ids = []
-        cu_seqlens = [torch.tensor([0], dtype=torch.int32)]
+        cu_seqlens = [torch.tensor([0], dtype=torch.int32, device=device)]
         max_seqlen = 0
         past_key_values = []
 
         # Cumulative length
-        cumulative_length = torch.tensor(0)
+        cumulative_length = torch.tensor(0, device=device)
 
         for i, batch in enumerate(batches):
             requests.extend(batch.requests)
             input_lengths.extend(batch.input_lengths)
+            original_input_lengths.extend(batch.original_input_lengths)
             all_input_ids_tensor.extend(batch.all_input_ids_tensor)
             next_token_choosers.extend(batch.next_token_choosers)
 
@@ -162,6 +179,7 @@ class FlashCausalLMBatch(Batch):
                 batch.past_key_values if len(batch) != 1
                 else batch.past_key_values[:, :batch.cu_seqlens[-1]]
             )
+            batch.past_key_values = None
 
             max_seqlen = max(max_seqlen, batch.max_seqlen)
 
@@ -173,10 +191,12 @@ class FlashCausalLMBatch(Batch):
             input_ids=torch.cat(input_ids),
             position_ids=torch.cat(position_ids),
             cu_seqlens=torch.cat(cu_seqlens),
+            cu_seqlens_q=torch.arange(len(requests) + 1, device=device, dtype=torch.int32),
             max_seqlen=max_seqlen,
             # Concat on dim=1 as first dim represents the model layers
             past_key_values=torch.cat(past_key_values, dim=1),
             input_lengths=input_lengths,
+            original_input_lengths=original_input_lengths,
             all_input_ids_tensor=all_input_ids_tensor,
             next_token_choosers=next_token_choosers,
         )
@@ -212,7 +232,7 @@ class FlashCausalLMBatch(Batch):
             past_slice = batch.past_key_values[:, start:end]
             shape = list(batch.past_key_values.shape)
             # Preallocate single-batch tensor to maximum size
-            shape[1] = batch.input_lengths[index] + batch.requests[index].max_output_length
+            shape[1] = batch.original_input_lengths[index] + batch.requests[index].max_output_length
             batch.past_key_values = batch.past_key_values.new_zeros(shape)
             batch.past_key_values[:, :(end - start)] = past_slice
         else:
@@ -225,6 +245,7 @@ class FlashCausalLMBatch(Batch):
 
         # TODO maybe a single loop for all these list slices
         batch.input_lengths = list(slice_list(batch.input_lengths))
+        batch.original_input_lengths = slice_list(batch.original_input_lengths)
         batch.requests = slice_list(batch.requests)
         batch.next_token_choosers = slice_list(batch.next_token_choosers)
         batch.all_input_ids_tensor = slice_list(batch.all_input_ids_tensor)
@@ -239,16 +260,22 @@ class FlashCausalLMBatch(Batch):
         else:
             # Recalculate cumulative seq lengths
             batch.cu_seqlens = batch.cu_seqlens[:new_size + 1]
-            batch.cu_seqlens[1:] = batch.cu_seqlens.new_tensor(batch.input_lengths)
+            batch.cu_seqlens[1:] = batch.position_ids
+            batch.cu_seqlens[1:].add_(1)
             torch.cumsum(batch.cu_seqlens, dim=0, out=batch.cu_seqlens)
+
+        batch.cu_seqlens_q = batch.cu_seqlens_q[:new_size + 1]
 
         return batch
 
-    def compact(self):
-        """Copy tensors to free previously pruned/trimmed space"""
-
-        if len(self) == 1:
-            self.past_key_values = self.past_key_values[:, :self.cu_seqlens[-1]].clone()
+    # This needs to be re-evaluated. If we do it here, we need to ensure the tensor
+    # is re-allocated in the case that the add-on batch only generates the prefill
+    # token because no concatenation will occur.
+    # def compact(self):
+    #     """Copy tensors to free previously pruned/trimmed space"""
+    #
+    #     if len(self) == 1:
+    #          self.past_key_values = self.past_key_values[:, :self.cu_seqlens[-1]].clone()
 
 
 class FlashCausalLM(Model):
@@ -280,7 +307,12 @@ class FlashCausalLM(Model):
         if self.model.config.pad_token_id is not None:
             self.tokenizer.pad_token_id = self.model.config.pad_token_id
         elif self.tokenizer.pad_token_id is None:
-            self.tokenizer.pad_token_id = self.model.config.eos_token_id
+            if self.model.config.eos_token_id is not None:
+                self.tokenizer.pad_token_id = self.model.config.eos_token_id
+            elif self.tokenizer.eos_token_id is not None:
+                self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+            else:
+                self.tokenizer.add_special_tokens({"pad_token": "[PAD]"})
 
     @property
     def batch_type(self) -> Type[FlashCausalLMBatch]:
@@ -289,13 +321,10 @@ class FlashCausalLM(Model):
     def generate_token(
         self, batch: FlashCausalLMBatch, first: bool = False, for_concat: bool = False,
     ) -> Tuple[List[TokenInfo], Optional[List[InputTokens]], List[GenerateError]]:
-        # Better to send to device here to avoid device issues in concatenate
-        position_ids = batch.position_ids.to(self.device, non_blocking=True)
-        cu_seqlens = batch.cu_seqlens.to(self.device)
 
         batch_size = len(batch)
         past_key_values = batch.past_key_values if first or batch_size > 1 \
-            else batch.past_key_values[:, :cu_seqlens[-1]]
+            else batch.past_key_values[:, :batch.cu_seqlens[-1]]
 
         if first and batch_size == 1:
             # Preallocate past_key_value tensor for batch size == 1
@@ -307,8 +336,9 @@ class FlashCausalLM(Model):
 
         out, present = self.model.forward(
             batch.input_ids,
-            position_ids,
-            cu_seqlens,
+            batch.position_ids,
+            batch.cu_seqlens,
+            batch.cu_seqlens_q,
             batch.max_seqlen,
             past_key_values,
             prealloc_length,
@@ -324,7 +354,7 @@ class FlashCausalLM(Model):
             start_index = 0
             for i in range(1, batch_size + 1):
                 end_index = batch.cu_seqlens[i]
-                new_past.append(present[:, start_index: end_index])
+                new_past.append(present[:, start_index:end_index])
                 new_past.append(present_pad)
                 start_index = end_index
             batch.past_key_values = torch.cat(new_past, dim=1)
@@ -337,6 +367,9 @@ class FlashCausalLM(Model):
             generated_tokens, decode_errors = self._process_decode(batch, out)
             input_token_infos = None
 
+        batch.cu_seqlens.add_(batch.cu_seqlens_q)
+        batch.max_seqlen += 1
+
         return generated_tokens, input_token_infos, decode_errors
 
     def _process_prefill(
@@ -345,18 +378,18 @@ class FlashCausalLM(Model):
 
         # New values for next forward
         next_batch_input_ids = []
-        next_batch_position_ids = []
-        next_batch_cu_seqlens = [0]
 
         # Generated tokens
         generated_tokens: List[TokenInfo] = []
         input_token_infos: List[InputTokens] = []
         decode_errors: List[GenerateError] = []
 
+        # Create position_ids tensor before incrementing input lengths
+        batch.position_ids = batch.position_ids.new_tensor(batch.input_lengths)
+
         # For each member of the batch
         batch_size = len(batch)
         for i in range(batch_size):
-            input_length = batch.input_lengths[i]
             # Indexing metadata
             next_token_id = self._process_new_token(
                 batch, i, out,
@@ -367,17 +400,14 @@ class FlashCausalLM(Model):
             )
 
             next_batch_input_ids.append(next_token_id)
-            next_batch_position_ids.append(input_length)
-            # Cumulative sum
-            next_batch_cu_seqlens.append(next_batch_cu_seqlens[-1] + input_length + 1)
 
         # Create final next batch tensors
         batch.input_ids = torch.cat(next_batch_input_ids) \
             if batch_size > 1 else next_batch_input_ids[0].view(1)
 
-        batch.position_ids = torch.tensor(next_batch_position_ids, dtype=torch.int32)
-        batch.cu_seqlens = torch.tensor(next_batch_cu_seqlens, dtype=torch.int32)
-        batch.max_seqlen += 1
+        batch.cu_seqlens_q = torch.arange(
+            batch_size + 1, device=self.device, dtype=torch.int32
+        )
 
         return generated_tokens, input_token_infos, decode_errors
 
@@ -399,8 +429,6 @@ class FlashCausalLM(Model):
             )
 
         batch.position_ids += 1
-        batch.cu_seqlens += torch.arange(len(batch.cu_seqlens), dtype=batch.cu_seqlens.dtype)
-        batch.max_seqlen += 1
 
         return generated_tokens, decode_errors
 
@@ -423,11 +451,9 @@ class FlashCausalLM(Model):
                 logits = out[i].unsqueeze(0)
 
             # Select next token
-            return_logprobs = request.details.logprobs
             next_token_id, scores, logprobs = batch.next_token_choosers[i](
-                all_input_ids_tensor[None, :input_length], logits[-1:, :], return_logprobs
+                all_input_ids_tensor[None, :input_length], logits[-1:, :]
             )
-            next_token_id = next_token_id.view(1)  # TODO perhaps not needed
             next_token_id_item = next_token_id.item()
 
             # Get next token info

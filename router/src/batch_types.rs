@@ -17,6 +17,9 @@ pub(crate) trait BatchType: Send + Sync + Clone + 'static {
     fn exceeds_weight(
         tree: &BTreeSet<(usize, usize, usize)>, max_total_weight: usize, current_output_len: usize
     ) -> bool;
+    /// Provide a count of tokens for a given batch, including padding tokens if applicable
+    fn count_tokens(input_lengths: impl Iterator<Item=usize>, batch_size: usize) -> usize;
+
     /// max_prefill_weight to use when none is specified
     fn default_max_prefill_weight() -> usize;
 
@@ -24,11 +27,14 @@ pub(crate) trait BatchType: Send + Sync + Clone + 'static {
     fn compute_stats(entries: &IntMap<u64, Entry>) -> Self::Stats {
         entries.iter().fold(
             Self::Stats::default(),
-            |stats, (_, e)| Self::update_stats(
-                &stats,
-                e.input_length as usize,
-                e.request.parameters.max_new_tokens as usize,
-            )
+            |stats, (_, entry)| {
+                let generated_count = entry.generated_tokens;
+                Self::update_stats(
+                    &stats,
+                    entry.input_length + generated_count as usize,
+                    (entry.request.parameters.max_new_tokens - generated_count) as usize,
+                )
+            }
         )
     }
 }
@@ -74,6 +80,10 @@ impl BatchType for FlashBatch {
             }
         }
         false
+    }
+
+    fn count_tokens(input_lengths: impl Iterator<Item=usize>, _: usize) -> usize {
+        input_lengths.sum()
     }
 
     fn default_max_prefill_weight() -> usize {
@@ -130,6 +140,10 @@ impl BatchType for PaddedBatch {
             }
         }
         false
+    }
+
+    fn count_tokens(input_lengths: impl Iterator<Item=usize>, batch_size: usize) -> usize {
+        input_lengths.max().unwrap_or(0) * batch_size
     }
 
     fn default_max_prefill_weight() -> usize {

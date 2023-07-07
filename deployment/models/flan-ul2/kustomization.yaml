@@ -11,6 +11,7 @@ resources:
 
 patchesStrategicMerge:
   - ../../base/patches/gpus/1-gpu.yaml
+  - ../../base/patches/gpus/a100-80g.yaml
   - ../../base/patches/limits/t5-xxl.yaml
   - |-
    apiVersion: apps/v1

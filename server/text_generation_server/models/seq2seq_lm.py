@@ -121,7 +121,7 @@ class Seq2SeqLMBatch(Batch):
             max_remaining_tokens.append(max_output_length)
             padding_right_offset = max(padding_right_offset, max_output_length)
             next_token_choosers.append(NextTokenChooser.from_pb(
-                r.parameters, tokenizer, device,
+                r.parameters, r.details.logprobs, tokenizer, device,
             ))
             i += 1
 
@@ -598,11 +598,8 @@ class Seq2SeqLM(Model):
         ) in enumerate(iterator):
             try:
                 # Select next token
-                return_logprobs = request.details.logprobs
                 next_token, scores, logprobs = next_token_chooser(
-                    all_decoder_input_ids[None, -decoder_input_length:],
-                    logits,
-                    return_logprobs,
+                    all_decoder_input_ids[None, -decoder_input_length:], logits
                 )
 
                 # Return latest token

@@ -101,7 +101,7 @@ class CausalLMBatch(Batch):
             max_remaining_tokens.append(max_output_length)
             padding_right_offset = max(padding_right_offset, max_output_length)
             next_token_choosers.append(NextTokenChooser.from_pb(
-                r.parameters, tokenizer, device,
+                r.parameters, r.details.logprobs, tokenizer, device,
             ))
             i += 1
 
@@ -173,7 +173,7 @@ class CausalLMBatch(Batch):
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=None,
-            all_input_ids=list(all_input_ids),
+            all_input_ids=list(all_input_ids[:, -max_input_length:]),
             input_lengths=input_lengths,
             max_remaining_tokens=max_remaining_tokens,
             next_token_choosers=next_token_choosers,
@@ -457,11 +457,12 @@ class CausalLM(Model):
         if self.model.config.pad_token_id is not None:
             self.tokenizer.pad_token_id = self.model.config.pad_token_id
         elif self.tokenizer.pad_token_id is None:
-            #self.tokenizer.add_special_tokens({"pad_token": "[PAD]"})
             if self.model.config.eos_token_id is not None:
                 self.tokenizer.pad_token_id = self.model.config.eos_token_id
-            else:
+            elif self.tokenizer.eos_token_id is not None:
                 self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+            else:
+                self.tokenizer.add_special_tokens({"pad_token": "[PAD]"})
 
         # Perform a forward pass to determine the ordering of past key attention tensor dimensions
         one_token = torch.tensor([[1]], device=inference_engine.get_device())
@@ -547,11 +548,9 @@ class CausalLM(Model):
         ) in enumerate(iterator):
             try:
                 # Select next token
-                return_logprobs = request.details.logprobs
-                tokens, scores, logprobs = next_token_chooser(
-                    all_input_ids.unsqueeze(0), logits[-1:, :], return_logprobs
+                next_token, scores, logprobs = next_token_chooser(
+                    all_input_ids.unsqueeze(0), logits[-1:, :]
                 )
-                next_token = tokens.view(1)
 
                 # Get next token info
                 token_info = get_token_info(request, scores, next_token, logprobs)
@@ -586,6 +585,16 @@ class CausalLM(Model):
 
         # Update attention_mask with padding as we added a new token to input_ids
         batch.attention_mask[:, -batch.padding_right_offset] = 1
+
+        if first and not for_concat:
+            left_pad = batch.attention_mask.shape[1] - batch.padding_right_offset - batch.max_sequence_length
+            if left_pad:
+                # Trim attention mask and past kvs if we padded to multiple of 8. This is important to be able to
+                # generate up to the model's token limit.
+                batch.attention_mask = batch.attention_mask[:, left_pad:]
+                for key, value in past:
+                    key.data = key.data[..., left_pad:, :] if batch.keys_head_dim_last else key.data[..., left_pad:]
+                    value.data = value.data[..., left_pad:, :]
 
         # Update position ids
         if batch.position_ids is not None:

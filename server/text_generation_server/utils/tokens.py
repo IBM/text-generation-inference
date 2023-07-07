@@ -4,17 +4,12 @@ from typing import List, Optional, Tuple
 
 import torch
 from transformers import PreTrainedTokenizerBase
-from transformers.generation.logits_process import (
-    LogitsProcessorList,
-    RepetitionPenaltyLogitsProcessor,
-    TemperatureLogitsWarper,
-    TopPLogitsWarper,
-    TopKLogitsWarper,
-)
+from transformers.generation.logits_process import RepetitionPenaltyLogitsProcessor
 
 from text_generation_server.models.types import TokenInfo, TopToken, InputTokens
 from text_generation_server.pb import generate_pb2
 from text_generation_server.utils.dist import RANK
+from text_generation_server.utils.logits_process import static_warper
 
 FP32_LOGITS = os.getenv("FP32_LOGITS_PROCESS") == "true"
 
@@ -28,15 +23,15 @@ SINGLE_NAN = [float("nan")]
 
 
 class Sampling:
-    def __init__(self, seed=None, device=None):
+    def __init__(self, seed: Optional[int] = None, device: str = "cpu"):
         self.generator = None if seed is None else torch.Generator(device).manual_seed(seed)
 
     def __call__(self, logits):
-        probs = torch.nn.functional.softmax(logits, dim=-1)
-        next_tokens = torch.multinomial(
-            probs, num_samples=1, generator=self.generator
-        ).squeeze(-1)
-        return next_tokens
+        probs = torch.nn.functional.softmax(logits, -1)
+        # Avoid GPU<->CPU sync done by torch multinomial
+        # See: https://github.com/pytorch/pytorch/blob/925a3788ec5c06db62ca732a0e9425a26a00916f/aten/src/ATen/native/Distributions.cpp#L631-L637
+        q = torch.empty_like(probs).exponential_(1, generator=self.generator)
+        return probs.div_(q).argmax()
 
 
 class Greedy:
@@ -46,42 +41,38 @@ class Greedy:
 
 class NextTokenChooser:
     def __init__(
-            self, temperature=1.0, top_k=None, top_p=None, seed=None,
-            repetition_penalty: Optional[float] = None,
-            length_penalty: Optional[Tuple[int, float]] = None,
-            min_new_tokens=0, eos_token_id=None, device=None,
+        self, temperature=1.0, top_k=None, top_p=None, typical_p=None, seed=None,
+        repetition_penalty: Optional[float] = None,
+        length_penalty: Optional[Tuple[int, float]] = None,
+        min_new_tokens=0, eos_token_id=None, device=None,
+        return_logprobs=False,
     ):
         if min_new_tokens > 0 and eos_token_id is None:
             raise ValueError("Must provide eos_token_id for min_new_tokens > 0")
+        self.return_logprobs = return_logprobs
         self.current_tokens = 0
         self.min_new_tokens = min_new_tokens
         self.eos_token_id = eos_token_id
+        self.repetition_processor = (
+            RepetitionPenaltyLogitsProcessor(penalty=float(repetition_penalty))
+            if repetition_penalty is not None else None
+        )
         self.length_penalty = length_penalty if length_penalty is not None and length_penalty[1] > 1.0 else None
 
-        self.warpers = LogitsProcessorList()
-        # the following idea is largely copied from this PR: https://github.com/huggingface/transformers/pull/5420/files
-        # all samplers can be found in `generation_utils_samplers.py`
-
-        if repetition_penalty is not None:
-            self.warpers.append(RepetitionPenaltyLogitsProcessor(penalty=float(repetition_penalty)))
         if temperature == 0.0:
+            self.static_warper = None
             self.choice = Greedy()
         else:
-            if temperature is not None and temperature != 1.0:
-                self.warpers.append(TemperatureLogitsWarper(float(temperature)))
-            if top_k:
-                self.warpers.append(TopKLogitsWarper(top_k=top_k))
-            if top_p is not None and top_p < 1.0:
-                self.warpers.append(TopPLogitsWarper(top_p=top_p))
-
+            self.static_warper = static_warper(
+                temperature=temperature,
+                top_k=top_k,
+                top_p=top_p,
+                typical_p=typical_p,
+                return_logprobs=return_logprobs,
+            )
             self.choice = Sampling(seed, device)
 
-    def __call__(
-            self, input_ids, scores, return_logprobs=False,
-    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-        if FP32_LOGITS:
-            scores = scores.to(torch.float32)
-
+    def _process_logits(self, input_ids, scores):
         # Penalize EOS token if we have not yet generated minimum
         if self.current_tokens < self.min_new_tokens:
             scores[:, self.eos_token_id] = -float("inf")
@@ -95,26 +86,47 @@ class NextTokenChooser:
                 )
             self.current_tokens += 1
 
-        # Warp logits
-        final_scores = self.warpers(input_ids, scores)
+        # Apply repetition penalty if applicable
+        if self.repetition_processor is not None:
+            scores = self.repetition_processor(input_ids, scores)
+
+        return scores
+
+    def __call__(
+        self, input_ids: torch.LongTensor, scores: torch.FloatTensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        if FP32_LOGITS:
+            scores = scores.to(torch.float32)
+
+        # Processs and warp logits
+        final_scores = self._process_logits(input_ids, scores)
+
+        if self.static_warper is not None:
+            final_scores, logprobs = self.static_warper(scores)
+        else:
+            # Compute logprobs if requested
+            logprobs = torch.log_softmax(final_scores, -1) if self.return_logprobs else None
 
         #self._log_invalid_scores(final_scores, scores)
-
-        # Compute logprobs if requested
-        logprobs = torch.log_softmax(final_scores, -1) if return_logprobs else None
 
         # Choose tokens
         final_scores = final_scores[-1:, :]
         next_ids = self.choice(final_scores)
-        return next_ids, final_scores, logprobs
+        return next_ids.view(-1), final_scores, logprobs
 
     @classmethod
-    def from_pb(cls, pb: generate_pb2.NextTokenChooserParameters, tokenizer: PreTrainedTokenizerBase,
-                device: torch.device) -> "NextTokenChooser":
+    def from_pb(
+        cls,
+        pb: generate_pb2.NextTokenChooserParameters,
+        return_logprobs: bool,
+        tokenizer: PreTrainedTokenizerBase,
+        device: torch.device,
+    ) -> "NextTokenChooser":
         return NextTokenChooser(
             temperature=pb.temperature,
             top_k=pb.top_k,
             top_p=pb.top_p,
+            typical_p=pb.typical_p,
             seed=pb.seed if pb.HasField('seed') else None,
             repetition_penalty=pb.repetition_penalty if pb.HasField('repetition_penalty') else None,
             length_penalty=(pb.length_penalty.start_index, pb.length_penalty.decay_factor)
@@ -122,6 +134,7 @@ class NextTokenChooser:
             min_new_tokens=pb.min_new_tokens,
             eos_token_id=getattr(tokenizer, 'model_eos_token_id', tokenizer.eos_token_id),
             device=device,
+            return_logprobs=return_logprobs,
         )
 
     @staticmethod
@@ -138,10 +151,10 @@ class NextTokenChooser:
 
 # Extract requested token information from model output
 def get_token_info(
-        request: generate_pb2.Request,
-        scores: torch.Tensor,
-        next_token: torch.Tensor,
-        logprobs: Optional[torch.Tensor],
+    request: generate_pb2.Request,
+    scores: torch.Tensor,  # Assumes shape is [1, vocab_size]
+    next_token: torch.Tensor,
+    logprobs: Optional[torch.Tensor],
 ) -> TokenInfo:
     next_token = next_token.item()
     token_info = TokenInfo(request_id=request.id, token_id=next_token)

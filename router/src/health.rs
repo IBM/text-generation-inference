@@ -41,8 +41,6 @@ impl Health {
                 truncate: false,
                 max_output_length: 1,
                 parameters: Some(NextTokenChooserParameters {
-                    temperature: 1.0,
-                    top_p: 1.0,
                     ..Default::default()
                 }),
                 stream_response: false,
@@ -51,6 +49,7 @@ impl Health {
             let batch = Batch {
                 id: u64::MAX,
                 requests: vec![liveness_request],
+                total_tokens: 1,
             };
             // Skips the queue
             let value = self.client.prefill(batch, vec![]).await

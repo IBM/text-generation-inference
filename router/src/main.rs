@@ -4,6 +4,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use text_generation_client::ShardedClient;
 use text_generation_router::server;
 use tokenizers::Tokenizer;
+use tracing::warn;
 use text_generation_router::server::ServerRunArgs;
 
 /// App Configuration
@@ -22,7 +23,7 @@ struct Args {
     max_batch_weight: Option<usize>,
     #[clap(default_value = None, long, env)]
     max_prefill_weight: Option<usize>,
-    #[clap(default_value = "20", long, env)]
+    #[clap(default_value = "24", long, env)]
     max_waiting_tokens: usize,
     #[clap(default_value = "3000", long, short, env)]
     port: u16,
@@ -69,8 +70,19 @@ fn main() -> Result<(), std::io::Error> {
     }
 
     // Instantiate tokenizer
-    let tokenizer = Tokenizer::from_file(args.tokenizer_path)
+    let mut tokenizer = Tokenizer::from_file(args.tokenizer_path)
         .expect("Problem loading tokenizer for model");
+
+    if let Some(tp) = tokenizer.get_truncation() {
+        if tp.max_length < args.max_sequence_length {
+            warn!(
+                "Ignoring fast tokenizer truncation configuration with max_length {}, \
+                max_sequence_length is set to {}",
+                tp.max_length, args.max_sequence_length,
+            );
+        }
+    }
+    tokenizer.with_truncation(None).with_padding(None);
 
     // Launch Tokio runtime
     tokio::runtime::Builder::new_multi_thread()

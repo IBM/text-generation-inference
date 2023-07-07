@@ -16,8 +16,15 @@ def serve(
     model_name: str,
     deployment_framework: str,
     dtype_str: str,
+    # Max seq length, new tokens, batch size and weight
+    # only used for PT2 compile warmup
+    max_sequence_length: int = 2048,
+    max_new_tokens: int = 1024,
+    max_batch_size: int = 12,
+    max_batch_weight: Optional[int] = None,
     revision: Optional[str] = None,
     sharded: bool = False,
+    cuda_process_memory_fraction: float = 1.0,
     uds_path: Path = "/tmp/text-generation",
 ):
     if sharded:
@@ -34,7 +41,20 @@ def serve(
             os.getenv("MASTER_PORT", None) is not None
         ), "MASTER_PORT must be set when sharded is True"
 
-    server.serve(model_name, revision, deployment_framework, dtype_str, sharded, uds_path)
+
+    server.serve(
+        model_name,
+        revision,
+        deployment_framework,
+        dtype_str,
+        max_sequence_length,
+        max_new_tokens,
+        max_batch_size,
+        max_batch_weight,
+        sharded,
+        cuda_process_memory_fraction,
+        uds_path
+    )
 
 
 @app.command()

@@ -22,6 +22,8 @@ pub(crate) struct GenerateParameters {
     pub top_k: i32,
     #[serde(default = "default_top_p")]
     pub top_p: f32,
+    #[serde(default = "default_typical_p")]
+    pub typical_p: f32,
     #[serde(default = "default_max_new_tokens")]
     pub max_new_tokens: u32,
     // Indicates whether max_new_tokens is a hard
@@ -68,6 +70,10 @@ fn default_top_k() -> i32 {
 
 fn default_top_p() -> f32 {
     1.0
+}
+
+fn default_typical_p() -> f32 {
+    0.0
 }
 
 fn default_repetition_penalty() -> f32 {

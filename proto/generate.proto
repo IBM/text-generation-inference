@@ -63,8 +63,10 @@ message NextTokenChooserParameters {
     float temperature = 1;
     /// restricting to the k highest probability elements
     uint32 top_k = 2;
-    /// restricting to top tokens summing to prob_cut_off <= prob_cut_off
+    /// restricting to top tokens summing to prob_cut_off <= top_p
     float top_p = 3;
+    // the typical probability of a token
+    float typical_p = 4;
 
     /// Minimum tokens to generate
     uint32 min_new_tokens = 100;
@@ -115,6 +117,8 @@ message Batch {
     uint64 id = 1;
     /// Individual requests
     repeated Request requests = 2;
+    /// Total input tokens in this batch including padding
+    uint32 total_tokens = 3;
 }
 
 message TopToken {

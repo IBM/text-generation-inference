@@ -1,7 +1,10 @@
 import inspect
 import os
+import types
 
 import torch
+import torch._dynamo
+from torch._inductor.compile_fx import compile_fx
 
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Optional, TypeVar, Type
@@ -20,6 +23,7 @@ B = TypeVar("B", bound=Batch)
 MAX_PROMPT_PREFIX_LENGTH = 256
 
 CUDA_PAD_TO_MULT_OF_8 = os.getenv("CUDA_PAD_TO_MULT_OF_8", "true").lower() != "false"
+PT2_COMPILE = os.getenv("PT2_COMPILE", "false").lower() != "false"
 
 class Model(ABC):
     def __init__(self, engine: BaseInferenceEngine, dtype: torch.dtype):
@@ -32,9 +36,7 @@ class Model(ABC):
             self.tokenizer.model_eos_token_id = self.config.eos_token_id
 
         # Check whether model supports position_ids
-        self.use_position_ids = "position_ids" in set(
-            inspect.signature(self.model.forward).parameters.keys()
-        )
+        self.use_position_ids = "position_ids" in inspect.signature(self.model.forward).parameters
 
         prompt_prefix_supported = self._setup_prompt_encoder()
 
@@ -60,6 +62,54 @@ class Model(ABC):
             torch.no_grad if self.device.type == "cpu" and engine.world_size > 1
             else torch.inference_mode
         )
+
+        if not PT2_COMPILE:
+            self.compiled = False
+        else:
+            torch._dynamo.config.cache_size_limit = 512
+            self.n_kernels = 0
+
+            def count_kernels(guard):
+                print("[pt2_compile] guard failed: ", guard)
+                self.n_kernels += 1
+
+            compiled_forward = torch._dynamo.optimize(
+                lambda model, inputs: compile_fx(
+                    model,
+                    inputs,
+                    config_patches={
+                        "triton.cudagraphs": False,
+                        "size_asserts": False,
+                    },
+                ),
+                dynamic=True,
+                guard_fail_fn=count_kernels,
+            )(self.model.forward)
+
+            run_forward = torch._dynamo.run(compiled_forward)
+
+            def parse_kwargs(kwargs):
+                if "past_key_values" in kwargs and type(kwargs["past_key_values"]) is list:
+                    kwargs["past_key_values"] = tuple(tuple(t) for t in kwargs["past_key_values"])
+                return kwargs
+
+            def override_forward_with_compile(self, *args, **kwargs):
+                kwargs = parse_kwargs(kwargs)
+                return compiled_forward(*args, **kwargs)
+
+            def override_forward_with_run(self, *args, **kwargs):
+                kwargs = parse_kwargs(kwargs)
+                return run_forward(*args, **kwargs)
+
+            self.compiled = True
+            self.model.forward = types.MethodType(override_forward_with_compile, self.model)
+            self.model.run_forward = types.MethodType(override_forward_with_run, self.model)
+
+            # pt2 compile still seems to have some issue with torch.inference_mode
+            self.context_manager = torch.no_grad
+
+    def freeze_compile(self):
+        self.model.forward = self.model.run_forward
 
     @property
     @abstractmethod

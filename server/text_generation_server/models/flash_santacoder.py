@@ -3,7 +3,7 @@ import torch.distributed
 
 from accelerate import init_empty_weights
 from pathlib import Path
-from typing import List, Union, Any
+from typing import List, Union, Any, Optional
 
 from text_generation_server.inference_engine import BaseInferenceEngine
 from text_generation_server.models.custom_modeling.flash_santacoder_modeling import (
@@ -17,7 +17,7 @@ class FlashSantacoder(FlashCausalLM):
     def __init__(
         self,
         model_name: str,
-        revision: str,
+        revision: Optional[str],
         dtype: torch.dtype,
         model_config: Union[Any] = None,
     ):
@@ -76,7 +76,6 @@ class FlashSantacoder(FlashCausalLM):
                     final_key = layer_name + ".c_attn.weight"
                 elif "q_attn.bias" in key or "kv_attn.bias" in key:
                     final_key = layer_name + ".c_attn.bias"
-
                 else:
                     final_key = key
 
@@ -90,11 +89,11 @@ class FlashSantacoder(FlashCausalLM):
 
                 if current_parameter_tensor is not None:
                     if transpose and (
-                            "c_fc.weight" in key
-                            or "c_proj.weight" in key
-                            or "q_attn.weight" in key
-                            or "kv_attn.weight" in key
-                            or "c_attn.weight" in key
+                        "c_fc.weight" in key
+                        or "c_proj.weight" in key
+                        or "q_attn.weight" in key
+                        or "kv_attn.weight" in key
+                        or "c_attn.weight" in key
                     ):
                         # Tranpose as we use nn.Linear instead of Conv1D
                         value = value.T
@@ -112,8 +111,8 @@ class FlashSantacoder(FlashCausalLM):
                         elif "c_attn.bias" in final_key:
                             module._parameters[param_name] = value.new_empty(
                                 (
-                                        model.transformer.head_size
-                                        * (model.transformer.num_heads + 2)
+                                    model.transformer.head_size
+                                    * (model.transformer.num_heads + 2)
                                 )
                             )
 
@@ -128,7 +127,7 @@ class FlashSantacoder(FlashCausalLM):
                         ] = value
                     elif "kv_attn.bias" in key:
                         module._parameters[param_name][
-                        model.transformer.head_size * model.transformer.num_heads :
+                            model.transformer.head_size * model.transformer.num_heads :
                         ] = value
                     else:
                         if current_parameter_tensor.shape != value.shape:
@@ -143,4 +142,3 @@ class FlashSantacoder(FlashCausalLM):
 
         torch.cuda.empty_cache()
         model.post_load_weights(quantize)
-

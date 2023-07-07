@@ -1,6 +1,5 @@
 include Makefile-transformers
 include Makefile-flash-att
-include Makefile-optimum
 
 gen-server:
 	# Compile protos

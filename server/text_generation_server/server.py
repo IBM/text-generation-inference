@@ -20,6 +20,7 @@ from text_generation_server.models.flash_causal_lm import FlashCausalLM
 from text_generation_server.pb import generate_pb2_grpc, generate_pb2
 from text_generation_server.pb.generate_pb2 import ModelInfoResponse
 from text_generation_server.prompt_cache import PrefixNotFound
+from text_generation_server.utils import pt2_compile_warmup
 
 COMPACT_BEFORE_PREFILL = os.getenv("COMPACT_BEFORE_PREFILL", "true") != "false"
 
@@ -193,7 +194,12 @@ def serve(
     revision: Optional[str],
     deployment_framework: str,
     dtype_str: str,
+    max_sequence_length: int,
+    max_new_tokens: int,
+    max_batch_size: int,
+    max_batch_weight: Optional[int],
     sharded: bool,
+    cuda_process_memory_fraction: float,
     uds_path: Path,
 ):
     async def serve_inner(
@@ -201,6 +207,10 @@ def serve(
         revision: Optional[str],
         deployment_framework: str,
         dtype_str: str,
+        max_sequence_length: int,
+        max_new_tokens: int,
+        max_batch_size: int,
+        max_batch_weight: Optional[int],
         sharded: bool = False,
     ):
         unix_socket_template = "unix://{}-{}"
@@ -212,7 +222,11 @@ def serve(
         ]
         local_url = server_urls[local_rank]
 
+        # Set the fraction of cuda/gpu mem available to this process, then load the model
+        if torch.cuda.is_available() and cuda_process_memory_fraction < 1:
+            torch.cuda.set_per_process_memory_fraction(cuda_process_memory_fraction)
         model = get_model(model_name, revision, deployment_framework, dtype_str)
+
         if local_rank == 0:
             print(f"Loaded model as {type(model)}")
             print(f"With model class {type(model.model)}")
@@ -223,12 +237,33 @@ def serve(
             if device.type == "cuda":
                 # Log GPU memory stats at startup
                 device = model.engine.get_device()
+                print(f"Cuda process memory fraction: {cuda_process_memory_fraction}")
                 print(torch.cuda.memory_summary(device=device))
                 # Start a thread to log GPU usage if configured
                 interval = float(os.getenv("LOG_GPU_USAGE_INTERVAL", "0"))
                 if interval > 0.0:
                     t = threading.Thread(target=partial(log_gpu_stats, device, interval))
                     t.start()
+
+        if model.compiled:
+
+            # trigger pt2 compile for variety of tensor shapes
+            print("Warming up PyTorch 2 compile...")
+            warmup_t0 = time.time()
+            pt2_compile_warmup(
+                model=model,
+                max_batch_size=max_batch_size,
+                max_new_tokens=max_new_tokens,
+                max_sequence_length=max_sequence_length,
+                max_batch_weight=max_batch_weight,
+                n_samples=10,
+                verbose=True,
+            )
+            warmup_t_elap = (time.time()-warmup_t0)/60.0
+            print(f"Time spent during compile warmup: {warmup_t_elap:.2f} minutes")
+
+            # no more compilations can occur after this
+            model.freeze_compile()
 
         server = aio.server()
         generate_pb2_grpc.add_TextGenerationServiceServicer_to_server(
@@ -248,7 +283,18 @@ def serve(
             print("Signal received. Shutting down")
             await server.stop(0)
 
-    asyncio.run(serve_inner(model_name, revision, deployment_framework, dtype_str))
+    asyncio.run(
+        serve_inner(
+            model_name,
+            revision,
+            deployment_framework,
+            dtype_str,
+            max_sequence_length,
+            max_new_tokens,
+            max_batch_size,
+            max_batch_weight,
+        )
+    )
 
 
 def log_gpu_stats(device="cuda:0", interval: float = 2.0):

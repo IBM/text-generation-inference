@@ -41,10 +41,12 @@ struct Args {
     max_batch_weight: Option<usize>,
     #[clap(default_value = None, long, env)]
     max_prefill_weight: Option<usize>,
-    #[clap(default_value = "20", long, env)]
+    #[clap(default_value = "24", long, env)]
     max_waiting_tokens: usize,
     #[clap(default_value = "3000", long, short, env)]
     port: u16,
+    #[clap(default_value = "8033", long, short, env)]
+    grpc_port: u16,
     #[clap(default_value = "/tmp/text-generation-server", long, env)]
     shard_uds_path: String,
     #[clap(default_value = "localhost", long, env)]
@@ -61,6 +63,8 @@ struct Args {
     tls_client_ca_cert_path: Option<String>,
     #[clap(long, env)]
     output_special_tokens: bool,
+    #[clap(default_value = "1.0", long, short, env)]
+    cuda_process_memory_fraction: f32,
 }
 
 fn main() -> ExitCode {
@@ -74,9 +78,12 @@ fn main() -> ExitCode {
     }
 
     info!("Launcher args: {:?}", args);
+    if args.cuda_process_memory_fraction <= 0.0 || args.cuda_process_memory_fraction > 1.0 {
+        panic!("cuda_process_memory_fraction must be in range 0 < x <= 1")
+    }
 
-    // By default we only have one master shard
-    let num_shard = args.num_shard.unwrap_or(1);
+    // Determine number of shards based on command line arg and env vars
+    let num_shard = find_num_shards(args.num_shard);
 
     // Signal handler
     let running = Arc::new(AtomicBool::new(true));
@@ -107,7 +114,12 @@ fn main() -> ExitCode {
                 args.revision,
                 args.deployment_framework,
                 args.dtype_str,
+                args.max_sequence_length,
+                args.max_new_tokens,
+                args.max_batch_size,
+                args.max_batch_weight,
                 args.shard_uds_path,
+                args.cuda_process_memory_fraction,
                 rank,
                 num_shard,
                 args.master_addr,
@@ -172,6 +184,8 @@ fn main() -> ExitCode {
         args.max_waiting_tokens.to_string(),
         "--port".to_string(),
         args.port.to_string(),
+        "--grpc-port".to_string(),
+        args.grpc_port.to_string(),
         "--master-shard-uds-path".to_string(),
         format!("{}-0", args.shard_uds_path),
         "--tokenizer-path".to_string(),
@@ -283,6 +297,49 @@ fn main() -> ExitCode {
     exit_code
 }
 
+
+fn num_cuda_devices() -> Option<usize> {
+    let devices = match env::var("CUDA_VISIBLE_DEVICES") {
+        Ok(devices) => devices,
+        Err(_) => env::var("NVIDIA_VISIBLE_DEVICES").ok()?,
+    };
+    let n_devices = devices.split(',').count();
+    Some(n_devices)
+}
+
+fn find_num_shards(num_shard: Option<usize>) -> usize {
+    // get the number of shards given `num_gpu` and `num_shard`
+    let num_gpus = env::var("NUM_GPUS")
+        .ok().map(|s| s.parse::<usize>().expect("NUM_GPUS must be a positive integer"));
+    let num_shard = match (num_gpus, num_shard) {
+        (Some(num_gpu), None) => num_gpu,
+        (None, Some(num_shard)) => num_shard,
+        (Some(num_gpu), Some(num_shard)) => {
+            if num_gpu != num_shard {
+                panic!("NUM_GPUS and num_shard are set to different values ({num_gpu} and {num_shard})");
+            }
+            num_shard
+        },
+        // try to default to the number of available GPUs
+        (None, None) => match num_cuda_devices() {
+            Some(num_shard) => {
+                info!("Inferring num_shard = {num_shard} from CUDA_VISIBLE_DEVICES/NVIDIA_VISIBLE_DEVICES");
+                num_shard
+            },
+            None => {
+                // By default we only have one master shard
+                info!("Defaulting num_shard to 1");
+                1
+            },
+        }
+    };
+    if num_shard < 1 {
+        panic!("`num_shard` / NUM_GPUS cannot be < 1");
+    }
+    num_shard
+}
+
+
 #[derive(Debug)]
 enum ShardStatus {
     Ready,
@@ -295,7 +352,12 @@ fn shard_manager(
     revision: Option<String>,
     deployment_framework: String,
     dtype_str: String,
+    max_sequence_length: usize,
+    max_new_tokens: usize,
+    max_batch_size: usize,
+    max_batch_weight: Option<usize>,
     uds_path: String,
+    cuda_process_memory_fraction: f32,
     rank: usize,
     world_size: usize,
     master_addr: String,
@@ -317,8 +379,18 @@ fn shard_manager(
         model_name,
         deployment_framework,
         dtype_str,
+        // Max seq length, new tokens, batch size
+        // only used for PT2 compile warmup
+        "--max-sequence-length".to_string(),
+        max_sequence_length.to_string(),
+        "--max-new-tokens".to_string(),
+        max_new_tokens.to_string(),
+        "--max-batch-size".to_string(),
+        max_batch_size.to_string(),
         "--uds-path".to_string(),
         uds_path,
+        "--cuda-process-memory-fraction".to_string(),
+        cuda_process_memory_fraction.to_string(),
     ];
 
     // Activate tensor parallelism
@@ -330,6 +402,12 @@ fn shard_manager(
     if let Some(revision) = revision {
         shard_argv.push("--revision".to_string());
         shard_argv.push(revision)
+    }
+
+    // Maximum batch weight - used only for PT2 compile
+    if let Some(max_batch_weight) = max_batch_weight {
+        shard_argv.push("--max-batch-weight".to_string());
+        shard_argv.push(max_batch_weight.to_string())
     }
 
     // Copy current process env

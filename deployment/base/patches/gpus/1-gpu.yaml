@@ -18,14 +18,6 @@ spec:
             requests:
               cpu: "8"
             limits:
-              memory: 128Gi  # for now
+              memory: 96Gi  # for now
               nvidia.com/gpu: "1"
               cpu: "16"
-
-          startupProbe:
-            httpGet:
-              port: http
-              path: /health
-            # Allow 12 minutes to start
-            failureThreshold: 24
-            periodSeconds: 30

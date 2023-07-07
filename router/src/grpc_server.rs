@@ -25,7 +25,11 @@ use crate::pb::fmaas::generation_service_server::{GenerationService, GenerationS
 use crate::server::ServerState;
 use unicode_truncate::UnicodeTruncateStr;
 use crate::pb::fmaas::model_info_response::ModelKind;
+use crate::validation::ValidationError;
 
+/// Whether to fail if sampling parameters are provided in greedy-mode requests
+/// or to silently ignore them.
+const STRICT_PARAMETER_VALIDATION: bool = false;
 
 pub(crate) async fn start_grpc_server<F: Future<Output = ()> + Send +'static> (
     grpc_addr: SocketAddr,
@@ -52,7 +56,11 @@ pub(crate) async fn start_grpc_server<F: Future<Output = ()> + Send +'static> (
     }
 
     // Build and start server
-    let grpc_service = GenerationServicer { state: shared_state, tokenizer };
+    let grpc_service = GenerationServicer {
+        state: shared_state,
+        tokenizer,
+        input_counter: metrics::register_counter!("tgi_request_input_count"),
+    };
     let grpc_server = builder
         .add_service(GenerationServiceServer::new(grpc_service))
         .serve_with_shutdown(grpc_addr, signal);
@@ -73,6 +81,7 @@ async fn load_pem(path: String, name: &str) -> Vec<u8> {
 pub struct GenerationServicer {
     state: ServerState,
     tokenizer: Tokenizer,
+    input_counter: metrics::Counter,
 }
 
 #[tonic::async_trait]
@@ -91,71 +100,69 @@ impl GenerationService for GenerationServicer {
         let start_time = Instant::now();
         let br = request.into_inner();
         let batch_size = br.requests.len();
+        let kind = if batch_size == 1 { "single" } else { "batch" };
+        metrics::increment_counter!("tgi_request_count", "kind" => kind);
         if batch_size == 0 {
             return Ok(Response::new(BatchedGenerationResponse{ responses: vec![] }));
         }
+        self.input_counter.increment(batch_size as u64);
         // Limit concurrent requests by acquiring a permit from the semaphore
         let _permit = self.state.limit_concurrent_requests
             .try_acquire_many(batch_size as u32)
             .map_err(|_| {
+                metrics::increment_counter!("tgi_request_failure", "err" => "conc_limit");
                 tracing::error!("Model is overloaded");
                 Status::resource_exhausted("Model is overloaded")
             })?;
 
-        let params = convert_params(br.params);
+        let valids = self.validate(
+            br.prefix_id,
+            br.params,
+            br.requests.into_iter().map(move |r| r.text).collect(),
+            start_time,
+        ).await?;
 
-        let responses = if batch_size == 1 {
-            // Simpler single request case
-            let response = self.generate_single(GenerateRequest {
-                prefix_id: br.prefix_id,
-                inputs: br.requests.into_iter().next().unwrap().text,
-                parameters: params,
-            }, start_time).await?;
-            vec![response]
+        if batch_size == 1 {
+            // Single request case
+            let (input_length, request) = valids.into_iter().next().unwrap();
+            self.state.batcher.infer(input_length, request)
+                .map_ok(|response| {
+                    log_response(
+                        &response.times, input_length, response.gen_token_count, response.reason,
+                        &response.output_text, start_time, "single", "Request", response.request_id
+                    );
+                    vec![response.into()]
+                }).await
         } else {
             // Batch size > 1
-
-            //TODO duplicating parameter validation for now, can change to once plus batch tokenization
-
-            let valids = br.requests.into_iter().map(move |r|
-                self.state.validation.validate(GenerateRequest {
-                    prefix_id: br.prefix_id.clone(),
-                    inputs: r.text,
-                    parameters: params.clone(),
-                })
-            );
-
-            let results = try_join_all(valids).await.map_err(|err| {
-                tracing::error!("{err}");
-                Status::invalid_argument(err.to_string())
-            })?;
-
-            let in_toks = results.iter().map(|r| r.0).collect::<Vec<usize>>();
-
-            let response_chans = self.state.batcher
-                .infer_batch(results).await
-                .map_err(|err| match err {
-                    InferError::RequestQueueFull() => Status::resource_exhausted(err.to_string()),
-                    _ => Status::from_error(Box::new(err)),
-                })?;
-
-            try_join_all(response_chans.into_iter().zip(in_toks).enumerate()
-                .map(|(i, (f, in_len))| f.map_ok(move |r| {
-                    log_response(
-                        &r.times, in_len, r.gen_token_count, r.reason,&r.output_text, start_time,
-                        &format!("Sub-request {} from batch of {}", i + 1, batch_size)
-                    );
-                    r.into()
-                }))
-            )
-            .await
-            .map_err(|err| {
+            let input_tokens = valids.iter().map(|r| r.0).collect::<Vec<usize>>();
+            match self.state.batcher.infer_batch(valids).await {
+                Ok(response_chans) => {
+                    try_join_all(response_chans.into_iter().zip(input_tokens).enumerate()
+                        .map(|(i, (f, in_len))| f.map_ok(move |r| {
+                            log_response(
+                                &r.times, in_len, r.gen_token_count, r.reason,&r.output_text, start_time,
+                                "batch", &format!("Sub-request {} from batch of {}", i + 1, batch_size), r.request_id
+                            );
+                            r.into()
+                        }))
+                    ).await
+                },
+                Err(err) => Err(err),
+            }
+        }.map_err(|err| match err {
+            InferError::RequestQueueFull() => {
+                metrics::increment_counter!("tgi_request_failure", "err" => "queue_full");
+                Status::resource_exhausted(err.to_string())
+            },
+            _ => {
+                metrics::increment_counter!("tgi_request_failure", "err" => "generate");
                 tracing::error!("{err}");
                 Status::from_error(Box::new(err))
-            })?
-        };
-
-        Ok(Response::new(BatchedGenerationResponse{ responses }))
+            },
+        }).map(
+            |responses| Response::new(BatchedGenerationResponse{ responses })
+        )
     }
 
     type GenerateStreamStream = ResponseStream<Result<GenerationResponse, Status>, StreamContext>;
@@ -173,40 +180,40 @@ impl GenerationService for GenerationServicer {
         &self, request: Request<SingleGenerationRequest>
     ) -> Result<Response<Self::GenerateStreamStream>, Status> {
         let start_time = Instant::now();
+        metrics::increment_counter!("tgi_request_count", "kind" => "stream");
+        self.input_counter.increment(1);
         let permit = self.state.limit_concurrent_requests.clone()
             .try_acquire_owned().map_err(|_| {
-            tracing::error!("Model is overloaded");
-            Status::resource_exhausted("Model is overloaded")
+                metrics::increment_counter!("tgi_request_failure", "err" => "conc_limit");
+                tracing::error!("Model is overloaded");
+                Status::resource_exhausted("Model is overloaded")
         })?;
         let sr = request.into_inner();
-        let req = sr.request.ok_or(Status::invalid_argument("missing request"))?;
+        let req = sr.request.ok_or_else(
+            || Status::invalid_argument("missing request")
+        )?;
 
         // Validate request
-        let (input_length, validated_request) = self.state.validation
-            .validate(GenerateRequest {
-                prefix_id: sr.prefix_id,
-                inputs: req.text,
-                parameters: convert_params(sr.params),
-            })
-            .await
-            .map_err(|err| {
-                tracing::error!("{err}");
-                Status::invalid_argument(err.to_string())
-            })?;
+        let (input_length, validated_request) = self
+            .validate(sr.prefix_id, sr.params, vec![req.text], start_time)
+            .await?
+            .pop().unwrap();
 
         let stream = self.state.batcher
             .infer_stream(input_length, validated_request, |r| match r {
                 Ok(resp) => Ok(resp.into()),
                 Err(err) => Err(Status::from_error(Box::new(err))),
-            }, |ctx, count, reason, times, out, err| {
+            }, |ctx, count, reason, request_id, times, out, err| {
                 let _enter = ctx.span.enter();
                 if let Some(e) = err {
+                    metrics::increment_counter!("tgi_request_failure", "err" => "generate");
                     tracing::error!("Streaming response failed after {count} tokens, \
                         output so far: '{out}': {e}");
                 } else {
                     log_response(
                         &times, ctx.input_token_count, count,
-                        reason,&out, ctx.start_time, "Streaming response"
+                        reason,&out, ctx.start_time,
+                        "stream", "Streaming response", request_id
                     );
                 }
             }, StreamContext {
@@ -214,11 +221,18 @@ impl GenerationService for GenerationServicer {
                 input_token_count: input_length,
                 start_time,
                 _permit: permit,
-            }).await
-            //TODO move this somewhere common .. use From trait
+            })
+            .await
             .map_err(|err| match err {
-                InferError::RequestQueueFull() => Status::resource_exhausted(err.to_string()),
-                _ => Status::from_error(Box::new(err)),
+                InferError::RequestQueueFull() => {
+                    metrics::increment_counter!("tgi_request_failure", "err" => "queue_full");
+                    Status::resource_exhausted(err.to_string())
+                },
+                _ => {
+                    metrics::increment_counter!("tgi_request_failure", "err" => "unknown");
+                    tracing::error!("{err}");
+                    Status::from_error(Box::new(err))
+                },
             })?;
 
         // Inference
@@ -264,75 +278,97 @@ pub struct StreamContext {
     _permit: OwnedSemaphorePermit, // dropped (released) when the stream is dropped
 }
 
-
 impl GenerationServicer {
-    // Simpler single request case
-    async fn generate_single(&self, request: GenerateRequest, start_time: Instant)
-        -> Result<GenerationResponse, Status> {
-        let (input_length, valid_request) = self.state.validation
-            .validate(request)
-            .await
-            .map_err(|err| {
-                tracing::error!("{err}");
-                Status::invalid_argument(err.to_string())
-            })?;
-
-        let response = self.state.batcher
-            .infer(input_length, valid_request)
-            .await
-            .map_err(|err| match err {
-                InferError::RequestQueueFull() => Status::resource_exhausted(err.to_string()),
-                _ => {
-                    tracing::error!("{err}");
-                    Status::from_error(Box::new(err))
-                },
-            })?;
-        log_response(
-            &response.times, input_length, response.gen_token_count, response.reason,
-            &response.output_text, start_time, "Request"
-        );
-        Ok(response.into())
+    pub(crate) async fn validate(
+        &self,
+        prefix_id: Option<String>,
+        parameters: Option<Parameters>,
+        inputs: Vec<String>,
+        start_time: Instant,
+    ) -> Result<Vec<(usize, GenerateRequest)>, Status> {
+        match convert_params(parameters) {
+            Ok(params) => self.state.validation.validate(
+                prefix_id, params, inputs
+            ).await,
+            Err(err) => Err(err),
+        }.map_err(|err| {
+            metrics::increment_counter!("tgi_request_failure", "err" => "validation");
+            tracing::error!("{err}");
+            Status::invalid_argument(err.to_string())
+        }).map(|requests| {
+            metrics::histogram!("tgi_request_validation_duration", start_time.elapsed().as_secs_f64());
+            requests
+        })
     }
 }
 
 fn log_response(
-    times: &Option<Times>, in_toks: usize, toks: u32, reason: StopReason,
-    output: &String, start_time: Instant, kind: &str,
+    times: &Option<Times>,
+    input_tokens: usize,
+    generated_tokens: u32,
+    reason: StopReason,
+    output: &String,
+    start_time: Instant,
+    kind: &'static str,
+    kind_log: &str,
+    request_id: Option<u64>,
 ) {
     let span;
     let _enter;
     // Timings
+    let total_time = Instant::now() - start_time;
     if let Some(times) = times.as_ref() {
         let validation_time = times.queued - start_time;
         let queue_time = times.start - times.queued;
         let inference_time = times.end - times.start;
-        let time_per_token = inference_time.checked_div(toks)
+        let time_per_token = inference_time.checked_div(generated_tokens)
             .unwrap_or_else(|| Duration::new(0, 0));
-        let total_time = Instant::now() - start_time;
 
         // Tracing metadata
-        span = info_span!("",
-        validation_time = ?validation_time,
-        queue_time = ?queue_time,
-        inference_time = ?inference_time,
-        time_per_token = ?time_per_token,
-        total_time = ?total_time,
-        input_toks = in_toks);
+        span = info_span!(
+            "",
+            validation_time = ?validation_time,
+            queue_time = ?queue_time,
+            inference_time = ?inference_time,
+            time_per_token = ?time_per_token,
+            total_time = ?total_time,
+            input_toks = input_tokens,
+            request_id = request_id,
+        );
         _enter = span.enter();
+
+        metrics::histogram!("tgi_request_inference_duration", inference_time.as_secs_f64());
+        metrics::histogram!("tgi_request_mean_time_per_token_duration", time_per_token.as_secs_f64());
+    }
+
+    // Metrics
+    match reason {
+        Error => metrics::increment_counter!("tgi_request_failure", "err" => "generate"),
+        Cancelled => (), // recorded where cancellation is detected
+        _ => {
+            metrics::increment_counter!(
+                "tgi_request_success", "stop_reason" => reason.as_str_name(), "kind" => kind
+            );
+            metrics::histogram!("tgi_request_duration", total_time.as_secs_f64());
+            metrics::histogram!("tgi_request_generated_tokens", generated_tokens as f64);
+            metrics::histogram!(
+                "tgi_request_total_tokens", (generated_tokens as usize + input_tokens) as f64
+            );
+        }
     }
 
     let len = output.len();
     let output = truncate(output, 32);
     match reason {
         Error => tracing::error!(
-            "{kind} generated {toks} tokens before {reason:?}, output {len} bytes: {output:?}",
+            "{kind_log} generated {generated_tokens} tokens before {reason:?}, output {len} bytes: {output:?}",
         ),
         Cancelled | TokenLimit => tracing::warn!(
-            "{kind} generated {toks} tokens before {reason:?}, output {len} bytes: {output:?}",
+            "{kind_log} generated {generated_tokens} tokens before {reason:?}, output {len} bytes: {output:?}",
         ),
         _ => tracing::info!(
-            "{kind} generated {toks} tokens before {reason:?}, output {len} bytes: {output:?}",
-        )
+            "{kind_log} generated {generated_tokens} tokens before {reason:?}, output {len} bytes: {output:?}",
+        ),
     };
 }
 
@@ -346,7 +382,7 @@ fn truncate(string: &str, len: usize) -> Cow<str> {
     }
 }
 
-fn convert_params(params: Option<Parameters>) -> GenerateParameters {
+fn convert_params(params: Option<Parameters>) -> Result<GenerateParameters, ValidationError> {
     match params {
         Some(p) => {
             let mut gp = default_parameters();
@@ -385,16 +421,23 @@ fn convert_params(params: Option<Parameters>) -> GenerateParameters {
                     gp.temperature = s.temperature;
                     gp.top_k = s.top_k as i32;
                     if s.top_p != 0.0 { gp.top_p = s.top_p }
+                    gp.typical_p = s.typical_p;
                     gp.seed = s.seed;
                 }
                 if gp.temperature == 0.0 {
                     gp.temperature = 1.0; // sampling and temp 0 => disabled i.e. temp 1
                 }
-            };
+            } else if STRICT_PARAMETER_VALIDATION {
+                if let Some(s) = p.sampling {
+                    if s.temperature != 0.0 || s.top_p != 0.0 || s.top_k != 0 || s.seed.is_some() {
+                        return Err(ValidationError::SampleParametersGreedy)
+                    }
+                }
+            }
             // else temperature = 0.0 => greedy
-            gp
+            Ok(gp)
         },
-        None => default_parameters(),
+        None => Ok(default_parameters()),
     }
 }
 

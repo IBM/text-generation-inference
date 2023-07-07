@@ -11,7 +11,7 @@ spec:
           env:
             - name: MAX_SEQUENCE_LENGTH
               value: "4096"
-            - name: MAX_INPUT_LENGTH
+            - name: MAX_NEW_TOKENS
               value: "1536"
             - name: MAX_BATCH_SIZE
               value: "128"
