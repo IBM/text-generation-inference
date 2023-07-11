@@ -1,0 +1,42 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namePrefix: ibm-mpt-7b-instruct-
+
+commonLabels:
+  app: text-gen-ibm-mpt-7b-instruct
+
+resources:
+  - ../../base
+
+patchesStrategicMerge:
+  - ../../base/patches/gpus/1-gpu.yaml
+  - ../../base/patches/gpus/a100-80g.yaml
+  - |-
+   apiVersion: apps/v1
+   kind: Deployment
+   metadata:
+     name: inference-server
+   spec:
+     template:
+       spec:
+         containers:
+           - name: server
+             env:
+             - name: MODEL_NAME
+               value: ibm/mpt-7b-instruct2
+             - name: TRUST_REMOTE_CODE
+               value: "true"
+             - name: MAX_SEQUENCE_LENGTH
+               value: "2048"
+             - name: DEPLOYMENT_FRAMEWORK
+               value: "hf_transformers"
+
+
+             startupProbe:
+               httpGet:
+                 port: http
+                 path: /health
+               # MPT-7B currently takes more than 20 mins to load :-(
+               failureThreshold: 52
+               periodSeconds: 30

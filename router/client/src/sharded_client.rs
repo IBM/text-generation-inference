@@ -4,9 +4,7 @@ use crate::{Batch, Client, HealthResponse, Token};
 use futures::future::join_all;
 use tokio::runtime::Handle;
 use tokio::sync::{broadcast, mpsc};
-use tokio::time::Instant;
 use tonic::transport::Uri;
-use tracing::info;
 use crate::pb::generate::v1::{CachedBatch, InputTokens};
 use crate::pb::generate::v1::model_info_response::ModelType;
 use crate::sharded_client::Request::{NextToken, Prefill};
@@ -97,18 +95,13 @@ impl ShardedClient {
     pub async fn prefill(
         &mut self, batch: Batch, to_prune: Vec<CachedBatch>,
     ) -> Result<Option<(Vec<Token>, Vec<InputTokens>, Vec<GenerateError>, u64)>> {
-        let batch_size = batch.requests.len();
-        if batch_size == 0 {
+        if batch.requests.is_empty() {
             return Ok(None);
         }
-        let batch_tokens: u32 = batch.requests.iter().map(|r| r.input_length).sum();
         let (tx, mut rx) = mpsc::channel(1);
-        let before = Instant::now();
         self.sender.send((Prefill(batch, to_prune), tx))
             .map_err(|e| ClientError::Generation(e.to_string()))?;
-        let result = rx.recv().await.ok_or_else(|| ClientError::Connection("client closed".to_string()))?;
-        info!("Prefill took {:?} for {batch_size} inputs, {batch_tokens} total tokens", before.elapsed());
-        result
+        rx.recv().await.ok_or_else(|| ClientError::Connection("client closed".to_string()))?
     }
 
     /// Generate one token for each request in the given cached batch

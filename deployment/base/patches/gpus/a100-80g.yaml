@@ -1,0 +1,32 @@
+# Overlay to use 1 GPU
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference-server
+spec:
+  template:
+    metadata:
+      labels:
+        placement: nvidia-a100
+    spec:
+      # Colocate small models
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: nvidia.com/gpu.product
+                operator: In
+                values:
+                  - NVIDIA-A100-SXM4-80GB
+        podAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: placement
+                      operator: In
+                      values:
+                        - nvidia-a100
+                topologyKey: kubernetes.io/hostname

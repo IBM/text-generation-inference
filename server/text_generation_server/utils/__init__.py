@@ -22,7 +22,7 @@ from text_generation_server.utils.tokens import (
     get_token_info,
     get_input_tokens_info,
 )
-
+from text_generation_server.utils.warmup import pt2_compile_warmup
 
 __all__ = [
     "convert_file",
@@ -44,4 +44,5 @@ __all__ = [
     "Sampling",
     "get_token_info",
     "get_input_tokens_info",
+    "pt2_compile_warmup",
 ]

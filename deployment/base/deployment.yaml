@@ -59,8 +59,8 @@ spec:
             httpGet:
               port: http
               path: /health
-            # Allow up to 60 minutes to start
-            failureThreshold: 120
+            # Allow 12 minutes to start
+            failureThreshold: 24
             periodSeconds: 30
 
           readinessProbe:

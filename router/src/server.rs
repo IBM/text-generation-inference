@@ -11,6 +11,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
+use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use text_generation_client::ShardedClient;
 use tokenizers::Tokenizer;
 use tokio::signal;
@@ -88,11 +89,14 @@ async fn generate(
 
     // Validate request
     //let details = req.0.parameters.details;
+    let GenerateRequest {inputs, prefix_id, parameters} = req.0;
     let (input_length, validated_request) =
-        state.validation.validate(req.0).await.map_err(|err| {
+        state.validation.validate(
+            prefix_id, parameters, vec![inputs]
+        ).await.map_err(|err| {
             tracing::error!("{err}");
             err
-        })?;
+        })?.pop().unwrap();
 
     // Inference
     let response = state
@@ -183,21 +187,21 @@ impl<B: BatchType> BatchConfigValidator<B> {
         max_batch_weight: Option<usize>,
         max_prefill_weight: Option<usize>,
     ) -> (usize, usize) {
-        let single_request_stats = <B as BatchType>::update_stats(
+        let single_request_stats = <B>::update_stats(
             &B::Stats::default(), max_sequence_length, 0
         );
-        let single_request_weight = <B as BatchType>::batch_weight(
+        let single_request_weight = <B>::batch_weight(
             &single_request_stats, 1
         );
         let weight_upper_bound = single_request_weight * max_batch_size;
 
         let max_prefill_weight = max_prefill_weight.unwrap_or(
-            <B as BatchType>::default_max_prefill_weight()
+            <B>::default_max_prefill_weight()
         );
 
         // 0 means no max
         if max_prefill_weight > 0 {
-            let single_request_prefill_weight = <B as BatchType>::prefill_weight(
+            let single_request_prefill_weight = <B>::prefill_weight(
                 &single_request_stats, 1
             );
             if max_prefill_weight < single_request_prefill_weight {
@@ -250,6 +254,10 @@ pub struct ServerRunArgs {
     pub output_special_tokens: bool,
 }
 
+async fn metrics(prom_handle: Extension<PrometheusHandle>) -> String {
+    prom_handle.render()
+}
+
 /// Serving method
 #[allow(clippy::too_many_arguments)]
 pub async fn run(mut args: ServerRunArgs) {
@@ -285,7 +293,7 @@ async fn do_run<B: BatchType>(
 
     // Create state
     let decoder = Decoder::new(
-        args.tokenizer.clone().into(), seq2seq, eos_token_id, !args.output_special_tokens,
+        args.tokenizer.clone(), seq2seq, eos_token_id, !args.output_special_tokens,
     );
     let generation_health = Arc::new(AtomicBool::new(false));
     let health_ext = Health::new(
@@ -306,7 +314,7 @@ async fn do_run<B: BatchType>(
     );
     let validation = Validation::new(
         args.validation_workers,
-        args.tokenizer.clone().into(),
+        args.tokenizer.clone(),
         args.client,
         args.max_sequence_length,
         args.max_new_tokens,
@@ -320,13 +328,66 @@ async fn do_run<B: BatchType>(
         seq2seq,
     };
 
+
+    // Duration buckets
+    let duration_matcher = Matcher::Suffix(String::from("duration"));
+    let n_duration_buckets = 35;
+    let mut duration_buckets = Vec::with_capacity(n_duration_buckets);
+    // Minimum duration in seconds
+    let mut value = 0.0001;
+    for _ in 0..n_duration_buckets {
+        // geometric sequence
+        value *= 1.5;
+        duration_buckets.push(value);
+    }
+    // Input Length buckets
+    let input_length_matcher = Matcher::Full(String::from("tgi_request_input_length"));
+    let max_sequence_length_buckets: Vec<f64> = (0..64)
+        .map(|x| (args.max_sequence_length as f64 / 64.0) * (x + 1) as f64)
+        .collect();
+    // Generated tokens buckets
+    let generated_tokens_matcher = Matcher::Full(String::from("tgi_request_generated_tokens"));
+    let max_new_tokens_buckets: Vec<f64> = (0..64)
+        .map(|x| (args.max_new_tokens as f64 / 64.0) * (x + 1) as f64)
+        .collect();
+    // Max new tokens buckets
+    let max_new_tokens_matcher = Matcher::Full(String::from("tgi_request_max_new_tokens"));
+    // Total tokens buckets
+    let total_tokens_matcher = Matcher::Full(String::from("tgi_request_total_tokens"));
+    // Batch size buckets
+    let batch_size_matcher = Matcher::Full(String::from("tgi_batch_next_size"));
+    let batch_inference_size_matcher = Matcher::Full(String::from("tgi_batch_inference_batch_size"));
+    let batch_size_buckets: Vec<f64> = (0..args.max_batch_size).map(|x| (x + 1) as f64).collect();
+
+    // Prometheus handler
+    let builder = PrometheusBuilder::new()
+        .set_buckets_for_metric(duration_matcher, &duration_buckets)
+        .unwrap()
+        .set_buckets_for_metric(input_length_matcher, &max_sequence_length_buckets)
+        .unwrap()
+        .set_buckets_for_metric(generated_tokens_matcher, &max_new_tokens_buckets)
+        .unwrap()
+        .set_buckets_for_metric(max_new_tokens_matcher, &max_new_tokens_buckets)
+        .unwrap()
+        .set_buckets_for_metric(total_tokens_matcher, &max_sequence_length_buckets)
+        .unwrap()
+        .set_buckets_for_metric(batch_size_matcher, &batch_size_buckets)
+        .unwrap()
+        .set_buckets_for_metric(batch_inference_size_matcher, &batch_size_buckets)
+        .unwrap();
+    let prom_handle = builder
+        .install_recorder()
+        .expect("failed to install metrics recorder");
+
     // Create router
     let app = Router::new()
         // Disabling HTTP generate endpoint for now
         //.route("/generate", post(generate))
         //.layer(Extension(shared_state.clone()))
         .route("/health", get(health))
-        .layer(Extension(health_ext));
+        .layer(Extension(health_ext))
+        .route("/metrics", get(metrics))
+        .layer(Extension(prom_handle));
 
     let notify = Arc::new(Notify::new());
     let notify_clone = notify.clone();

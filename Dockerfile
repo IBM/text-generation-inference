@@ -1,6 +1,8 @@
 ## Global Args #################################################################
-ARG BASE_UBI_IMAGE_TAG=8.8-854
-ARG PROTOC_VERSION=23.2
+ARG BASE_UBI_IMAGE_TAG=8.8-1009
+ARG PROTOC_VERSION=23.3
+ARG PYTORCH_VERSION=2.1.0.dev20230531
+ARG OPTIMUM_VERSION=1.9.0
 
 ## Base Layer ##################################################################
 FROM registry.access.redhat.com/ubi8/ubi:${BASE_UBI_IMAGE_TAG} as base
@@ -83,7 +85,8 @@ RUN dnf config-manager --disableplugin=subscription-manager \
 ENV LIBRARY_PATH="$CUDA_HOME/lib64/stubs"
 
 ## Rust builder ################################################################
-FROM rust:1.69 as rust-builder
+# Specific debian version so that compatible glibc version is used
+FROM rust:1.70-buster as rust-builder
 ARG PROTOC_VERSION
 
 # Install protoc, no longer included in prost crate
@@ -132,20 +135,21 @@ ENV CUDA_VISIBLE_DEVICES=""
 
 ## Tests #######################################################################
 FROM test-base as cpu-tests
+ARG PYTORCH_VERSION
+ARG OPTIMUM_VERSION
 
 WORKDIR /usr/src
 
 # Install specific version of torch
 #RUN cd server && make TORCH_VERSION="1.12.1" TORCH_URL="https://download.pytorch.org/whl/cpu" install-torch
-RUN pip install torch=="2.0.0" --extra-index-url "https://download.pytorch.org/whl/cpu" --no-cache-dir
+RUN pip install torch=="$PYTORCH_VERSION+cpu" --index-url "https://download.pytorch.org/whl/nightly/cpu" --no-cache-dir
 
 # Install specific version of transformers
 COPY server/Makefile-transformers server/Makefile
 RUN cd server && make install-custom-transformers
 
 # Install optimum - not used in tests for now
-COPY server/Makefile-optimum server/Makefile
-#RUN cd server && make install-optimum
+#RUN pip install optimum==$OPTIMUM_VERSION --no-cache-dir
 
 COPY server/Makefile server/Makefile
 
@@ -165,7 +169,10 @@ COPY --from=launcher-builder /usr/local/cargo/bin/text-generation-launcher /usr/
 COPY integration_tests integration_tests
 RUN cd integration_tests && make install
 
+## Build #######################################################################
 FROM cuda-devel as build
+ARG PYTORCH_VERSION
+ARG OPTIMUM_VERSION
 
 RUN dnf install -y --disableplugin=subscription-manager \
     unzip \
@@ -178,10 +185,14 @@ RUN cd ~ && \
     chmod +x Miniconda3-*-Linux-x86_64.sh && \
     bash ./Miniconda3-*-Linux-x86_64.sh -bf -p /opt/miniconda
 
+# Remove tests directory containing test private keys
+RUN rm -r /opt/miniconda/pkgs/conda-content-trust-*/info/test/tests
+
 ENV PATH=/opt/miniconda/bin:$PATH
 
 # Install specific version of torch
-RUN pip install ninja==1.11.1 torch=="2.0.0+cu117" --extra-index-url "https://download.pytorch.org/whl/cu117" --no-cache-dir
+RUN pip install ninja==1.11.1
+RUN pip install torch==$PYTORCH_VERSION+cu117 --index-url "https://download.pytorch.org/whl/nightly/cu117" --no-cache-dir
 
 # Install specific version of flash attention
 COPY server/Makefile-flash-att server/Makefile
@@ -192,8 +203,7 @@ COPY server/Makefile-transformers server/Makefile
 RUN cd server && BUILD_EXTENSIONS="True" make install-custom-transformers
 
 # Install optimum
-COPY server/Makefile-optimum server/Makefile
-RUN cd server && make install-optimum
+RUN pip install optimum[onnxruntime-gpu]==$OPTIMUM_VERSION --no-cache-dir
 
 # Install onnx
 COPY server/Makefile-onnx server/Makefile
@@ -201,7 +211,7 @@ RUN cd server && make install-onnx
 
 # Install onnx runtime
 COPY server/Makefile-onnx-runtime server/Makefile
-RUN cd server && make install-onnx-runtime-nightly
+RUN cd server && make install-onnx-runtime
 
 COPY server/Makefile server/Makefile
 
@@ -211,12 +221,13 @@ COPY server/Makefile server/Makefile
 ## Final Inference Server image ################################################
 FROM cuda-runtime as server-release
 
-# These intended to be overridden
-ENV MODEL_NAME=bigscience/bloom \
-    NUM_GPUS=8 \
-    CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
-    DEPLOYMENT_FRAMEWORK=hf_accelerate \
-    DTYPE_STR=bfloat16
+# Install C++ compiler (required at runtime when PT2_COMPILE is enabled)
+RUN dnf install -y --disableplugin=subscription-manager gcc-c++ \
+    && dnf clean all --disableplugin=subscription-manager \
+    && useradd -u 2000 tgis -m -g 0
+
+# Default deployment framework intended to be overridden
+ENV DEPLOYMENT_FRAMEWORK=hf_accelerate
 
 SHELL ["/bin/bash", "-c"]
 
@@ -238,18 +249,21 @@ COPY --from=launcher-builder /usr/local/cargo/bin/text-generation-launcher /usr/
 
 ENV PORT=3000 \
     GRPC_PORT=8033 \
-    HOME=/homedir \
+    HOME=/home/tgis \
     TRANSFORMERS_CACHE="/tmp/transformers_cache"
 
 # Runs as arbitrary user in OpenShift
-RUN mkdir /homedir && chmod g+wx /homedir
+RUN chmod -R g+wx ${HOME}
 
 # Temporary for dev
 RUN chmod -R g+w /opt/miniconda/lib/python3.*/site-packages/text_generation_server /usr/src /usr/local/bin \
     /opt/miniconda/lib/python3.*/site-packages/transformers-* /opt/miniconda/lib/python3.*/site-packages/optimum \
     /opt/miniconda/lib/python3.*/site-packages/onnxruntime/transformers
 
+# Run as non-root user by default
+USER tgis
+
 EXPOSE ${PORT}
 EXPOSE ${GRPC_PORT}
 
-CMD HF_HUB_OFFLINE=1 HUGGINGFACE_HUB_CACHE=$TRANSFORMERS_CACHE text-generation-launcher --num-shard $NUM_GPUS
+CMD HF_HUB_OFFLINE=1 HUGGINGFACE_HUB_CACHE=$TRANSFORMERS_CACHE text-generation-launcher

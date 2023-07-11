@@ -107,6 +107,9 @@ message SamplingParameters {
   uint32 top_k = 2;
   // Default (0) means disabled (equivalent to 1.0)
   float top_p = 3;
+  // Default (0) means disabled (equivalent to 1.0)
+  float typical_p = 4;
+
   optional uint64 seed = 5;
 }
 

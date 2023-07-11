@@ -21,3 +21,11 @@ spec:
               memory: 512Gi  # for now
               nvidia.com/gpu: "8"
               cpu: "64"
+
+          startupProbe:
+            httpGet:
+              port: http
+              path: /health
+            # Allow 60 minutes to start
+            failureThreshold: 120
+            periodSeconds: 30

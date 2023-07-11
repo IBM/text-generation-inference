@@ -50,9 +50,21 @@ def get_model(model_name: str, revision: str, deployment_framework: str, dtype_s
             from text_generation_server.models.custom_modeling.flash_neox_modeling import FlashGPTNeoXForCausalLM
 
             model_class = FlashGPTNeoXForCausalLM
+        elif model_type in ["RefinedWeb", "RefinedWebModel"]:
+            from text_generation_server.models.custom_modeling.flash_rw_modeling import FlashRWForCausalLM, RWConfig
+
+            RWConfig.model_type = model_type
+            model_config = RWConfig.from_pretrained(model_path, trust_remote_code=TRUST_REMOTE_CODE)
+            model_class = FlashRWForCausalLM
         elif model_type == "gpt_bigcode" or model_name.startswith("bigcode/"):
             from text_generation_server.models.flash_santacoder import FlashSantacoder
             return FlashSantacoder(model_name, revision, dtype, model_config)
+        elif model_type == "llama":
+            from text_generation_server.models.flash_llama import FlashLlama, FlashLlamaForCausalLM
+            # Hack for now
+            if deployment_framework != "hf_custom_tp":
+                return FlashLlama(model_name, revision, dtype, model_config)
+            model_class = FlashLlamaForCausalLM
         else:
             raise NotImplementedError(f"FlashAttention not supported for model type {model_type}")
 

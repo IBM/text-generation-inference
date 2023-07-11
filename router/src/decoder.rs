@@ -1,10 +1,12 @@
 use std::mem::take;
-use tokenizers::DecoderWrapper::{BPE, ByteLevel, Metaspace, WordPiece, CTC};
+use tokenizers::DecoderWrapper::{BPE, ByteLevel, Metaspace, WordPiece, CTC, Sequence};
 use tokenizers::{Error, Tokenizer};
 use unicode_segmentation::UnicodeSegmentation;
 use crate::batcher::InferError::DetokenizationError;
 use crate::batcher::InferError;
 
+// Note this currently includes a hack where if a Sequence-type decoder is encountered
+// we assume that it's the Llama tokenizer and apply both byte-level and first-diff logic
 
 pub(crate) struct Decoder {
     tokenizer: Tokenizer,
@@ -53,14 +55,16 @@ impl Decoder {
         // How we handle continuation depends on the specific decoder's behaviour,
         // see each one's implementation of decode_chain in the tokenizers library.
         match self.tokenizer.get_decoder() {
-            Some(Metaspace(_) | WordPiece(_)) => {
+            Some(Metaspace(_) | WordPiece(_) | Sequence(_)) => {
                 // For these, the first token in the sequence is treated differently,
                 // so we add and then strip a placeholder token.
                 ids.insert(0, self.single_tok_id);
                 let result = self.decode_full(ids)?;
-                Ok(result.strip_prefix(&self.single_tok)
-                    .ok_or_else(|| DetokenizationError("Unexpected".into()))
-                    ?.to_string())
+                let mut text = result.strip_prefix(&self.single_tok).ok_or_else(
+                    || DetokenizationError("Unexpected".into())
+                )?.to_string();
+                text.truncate(text.trim_end_matches('�').len()); // Avoid add'l allocation
+                Ok(text)
             },
             Some(BPE(_)) => {
                 ids.push(self.single_tok_id);
@@ -73,8 +77,8 @@ impl Decoder {
                 // Just prepend a space
                 Ok(format!(" {}", self.decode_full(ids)?))
             },
-            _ => {
-                Err(DetokenizationError("Unsupported tokenizer type".to_string()))
+            Some(tok) => {
+                Err(DetokenizationError(format!("Unsupported tokenizer type: {:?}", tok)))
             }
         }
     }
@@ -91,17 +95,16 @@ pub(crate) enum IncrementalDecoderWrapper {
 impl IncrementalDecoderWrapper {
     pub(crate) fn for_decoder(decoder: &Decoder, is_start: bool) -> Self {
         match decoder.tokenizer.get_decoder() {
-            Some(ByteLevel(_)) => Self::ByteLevel(IncrementalBLDecoder{
-                id_buffer: vec![], str_buffer: String::new(), output: String::new(),
-            }),
-            Some(BPE(_)) => Self::LastDiff(IncrementalLastDiffDecoder{
+            Some(ByteLevel(_)) => Self::ByteLevel(IncrementalBLDecoder::new(false, false)),
+            Some(Sequence(_)) => Self::ByteLevel(IncrementalBLDecoder::new(true, is_start)),
+            Some(BPE(_)) => Self::LastDiff(IncrementalLastDiffDecoder {
                 output: String::new(), next_id: None,
             }),
-            Some(CTC(_)) => Self::DeDup(IncrementalDeDupDecoder{
+            Some(CTC(_)) => Self::DeDup(IncrementalDeDupDecoder {
                 output: String::new(), last_id: None,
             }),
             Some(Metaspace(_) | WordPiece(_)) | None | _ => Self::FirstDiff(
-                IncrementalFirstDiffDecoder{
+                IncrementalFirstDiffDecoder {
                     output: String::new(), first: is_start,
                 }
             ),
@@ -235,13 +238,37 @@ pub(crate) struct IncrementalBLDecoder {
     id_buffer: Vec<u32>,
     str_buffer: String,
     output: String,
+    first_diff: bool,
+    first: bool,
 }
 
+impl IncrementalBLDecoder {
+    fn new(first_diff: bool, first: bool) -> Self{
+        Self {
+            id_buffer: vec![],
+            str_buffer: String::new(),
+            output: String::new(),
+            first_diff,
+            first,
+        }
+    }
+}
 
 impl IncrementalDecoder for IncrementalBLDecoder {
     fn next(&mut self, token: u32, decoder: &Decoder) -> Result<String, InferError> {
         self.id_buffer.push(token);
-        let text = decoder.decode_full(self.id_buffer.clone())?;
+        let mut buffer = self.id_buffer.clone();
+        let text = if self.first_diff && !self.first {
+            // Prepend placeholder token to avoid first-token differences
+            buffer.insert(0, decoder.single_tok_id);
+            let result = decoder.decode_full(buffer)?;
+            result.strip_prefix(&decoder.single_tok).ok_or_else(
+                || DetokenizationError("Unexpected".into())
+            )?.to_string()
+        } else {
+            self.first = false;
+            decoder.decode_full(buffer)?
+        };
         // Defer decoding until we have enough bytes for complete UTF-8
         if !text.ends_with('�') {
             self.output.push_str(&*text);

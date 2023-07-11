@@ -3,26 +3,36 @@ import os
 import torch
 import torch.distributed
 
-from typing import List, Optional, Any, Tuple
+from typing import List, Optional, Any
 
 from accelerate import init_empty_weights
 from safetensors import safe_open
-from transformers import AutoConfig
 from transformers.models.auto.auto_factory import _BaseAutoModelClass
 from transformers.models.bloom.parallel_layers import (
-    TensorParallelColumnLinear,
-    TensorParallelEmbedding,
-    TensorParallelRowLinear,
+    TensorParallelColumnLinear as BloomTensorParallelColumnLinear,
+    TensorParallelEmbedding as BloomTensorParallelEmbedding,
+    TensorParallelRowLinear as BloomTensorParallelRowLinear,
 )
 from transformers.models.t5.parallel_layers import (
     TensorParallelRowLinear as T5TensorParallelRowLinear,
     TensorParallelColumnLinear as T5TensorParallelColumnLinear,
     TensorParallelEmbedding as T5TensorParallelEmbedding,
 )
+from text_generation_server.models.custom_modeling.flash_llama_modeling import (
+    TensorParallelEmbedding as LlamaTensorParallelEmbedding,
+    TensorParallelRowLinear as LlamaTensorParallelRowLinear,
+    TensorParallelColumnLinear as LlamaTensorParallelColumnLinear,
+)
+
+from text_generation_server.utils.layers import (
+    TensorParallelColumnLinear,
+    TensorParallelRowLinear,
+    TensorParallelEmbedding,
+)
 
 from text_generation_server.inference_engine import BaseInferenceEngine
 from text_generation_server.utils.dist import initialize_torch_distributed
-from text_generation_server.utils.hub import TRUST_REMOTE_CODE, local_weight_files
+from text_generation_server.utils.hub import local_weight_files
 
 
 class InferenceEngine(BaseInferenceEngine):
@@ -35,10 +45,24 @@ class InferenceEngine(BaseInferenceEngine):
     ) -> None:
         super().__init__(model_path, model_config)
 
+        pass_process_group = False
         if self._config.model_type == "bloom":
+            slow_but_exact = os.getenv('BLOOM_SLOW_BUT_EXACT', 'false').lower() == 'true'
+            self._config.slow_but_exact = slow_but_exact
             load_weights = self.load_weights_bloom
         elif self._config.model_type == "t5":
             load_weights = self.load_weights_t5
+        elif self._config.model_type in ["RefinedWeb", "RefinedWebModel"]:
+            if model_class.__name__ != "FlashRWForCausalLM":
+                raise ValueError(f"RW model TP only supported with FlashAttention")
+            pass_process_group = True
+            load_weights = self.load_weights_rw
+        elif self._config.model_type == "llama":
+            if model_class.__name__ != "FlashLlamaForCausalLM":
+                raise ValueError(f"Llama model TP only supported with FlashAttention")
+            pass_process_group = True
+            load_weights = self.load_weights_llama
+
         else:
             raise ValueError(f"Custom TP currently only supported by bloom and t5-type models")
 
@@ -57,21 +81,17 @@ class InferenceEngine(BaseInferenceEngine):
         self.process_group = initialize_torch_distributed(self.world_size, self.rank)
         self.master = self.rank == 0
 
-        slow_but_exact = os.getenv('BLOOM_SLOW_BUT_EXACT', 'false').lower() == 'true'
-        config = AutoConfig.from_pretrained(
-            model_path,
-            slow_but_exact=slow_but_exact,
-            tp_parallel=True,
-            trust_remote_code=TRUST_REMOTE_CODE,
-        )
+        self._config.tp_parallel = True
 
         torch.distributed.barrier(group=self.process_group)
         filenames = local_weight_files(model_path, extension=".safetensors")
         if not filenames:
             raise ValueError("No safetensors weights found")
 
+        kwargs = {"process_group": self.process_group} if pass_process_group else {}
+
         with init_empty_weights():
-            model = model_class.from_config(config)
+            model = model_class.from_config(self._config, **kwargs)
 
         torch.distributed.barrier(group=self.process_group)
         load_weights(
@@ -120,13 +140,13 @@ class InferenceEngine(BaseInferenceEngine):
 
                     slice_ = f.get_slice(name)
 
-                    if isinstance(module, TensorParallelColumnLinear):
+                    if isinstance(module, BloomTensorParallelColumnLinear):
                         size = slice_.get_shape()[0]
                         block_size = size // world_size
                         start = rank * block_size
                         stop = (rank + 1) * block_size
                         tensor = slice_[start:stop]
-                    elif isinstance(module, TensorParallelRowLinear):
+                    elif isinstance(module, BloomTensorParallelRowLinear):
                         if param_name == "weight":
                             size = slice_.get_shape()[1]
                             block_size = size // world_size
@@ -138,7 +158,7 @@ class InferenceEngine(BaseInferenceEngine):
                             # XXX: Hack for Rowlinear to add the bias only once.
                             if rank != 0:
                                 tensor = torch.zeros_like(tensor)
-                    elif isinstance(module, TensorParallelEmbedding):
+                    elif isinstance(module, BloomTensorParallelEmbedding):
                         size = slice_.get_shape()[0]
                         block_size = size // world_size
                         start = rank * block_size
@@ -252,6 +272,194 @@ class InferenceEngine(BaseInferenceEngine):
                         module._parameters[param_name] = tensor
                     else:
                         module._buffers[param_name] = tensor
+
+
+    @staticmethod
+    def load_weights_rw(
+        model,
+        filenames: List[str],
+        quantize: bool,
+        device: torch.device,
+        dtype: torch.dtype,
+        rank: int,
+        world_size: int,
+    ):
+        parameters = dict(model.named_parameters())
+        for file in filenames:
+            with safe_open(
+                file, framework="pt", device=str(device) if not quantize else "cpu"
+            ) as f:
+                for name in f.keys():
+                    module_name, param_name = name.rsplit(".", 1)
+                    module = model.get_submodule(module_name)
+
+                    current_parameter_tensor = parameters.get(name, None)
+
+                    slice_ = f.get_slice(name)
+
+                    if isinstance(module, TensorParallelColumnLinear):
+                        size = slice_.get_shape()[0]
+                        block_size = size // world_size
+                        start = rank * block_size
+                        stop = (rank + 1) * block_size
+                        tensor = slice_[start:stop]
+                    elif isinstance(module, TensorParallelRowLinear):
+                        if param_name == "weight":
+                            size = slice_.get_shape()[1]
+                            block_size = size // world_size
+                            start = rank * block_size
+                            stop = (rank + 1) * block_size
+                            tensor = slice_[:, start:stop]
+                        else:
+                            tensor = slice_[:]
+                            # XXX: Hack for Rowlinear to add the bias only once.
+                            if rank != 0:
+                                tensor = torch.zeros_like(tensor)
+                    elif isinstance(module, TensorParallelEmbedding):
+                        size = slice_.get_shape()[0]
+                        block_size = size // world_size
+                        start = rank * block_size
+                        stop = (rank + 1) * block_size
+                        tensor = slice_[start:stop]
+                    elif name == "lm_head.weight" and model.transformer.tp_embeddings:
+                        size = slice_.get_shape()[0]
+                        block_size = size // world_size
+                        start = rank * block_size
+                        stop = (rank + 1) * block_size
+                        tensor = slice_[start:stop]
+                    else:
+                        try:
+                            tensor = slice_[:]
+                        except:
+                            tensor = f.get_tensor(name)
+
+                    if (
+                        current_parameter_tensor is not None
+                        and current_parameter_tensor.shape != tensor.shape
+                    ):
+                        raise ValueError(
+                            f"Name {name} -- Current {current_parameter_tensor.shape} and got {tensor.shape}"
+                        )
+
+                    tensor = tensor.contiguous().to(dtype)
+
+                    if current_parameter_tensor is not None:
+                        module._parameters[param_name] = tensor
+                    else:
+                        module._buffers[param_name] = tensor
+
+        model.post_load_weights(quantize)
+
+    @staticmethod
+    def load_weights_llama(
+        model,
+        filenames: List[str],
+        quantize: bool,
+        device: torch.device,
+        dtype: torch.dtype,
+        rank: int,
+        world_size: int,
+    ):
+        for file in filenames:
+            with safe_open(
+                    file, framework="pt", device=str(device) if not quantize else "cpu"
+            ) as f:
+                for name in f.keys():
+                    slice_ = f.get_slice(name)
+
+                    layer_name = ".".join(name.split(".")[:4])
+
+                    # Fused qkv
+                    if "q_proj" in name or "k_proj" in name or "v_proj" in name:
+                        final_name = layer_name + ".query_key_value.weight"
+
+                    # Fused gate and up projs
+                    elif "gate_proj" in name or "up_proj" in name:
+                        final_name = layer_name + ".gate_up_proj.weight"
+                    else:
+                        final_name = name
+
+                    module_name, param_name = final_name.rsplit(".", 1)
+                    module = model.get_submodule(module_name)
+
+                    if isinstance(module, LlamaTensorParallelColumnLinear):
+                        size = slice_.get_shape()[0]
+                        block_size = size // world_size
+                        start = rank * block_size
+                        stop = (rank + 1) * block_size
+                        tensor = slice_[start:stop]
+                    elif isinstance(module, LlamaTensorParallelRowLinear):
+                        size = slice_.get_shape()[1]
+                        block_size = size // world_size
+                        start = rank * block_size
+                        stop = (rank + 1) * block_size
+                        tensor = slice_[:, start:stop]
+                    elif isinstance(module, LlamaTensorParallelEmbedding):
+                        size = slice_.get_shape()[0]
+                        block_size = size // world_size
+                        start = rank * block_size
+                        stop = (rank + 1) * block_size
+                        tensor = slice_[start:stop]
+                    elif name == "lm_head.weight" and model.model.tp_embeddings:
+                        size = slice_.get_shape()[0]
+                        block_size = size // world_size
+                        start = rank * block_size
+                        stop = (rank + 1) * block_size
+                        tensor = slice_[start:stop]
+                    else:
+                        try:
+                            tensor = slice_[:]
+                        except:
+                            tensor = f.get_tensor(name)
+
+                    tensor = tensor.contiguous().to(dtype)
+
+                    try:
+                        current_parameter_tensor = module._parameters[param_name]
+                    except KeyError:
+                        current_parameter_tensor = None
+
+                    if current_parameter_tensor is not None:
+                        if current_parameter_tensor.device == torch.device("meta"):
+                            # Init qkv
+                            if "query_key_value" in final_name:
+                                module._parameters[param_name] = tensor.new_empty(
+                                    (tensor.shape[0] * 3, tensor.shape[1])
+                                )
+                            # Init gate and up proj
+                            elif "gate_up_proj" in final_name:
+                                module._parameters[param_name] = tensor.new_empty(
+                                    (tensor.shape[0] * 2, tensor.shape[1])
+                                )
+
+                        # Init gate and up proj
+                        if "q_proj" in name:
+                            module._parameters[param_name][: tensor.shape[0]] = tensor
+                        elif "k_proj" in name:
+                            module._parameters[param_name][
+                            tensor.shape[0] : tensor.shape[0] * 2
+                            ] = tensor
+                        elif "v_proj" in name:
+                            module._parameters[param_name][
+                            tensor.shape[0] * 2 :
+                            ] = tensor
+                        elif "gate_proj" in name:
+                            module._parameters[param_name][: tensor.shape[0]] = tensor
+                        elif "up_proj" in name:
+                            module._parameters[param_name][tensor.shape[0] :] = tensor
+                        else:
+                            if current_parameter_tensor.shape != tensor.shape:
+                                raise ValueError(
+                                    f"Name {name} -- Current {current_parameter_tensor.shape} and got {tensor.shape}"
+                                )
+
+                            module._parameters[param_name] = tensor
+
+                    else:
+                        module._buffers[param_name] = tensor
+
+        torch.cuda.empty_cache()
+        model.post_load_weights(quantize)
 
 
     @staticmethod

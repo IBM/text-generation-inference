@@ -11,6 +11,7 @@ resources:
 
 patchesStrategicMerge:
   - ../../base/patches/gpus/1-gpu.yaml
+  - ../../base/patches/gpus/a100-80g.yaml
   - |-
    apiVersion: apps/v1
    kind: Deployment
@@ -32,5 +33,12 @@ patchesStrategicMerge:
                value: "hf_transformers"
              #- name: OUTPUT_SPECIAL_TOKENS
              #  value: "true"
-             #- name: DTYPE_STR
-             #  value: bfloat16
+
+
+             startupProbe:
+               httpGet:
+                 port: http
+                 path: /health
+               # MPT-7B currently takes more than 20 mins to load :-(
+               failureThreshold: 52
+               periodSeconds: 30

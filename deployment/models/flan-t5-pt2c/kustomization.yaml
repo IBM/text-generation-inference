@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namePrefix: flan-t5-
+
+commonLabels:
+  app: text-gen-flan-t5-xxl
+
+resources:
+  - ../../base
+
+patchesStrategicMerge:
+  - ../../base/patches/gpus/1-gpu.yaml
+  - ../../base/patches/gpus/a100-80g.yaml
+  - ../../base/patches/limits/t5-xxl.yaml
+  - ../../base/patches/pt2-compile.yaml
+  - |-
+   apiVersion: apps/v1
+   kind: Deployment
+   metadata:
+     name: inference-server
+   spec:
+     template:
+       spec:
+         containers:
+           - name: server
+             env:
+             - name: MODEL_NAME
+               value: google/flan-t5-xxl
+             - name: MAX_BATCH_WEIGHT
+               value: "47458400"

@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference-server
+spec:
+  template:
+    spec:
+      containers:
+        - name: server
+          env:
+            - name: DEPLOYMENT_FRAMEWORK
+              value: hf_transformers  # PT2 compile doesn't seem to work with accelerate
+            - name: PT2_COMPILE
+              value: "true"
+
+          startupProbe:
+            httpGet:
+              port: http
+              path: /health
+            # Allow more startup time for the warmup
+            failureThreshold: 120
+            periodSeconds: 30

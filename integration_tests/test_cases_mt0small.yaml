@@ -825,6 +825,28 @@
         stopReason: MAX_TOKENS
         text: I think I would like
 
+
+# Sampling typical_p
+- name: Sampling typical_p = 0.6
+  request:
+    params:
+      method: "SAMPLE"
+      sampling:
+        seed: 22
+        typical_p: 0.6
+      stopping:
+        maxNewTokens: 6
+    requests:
+      - {"text": "I imagine that"}
+  response:
+    responses:
+      - generatedTokenCount: 6
+        inputTokenCount: 4
+        seed: '22'
+        stopReason: MAX_TOKENS
+        text: Well, the foundation is
+
+
 # Don't include input
 - name: Don't include input
   request:
@@ -1061,6 +1083,50 @@
   error:
     code: INVALID_ARGUMENT
     message: can specify at most 6 non-empty stop sequences, each not more than 40 tokens
+
+
+# Test input tokens boundary
+- name: Boundary case - input token count equal to sequence limit
+  request:
+    params:
+      stopping:
+        maxNewTokens: 100
+    requests:
+      - text: >
+          The hallway smelt of boiled cabbage and old rag mats. At one end of it a coloured poster, too large for
+          indoor display, had been tacked to the wall. It depicted simply an enormous face, more than a metre wide:
+          the face of a man of about forty-five, with a heavy black moustache and ruggedly handsome features.
+          Winston made for the stairs. It was no use trying the lift. Even at the best of times it was seldom working,
+          and at present the electric current was cut off during daylight hours. It was part of the economy drive in
+          preparation for Hate Week. The flat was seven flights up, and Winston, who was thirty-nine and had a
+          varicose ulcer above his right ankle, went slowly, resting several times on the way
+  error:
+    code: INVALID_ARGUMENT
+    message: input tokens (200) plus prefix length (0) must be < 200
+
+
+# Test input tokens boundary 2
+- name: Boundary case - input token count plus min new tokens equal to sequence limit
+  request:
+    params:
+      stopping:
+        maxNewTokens: 100
+        minNewTokens: 2
+    requests:
+      - text: >
+          The hallway smelt of boiled cabbage and old rag mats. At one end of it a coloured poster, too large for
+          indoor display, had been tacked to the wall. It depicted simply an enormous face, more than a metre wide:
+          the face of a man of about forty-five, with a heavy black moustache and ruggedly handsome features.
+          Winston made for the stairs. It was no use trying the lift. Even at the best of times it was seldom working,
+          and at present the electric current was cut off during daylight hours. It was part of the economy drive in
+          preparation for Hate Week. The flat was seven flights up, and Winston, who was thirty-nine and had a
+          varicose ulcer above his right ankle, went slowly, resting several times on
+  response:
+    responses:
+      - generatedTokenCount: 2
+        inputTokenCount: 198
+        stopReason: TOKEN_LIMIT
+        text: The hall
 
 
 # Long input with input tokens truncated
