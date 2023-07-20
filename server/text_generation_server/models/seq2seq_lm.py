@@ -541,9 +541,7 @@ class Seq2SeqLM(Model):
             return_dict=True,
         )
         return (
-            self.engine.process_logits(outputs.logits),
-            outputs.encoder_last_hidden_state,
-            outputs.past_key_values,
+            outputs.logits, outputs.encoder_last_hidden_state, outputs.past_key_values,
         )
 
     def generate_token(

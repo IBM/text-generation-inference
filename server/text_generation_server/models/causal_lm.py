@@ -507,8 +507,7 @@ class CausalLM(Model):
         # Model Forward
         outputs = self.model.forward(**model_inputs)
         return (
-            self.engine.process_logits(outputs.logits),
-            outputs.past_key_values,
+            outputs.logits, outputs.past_key_values,
         )
 
     def generate_token(

@@ -17,8 +17,16 @@ def weight_hub_files(model_name, extension=".safetensors", revision=None, auth_t
     exts = [extension] if type(extension) == str else extension
     api = HfApi()
     info = api.model_info(model_name, revision=revision, token=auth_token)
-    filenames = [s.rfilename for s in info.siblings
-                 if any(s.rfilename.endswith(ext) for ext in exts)]
+    filenames = [
+        s.rfilename for s in info.siblings if any(
+            s.rfilename.endswith(ext)
+            and len(s.rfilename.split("/")) == 1
+            and "arguments" not in s.rfilename
+            and "args" not in s.rfilename
+            and "training" not in s.rfilename
+            for ext in exts
+        )
+    ]
     return filenames
 
 

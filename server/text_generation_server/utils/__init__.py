@@ -6,6 +6,7 @@ from text_generation_server.utils.dist import (
     get_torch_dtype,
     RANK,
 )
+from text_generation_server.utils.weights import Weights
 from text_generation_server.utils.hub import (
     get_model_path,
     local_weight_files,
@@ -45,4 +46,5 @@ __all__ = [
     "get_token_info",
     "get_input_tokens_info",
     "pt2_compile_warmup",
+    "Weights",
 ]

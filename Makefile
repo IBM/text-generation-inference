@@ -9,13 +9,16 @@ all: help
 install-server:
 	cd server && make install
 
+install-custom-kernels:
+	if [ "$$BUILD_EXTENSIONS" = "True" ]; then cd server/custom_kernels && python setup.py install; else echo "Custom kernels are disabled, you need to set the BUILD_EXTENSIONS environment variable to 'True' in order to build them. (Please read the docs, kernels might not work on all hardware)"; fi
+
 install-router:
 	cd router && cargo install --path .
 
 install-launcher:
 	cd launcher && cargo install --path .
 
-install: install-server install-router install-launcher
+install: install-server install-router install-launcher install-custom-kernels
 
 server-dev:
 	cd server && make run-dev

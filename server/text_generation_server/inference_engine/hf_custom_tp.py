@@ -3,36 +3,21 @@ import os
 import torch
 import torch.distributed
 
-from typing import List, Optional, Any
+from typing import Optional, Any
 
-from accelerate import init_empty_weights
-from safetensors import safe_open
 from transformers.models.auto.auto_factory import _BaseAutoModelClass
-from transformers.models.bloom.parallel_layers import (
-    TensorParallelColumnLinear as BloomTensorParallelColumnLinear,
-    TensorParallelEmbedding as BloomTensorParallelEmbedding,
-    TensorParallelRowLinear as BloomTensorParallelRowLinear,
-)
-from transformers.models.t5.parallel_layers import (
-    TensorParallelRowLinear as T5TensorParallelRowLinear,
-    TensorParallelColumnLinear as T5TensorParallelColumnLinear,
-    TensorParallelEmbedding as T5TensorParallelEmbedding,
-)
-from text_generation_server.models.custom_modeling.flash_llama_modeling import (
-    TensorParallelEmbedding as LlamaTensorParallelEmbedding,
-    TensorParallelRowLinear as LlamaTensorParallelRowLinear,
-    TensorParallelColumnLinear as LlamaTensorParallelColumnLinear,
-)
 
-from text_generation_server.utils.layers import (
-    TensorParallelColumnLinear,
-    TensorParallelRowLinear,
-    TensorParallelEmbedding,
-)
+from text_generation_server.models import FLASH_ATTENTION
+from text_generation_server.utils import Weights
 
 from text_generation_server.inference_engine import BaseInferenceEngine
 from text_generation_server.utils.dist import initialize_torch_distributed
 from text_generation_server.utils.hub import local_weight_files
+
+NONTP_FLASH_TYPES = ["RefinedWeb", "RefinedWebModel", "gpt_neox", "gpt_bigcode", "llama"]
+TP_NONFLASH_TYPES = ["bloom", "t5", "gpt_neox"]
+TP_FLASH_TYPES = NONTP_FLASH_TYPES  # All flash types currently support TP
+NONTP_NONFLASH_TYPES = ["bloom", "t5"]
 
 
 class InferenceEngine(BaseInferenceEngine):
@@ -45,478 +30,90 @@ class InferenceEngine(BaseInferenceEngine):
     ) -> None:
         super().__init__(model_path, model_config)
 
-        pass_process_group = False
-        if self._config.model_type == "bloom":
+        sharded = self.world_size > 1
+        model_type = self._config.model_type
+        if model_type == "gpt2" and "--bigcode--" in model_path:  # Hack for starcoder
+            model_type = "gpt_bigcode"
+
+        if sharded:
+            if FLASH_ATTENTION:
+                if model_type not in TP_FLASH_TYPES:
+                    raise NotImplementedError(
+                        f"TP with flash attention currently supported by the following model types: {TP_FLASH_TYPES}"
+                    )
+            elif model_type not in TP_NONFLASH_TYPES:
+                raise NotImplementedError(
+                    f"TP without flash attention currently supported by the following model types: {TP_NONFLASH_TYPES}"
+                )
+        elif FLASH_ATTENTION:
+            if model_type not in NONTP_FLASH_TYPES:
+                raise NotImplementedError(
+                    f"Flash attention currently only supported by the following model types: {NONTP_FLASH_TYPES}"
+                )
+        elif model_type not in NONTP_NONFLASH_TYPES:
+            raise ValueError("hf_custom_tp engine must be used with FLASH_ATTENTION, num_shards > 1 and/or BLOOM or T5")
+
+        aliases = None
+
+        if model_type == "bloom":
             slow_but_exact = os.getenv('BLOOM_SLOW_BUT_EXACT', 'false').lower() == 'true'
             self._config.slow_but_exact = slow_but_exact
-            load_weights = self.load_weights_bloom
-        elif self._config.model_type == "t5":
-            load_weights = self.load_weights_t5
-        elif self._config.model_type in ["RefinedWeb", "RefinedWebModel"]:
-            if model_class.__name__ != "FlashRWForCausalLM":
-                raise ValueError(f"RW model TP only supported with FlashAttention")
-            pass_process_group = True
-            load_weights = self.load_weights_rw
-        elif self._config.model_type == "llama":
-            if model_class.__name__ != "FlashLlamaForCausalLM":
-                raise ValueError(f"Llama model TP only supported with FlashAttention")
-            pass_process_group = True
-            load_weights = self.load_weights_llama
+            from text_generation_server.models.custom_modeling.bloom_modeling import BloomForCausalLM
+            model_class = BloomForCausalLM
 
-        else:
-            raise ValueError(f"Custom TP currently only supported by bloom and t5-type models")
+        elif model_type == "t5":
+            aliases = {"shared.weight": ["encoder.embed_tokens.weight", "decoder.embed_tokens.weight"]}
+            from text_generation_server.models.custom_modeling.t5_modeling import T5ForConditionalGeneration
+            model_class = T5ForConditionalGeneration
 
-        quantize = dtype == torch.int8
-        if quantize:
-            try:
-                import bitsandbytes as bnb
-                from bitsandbytes.nn import Int8Params
-            except:
-                raise ImportError(
-                    "bitsandbytes is not available on your machine either because it is not installed "
-                    "or you don't have a GPU.\n"
-                    "You can install it with `pip install bitsandbytes`."
-                )
+        elif model_type == "gpt_neox":
+            if FLASH_ATTENTION:
+                from text_generation_server.models.custom_modeling.flash_neox_modeling import FlashGPTNeoXForCausalLM
+                model_class = FlashGPTNeoXForCausalLM
+            else:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+                from text_generation_server.models.custom_modeling.neox_modeling import GPTNeoxForCausalLM
+                model_class = GPTNeoxForCausalLM
+
+        elif model_type == "gpt_bigcode":
+            self._config.transpose = self._config.architectures[0].startswith("GPT2")
+            aliases = {"transformer.wte.weight": ["lm_head.weight"]}
+            from text_generation_server.models.custom_modeling.flash_santacoder_modeling import FlashSantacoderForCausalLM
+            model_class = FlashSantacoderForCausalLM
+
+        elif model_type in ["RefinedWeb", "RefinedWebModel"]:
+            if sharded and (
+                self._config.alibi or (model_type == "RefinedWebModel" and self._config.multi_query)
+            ):
+                raise NotImplementedError("TP is not supported for RW (Falcon) models using alibi or MQA")
+            aliases = {"transformer.word_embeddings.weight": ["lm_head.weight"]}
+            from text_generation_server.models.custom_modeling.flash_rw_modeling import FlashRWForCausalLM
+            model_class = FlashRWForCausalLM
+
+        elif model_type == "llama":
+            from text_generation_server.models.custom_modeling.flash_llama_modeling import FlashLlamaForCausalLM
+            model_class = FlashLlamaForCausalLM
+
+
+        #TODO support other quantizations
+        self._config.quantize = "bitsandbytes" if dtype == torch.int8 else None
 
         self.process_group = initialize_torch_distributed(self.world_size, self.rank)
         self.master = self.rank == 0
 
-        self._config.tp_parallel = True
-
         torch.distributed.barrier(group=self.process_group)
         filenames = local_weight_files(model_path, extension=".safetensors")
         if not filenames:
-            raise ValueError("No safetensors weights found")
+            raise ValueError("No safetensors weights found - required for hf_custom_tp engine")
 
-        kwargs = {"process_group": self.process_group} if pass_process_group else {}
-
-        with init_empty_weights():
-            model = model_class.from_config(self._config, **kwargs)
-
-        torch.distributed.barrier(group=self.process_group)
-        load_weights(
-            model,
-            filenames,
-            quantize=quantize,
-            device=self.device,
-            dtype=dtype,
-            rank=self.rank,
-            world_size=self.world_size,
+        weights = Weights(
+            filenames, device=self.device, dtype=dtype, process_group=self.process_group, aliases=aliases
         )
 
-        self.model = model.eval()  # .to(dtype)
+        model = model_class(self._config, weights)
         torch.distributed.barrier(group=self.process_group)
 
-    def process_logits(self, output_logits: torch.Tensor) -> torch.Tensor:
-        # Logits are sharded, so we need to gather them
-        logits = [torch.empty_like(output_logits) for _ in range(self.world_size)]
-        torch.distributed.all_gather(logits, output_logits, group=self.process_group)
-        return torch.cat(logits, dim=2)
+        if not hasattr(model, "config"):
+            model.config = self._config
 
-    @staticmethod
-    def load_weights_bloom(
-        model,
-        filenames: List[str],
-        quantize: bool,
-        device: torch.device,
-        dtype: torch.dtype,
-        rank: int,
-        world_size: int,
-    ):
-        parameters = dict(model.named_parameters())
-        for file in filenames:
-            with safe_open(
-                file, framework="pt", device=str(device) if not quantize else "cpu"
-            ) as f:
-                for name in f.keys():
-                    if name.startswith("transformer.") or name.startswith("lm_head."):
-                        full_name = name
-                    else:
-                        full_name = f"transformer.{name}"
-
-                    module_name, param_name = full_name.rsplit(".", 1)
-                    module = model.get_submodule(module_name)
-                    current_tensor = parameters[full_name]
-
-                    slice_ = f.get_slice(name)
-
-                    if isinstance(module, BloomTensorParallelColumnLinear):
-                        size = slice_.get_shape()[0]
-                        block_size = size // world_size
-                        start = rank * block_size
-                        stop = (rank + 1) * block_size
-                        tensor = slice_[start:stop]
-                    elif isinstance(module, BloomTensorParallelRowLinear):
-                        if param_name == "weight":
-                            size = slice_.get_shape()[1]
-                            block_size = size // world_size
-                            start = rank * block_size
-                            stop = (rank + 1) * block_size
-                            tensor = slice_[:, start:stop]
-                        else:
-                            tensor = slice_[:]
-                            # XXX: Hack for Rowlinear to add the bias only once.
-                            if rank != 0:
-                                tensor = torch.zeros_like(tensor)
-                    elif isinstance(module, BloomTensorParallelEmbedding):
-                        size = slice_.get_shape()[0]
-                        block_size = size // world_size
-                        start = rank * block_size
-                        stop = (rank + 1) * block_size
-                        tensor = slice_[start:stop]
-                    elif name == "lm_head.weight":
-                        size = slice_.get_shape()[0]
-                        block_size = size // world_size
-                        start = rank * block_size
-                        stop = (rank + 1) * block_size
-                        tensor = slice_[start:stop]
-                    else:
-                        tensor = slice_[:]
-
-                    if current_tensor.shape != tensor.shape:
-                        raise ValueError(
-                            f"Name {name} -- Current {current_tensor.shape} and got {tensor.shape}"
-                        )
-
-                    tensor = tensor.contiguous().to(dtype)
-
-                    if quantize:
-                        tensor = InferenceEngine.quantize_tensor(module, device, param_name, tensor)
-
-                    module._parameters[param_name] = tensor
-                    if name == "word_embeddings.weight":
-                        model.lm_head._parameters["weight"] = tensor
-
-
-    @staticmethod
-    def load_weights_t5(
-        model,
-        filenames: List[str],
-        quantize: bool,
-        device: torch.device,
-        dtype: torch.dtype,
-        rank: int,
-        world_size: int,
-    ):
-        parameters = dict(model.named_parameters())
-        for file in filenames:
-            with safe_open(
-                file, framework="pt", device=str(device) if not quantize else "cpu"
-            ) as f:
-                for name in f.keys():
-                    module_name, param_name = name.rsplit(".", 1)
-                    module = model.get_submodule(module_name)
-                    current_parameter_tensor = parameters.get(name, None)
-
-                    slice_ = f.get_slice(name)
-
-                    if isinstance(module, T5TensorParallelColumnLinear):
-                        size = slice_.get_shape()[0]
-                        block_size = size // world_size
-                        start = rank * block_size
-                        stop = (rank + 1) * block_size
-                        tensor = slice_[start:stop]
-                    elif isinstance(module, T5TensorParallelRowLinear):
-                        if param_name == "weight":
-                            size = slice_.get_shape()[1]
-                            block_size = size // world_size
-                            start = rank * block_size
-                            stop = (rank + 1) * block_size
-                            tensor = slice_[:, start:stop]
-                        else:
-                            tensor = slice_[:]
-                            # XXX: Hack for Rowlinear to add the bias only once.
-                            if rank != 0:
-                                tensor = torch.zeros_like(tensor)
-                    elif isinstance(module, T5TensorParallelEmbedding):
-                        size = slice_.get_shape()[0]
-                        block_size = size // world_size
-                        start = rank * block_size
-                        stop = (rank + 1) * block_size
-                        tensor = slice_[start:stop]
-                    elif name == "lm_head.weight":
-                        size = slice_.get_shape()[0]
-                        block_size = size // world_size
-                        start = rank * block_size
-                        stop = (rank + 1) * block_size
-                        tensor = slice_[start:stop]
-                    elif "relative_attention_bias.weight" in name:
-                        size = slice_.get_shape()[1]
-                        block_size = size // world_size
-                        start = rank * block_size
-                        stop = (rank + 1) * block_size
-                        tensor = slice_[:, start:stop]
-                    else:
-                        try:
-                            tensor = slice_[:]
-                        except:
-                            tensor = f.get_tensor(name)
-
-                    if (
-                        current_parameter_tensor is not None
-                        and current_parameter_tensor.shape != tensor.shape
-                    ):
-                        raise ValueError(
-                            f"Name {name} -- Current {current_parameter_tensor.shape} and got {tensor.shape}"
-                        )
-
-                    tensor = tensor.contiguous()
-
-                    # See: https://github.com/huggingface/transformers/blob/1fe1e3caa44617047f149bcc0c0b566343b714a7/src/transformers/models/t5/modeling_t5.py#LL316C15-L316C71
-                    tensor = tensor.to(torch.float32 if module_name.endswith("wo") else dtype)
-
-                    if quantize and not module_name.endswith("wo"):
-                        tensor = InferenceEngine.quantize_tensor(module, device, param_name, tensor)
-
-                    if current_parameter_tensor is not None:
-                        module._parameters[param_name] = tensor
-                    else:
-                        module._buffers[param_name] = tensor
-
-
-    @staticmethod
-    def load_weights_rw(
-        model,
-        filenames: List[str],
-        quantize: bool,
-        device: torch.device,
-        dtype: torch.dtype,
-        rank: int,
-        world_size: int,
-    ):
-        parameters = dict(model.named_parameters())
-        for file in filenames:
-            with safe_open(
-                file, framework="pt", device=str(device) if not quantize else "cpu"
-            ) as f:
-                for name in f.keys():
-                    module_name, param_name = name.rsplit(".", 1)
-                    module = model.get_submodule(module_name)
-
-                    current_parameter_tensor = parameters.get(name, None)
-
-                    slice_ = f.get_slice(name)
-
-                    if isinstance(module, TensorParallelColumnLinear):
-                        size = slice_.get_shape()[0]
-                        block_size = size // world_size
-                        start = rank * block_size
-                        stop = (rank + 1) * block_size
-                        tensor = slice_[start:stop]
-                    elif isinstance(module, TensorParallelRowLinear):
-                        if param_name == "weight":
-                            size = slice_.get_shape()[1]
-                            block_size = size // world_size
-                            start = rank * block_size
-                            stop = (rank + 1) * block_size
-                            tensor = slice_[:, start:stop]
-                        else:
-                            tensor = slice_[:]
-                            # XXX: Hack for Rowlinear to add the bias only once.
-                            if rank != 0:
-                                tensor = torch.zeros_like(tensor)
-                    elif isinstance(module, TensorParallelEmbedding):
-                        size = slice_.get_shape()[0]
-                        block_size = size // world_size
-                        start = rank * block_size
-                        stop = (rank + 1) * block_size
-                        tensor = slice_[start:stop]
-                    elif name == "lm_head.weight" and model.transformer.tp_embeddings:
-                        size = slice_.get_shape()[0]
-                        block_size = size // world_size
-                        start = rank * block_size
-                        stop = (rank + 1) * block_size
-                        tensor = slice_[start:stop]
-                    else:
-                        try:
-                            tensor = slice_[:]
-                        except:
-                            tensor = f.get_tensor(name)
-
-                    if (
-                        current_parameter_tensor is not None
-                        and current_parameter_tensor.shape != tensor.shape
-                    ):
-                        raise ValueError(
-                            f"Name {name} -- Current {current_parameter_tensor.shape} and got {tensor.shape}"
-                        )
-
-                    tensor = tensor.contiguous().to(dtype)
-
-                    if current_parameter_tensor is not None:
-                        module._parameters[param_name] = tensor
-                    else:
-                        module._buffers[param_name] = tensor
-
-        model.post_load_weights(quantize)
-
-    @staticmethod
-    def load_weights_llama(
-        model,
-        filenames: List[str],
-        quantize: bool,
-        device: torch.device,
-        dtype: torch.dtype,
-        rank: int,
-        world_size: int,
-    ):
-        for file in filenames:
-            with safe_open(
-                    file, framework="pt", device=str(device) if not quantize else "cpu"
-            ) as f:
-                for name in f.keys():
-                    slice_ = f.get_slice(name)
-
-                    layer_name = ".".join(name.split(".")[:4])
-
-                    # Fused qkv
-                    if "q_proj" in name or "k_proj" in name or "v_proj" in name:
-                        final_name = layer_name + ".query_key_value.weight"
-
-                    # Fused gate and up projs
-                    elif "gate_proj" in name or "up_proj" in name:
-                        final_name = layer_name + ".gate_up_proj.weight"
-                    else:
-                        final_name = name
-
-                    module_name, param_name = final_name.rsplit(".", 1)
-                    module = model.get_submodule(module_name)
-
-                    if isinstance(module, LlamaTensorParallelColumnLinear):
-                        size = slice_.get_shape()[0]
-                        block_size = size // world_size
-                        start = rank * block_size
-                        stop = (rank + 1) * block_size
-                        tensor = slice_[start:stop]
-                    elif isinstance(module, LlamaTensorParallelRowLinear):
-                        size = slice_.get_shape()[1]
-                        block_size = size // world_size
-                        start = rank * block_size
-                        stop = (rank + 1) * block_size
-                        tensor = slice_[:, start:stop]
-                    elif isinstance(module, LlamaTensorParallelEmbedding):
-                        size = slice_.get_shape()[0]
-                        block_size = size // world_size
-                        start = rank * block_size
-                        stop = (rank + 1) * block_size
-                        tensor = slice_[start:stop]
-                    elif name == "lm_head.weight" and model.model.tp_embeddings:
-                        size = slice_.get_shape()[0]
-                        block_size = size // world_size
-                        start = rank * block_size
-                        stop = (rank + 1) * block_size
-                        tensor = slice_[start:stop]
-                    else:
-                        try:
-                            tensor = slice_[:]
-                        except:
-                            tensor = f.get_tensor(name)
-
-                    tensor = tensor.contiguous().to(dtype)
-
-                    try:
-                        current_parameter_tensor = module._parameters[param_name]
-                    except KeyError:
-                        current_parameter_tensor = None
-
-                    if current_parameter_tensor is not None:
-                        if current_parameter_tensor.device == torch.device("meta"):
-                            # Init qkv
-                            if "query_key_value" in final_name:
-                                module._parameters[param_name] = tensor.new_empty(
-                                    (tensor.shape[0] * 3, tensor.shape[1])
-                                )
-                            # Init gate and up proj
-                            elif "gate_up_proj" in final_name:
-                                module._parameters[param_name] = tensor.new_empty(
-                                    (tensor.shape[0] * 2, tensor.shape[1])
-                                )
-
-                        # Init gate and up proj
-                        if "q_proj" in name:
-                            module._parameters[param_name][: tensor.shape[0]] = tensor
-                        elif "k_proj" in name:
-                            module._parameters[param_name][
-                            tensor.shape[0] : tensor.shape[0] * 2
-                            ] = tensor
-                        elif "v_proj" in name:
-                            module._parameters[param_name][
-                            tensor.shape[0] * 2 :
-                            ] = tensor
-                        elif "gate_proj" in name:
-                            module._parameters[param_name][: tensor.shape[0]] = tensor
-                        elif "up_proj" in name:
-                            module._parameters[param_name][tensor.shape[0] :] = tensor
-                        else:
-                            if current_parameter_tensor.shape != tensor.shape:
-                                raise ValueError(
-                                    f"Name {name} -- Current {current_parameter_tensor.shape} and got {tensor.shape}"
-                                )
-
-                            module._parameters[param_name] = tensor
-
-                    else:
-                        module._buffers[param_name] = tensor
-
-        torch.cuda.empty_cache()
-        model.post_load_weights(quantize)
-
-
-    @staticmethod
-    def quantize_tensor(
-        module,
-        device: torch.device,
-        param_name: str,
-        tensor: torch.Tensor,
-    ) -> torch.Tensor:
-        if (
-            type(module)
-            not in [
-                TensorParallelRowLinear,
-                TensorParallelColumnLinear,
-                T5TensorParallelRowLinear,
-                T5TensorParallelColumnLinear,
-            ]
-            or param_name != "weight"
-        ):
-            return tensor.to(device)
-
-        tensor = Int8Params(
-            tensor,
-            has_fp16_weights=False,
-            requires_grad=False,
-        ).to(device)
-        state = bnb.MatmulLtState()
-        state.threshold = 6.0
-        state.has_fp16_weights = False
-        state.memory_efficient_backward = False
-        state.use_pool = True
-        state.CB = tensor.CB
-        state.SCB = tensor.SCB
-        tensor.CB = None
-        tensor.SCB = None
-
-        def replace_linear(state):
-            def linear(input, weight, bias):
-                out = bnb.matmul(
-                    input,
-                    weight,
-                    state=state,
-                    threshold=state.threshold,
-                    bias=bias,
-                )
-
-                if state.CB is not None:
-                    # we converted 8-bit row major to turing/ampere format
-                    # in the first inference pass
-                    # we no longer need the row-major weight
-                    del state.CB
-                    weight.data = state.CxB
-
-                return out
-
-            return linear
-
-        module.linear = replace_linear(state)
-
-        return tensor
+        self.model = model.eval()  # .to(dtype)

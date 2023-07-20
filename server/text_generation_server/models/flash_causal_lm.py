@@ -288,14 +288,12 @@ class FlashCausalLM(Model):
         model_config: Union[Any] = None,
         auto_model_class=None,
     ):
-        self.present_pad = None
-        if dtype == torch.int8:
-            raise NotImplementedError("FlashCausalLM does not support quantization")
-
-        model_path = get_model_path(model_name, revision)
-
         if not torch.cuda.is_available():
             raise NotImplementedError("FlashCausalLM is only available on GPU")
+
+        self.present_pad = None
+
+        model_path = get_model_path(model_name, revision)
 
         inference_engine = get_inference_engine_class(deployment_framework)(
             model_path, auto_model_class, dtype, model_config,

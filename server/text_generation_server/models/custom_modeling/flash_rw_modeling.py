@@ -10,13 +10,29 @@ from typing import Optional
 import flash_attn_cuda
 
 from text_generation_server.utils.layers import (
-    FastLinear,
     TensorParallelRowLinear,
     TensorParallelColumnLinear,
     TensorParallelEmbedding,
+    TensorParallelHead,
     FastLayerNorm,
     PositionRotaryEmbedding,
+    get_linear,
 )
+
+
+def load_row(config, prefix: str, weights, bias: bool):
+    weight = weights.get_sharded(f"{prefix}.weight", dim=1)
+    if bias and weights.process_group.rank() == 0:
+        # Rank is only on the first rank process
+        bias = weights.get_tensor(f"{prefix}.bias")
+    else:
+        bias = None
+
+    linear = get_linear(weight, bias, config.quantize)
+    if config.parallel_attn:
+        return linear
+    else:
+        return TensorParallelRowLinear(linear, process_group=weights.process_group)
 
 
 class RWConfig(PretrainedConfig):
@@ -83,44 +99,37 @@ class RWConfig(PretrainedConfig):
 class FlashRWAttention(torch.nn.Module):
     def __init__(
         self,
-        num_heads,
-        num_heads_kv,
-        hidden_size,
-        bias,
-        process_group=None,
-        reduce=True,
+        config,
+        prefix,
+        weights,
     ):
         super().__init__()
-        self.num_heads = num_heads
-        self.num_heads_kv = num_heads_kv
-        self.hidden_size = hidden_size
-        self.head_size = hidden_size // num_heads
+        self.num_heads = config.n_head
+        self.num_heads_kv = config.n_head_kv
+        self.hidden_size = config.hidden_size
+        self.head_size = self.hidden_size // self.num_heads
 
-        self.rotary_emb = PositionRotaryEmbedding(self.head_size, base=10000)
+        self.rotary_emb = PositionRotaryEmbedding.static(
+            dim=self.head_size, base=10000.0, device=weights.device
+        )
         self.softmax_scale = self.head_size ** (-0.5)
 
-        if process_group is None:
-            self.query_key_value = FastLinear(
-                hidden_size,
-                self.head_size * (self.num_heads + 2 * self.num_heads_kv),
-                bias=bias,
+        if self.num_heads % weights.process_group.size() != 0:
+            raise ValueError(
+                f"`num_heads` must be divisible by `num_shards` (got `num_heads`: {self.num_heads} "
+                f"and `num_shards`: {weights.process_group.size()}"
             )
-            self.dense = FastLinear(hidden_size, hidden_size, bias=bias)
-        else:
-            self.query_key_value = TensorParallelColumnLinear(
-                hidden_size,
-                self.head_size * (self.num_heads + 2 * self.num_heads_kv),
-                bias=bias,
-                process_group=process_group,
-            )
-            self.dense = TensorParallelRowLinear(
-                hidden_size,
-                hidden_size,
-                bias=bias,
-                process_group=process_group,
-                reduce=reduce,
-            )
-            self.num_heads = self.num_heads // process_group.size()
+        self.num_heads = self.num_heads // weights.process_group.size()
+
+        self.query_key_value = TensorParallelColumnLinear.load(
+            config,
+            prefix=f"{prefix}.query_key_value",
+            weights=weights,
+            bias=config.bias,
+        )
+        self.dense = load_row(
+            config, prefix=f"{prefix}.dense", weights=weights, bias=config.bias
+        )
 
     def forward(
         self,
@@ -210,57 +219,48 @@ class FlashRWAttention(torch.nn.Module):
 class FlashRWLargeAttention(torch.nn.Module):
     def __init__(
         self,
-        num_heads,
-        num_heads_kv,
-        hidden_size,
-        bias,
-        process_group=None,
-        reduce=True,
+        config,
+        prefix,
+        weights,
     ):
         super().__init__()
+
+        hidden_size = config.hidden_size
+        num_heads = config.n_head
+        num_heads_kv = config.n_head_kv
 
         self.hidden_size = hidden_size
         self.head_size = hidden_size // num_heads
 
-        self.rotary_emb = PositionRotaryEmbedding(self.head_size, base=10000)
+        self.rotary_emb = PositionRotaryEmbedding.static(
+            self.head_size, base=10000.0, device=weights.device
+        )
         self.softmax_scale = self.head_size ** (-0.5)
 
         self.num_groups = num_heads // (num_heads_kv * 2)
         self.num_heads = num_heads // self.num_groups
         self.num_heads_kv = num_heads_kv // self.num_groups
+        process_group = weights.process_group
 
-        if process_group is None:
-            self.query_key_value = FastLinear(
-                hidden_size,
-                self.num_groups
-                * self.head_size
-                * (self.num_heads + 2 * self.num_heads_kv),
-                bias=bias,
+        if process_group.size() > self.num_groups:
+            raise NotImplementedError(
+                f"Tensor Parallelism is not implemented for world_size > n groups"
             )
-            self.dense = FastLinear(hidden_size, hidden_size, bias=bias)
-        else:
-            if process_group.size() > self.num_groups:
-                raise NotImplementedError(
-                    f"Tensor Parallelism is not implemented for world_size > n groups"
-                )
+        if self.num_groups % process_group.size() != 0:
+            raise NotImplementedError(
+                f"Tensor Parallelism is not implemented for {self.num_groups} not divisible by {process_group.size()}"
+            )
+        self.num_groups = self.num_groups // process_group.size()
 
-            self.query_key_value = TensorParallelColumnLinear(
-                hidden_size,
-                self.num_groups
-                * self.head_size
-                * (self.num_heads + 2 * self.num_heads_kv),
-                bias=bias,
-                process_group=process_group,
-            )
-            self.dense = TensorParallelRowLinear(
-                hidden_size,
-                hidden_size,
-                bias=bias,
-                process_group=process_group,
-                reduce=reduce,
-            )
-
-            self.num_groups = self.num_groups // process_group.size()
+        self.query_key_value = TensorParallelColumnLinear.load(
+            config,
+            prefix=f"{prefix}.query_key_value",
+            weights=weights,
+            bias=config.bias,
+        )
+        self.dense = load_row(
+            config, prefix=f"{prefix}.dense", weights=weights, bias=config.bias
+        )
 
     def forward(
         self,
@@ -357,28 +357,16 @@ class FlashRWLargeAttention(torch.nn.Module):
 
 
 class FlashMLP(nn.Module):
-    def __init__(self, hidden_size, bias, process_group=None, reduce=True):
+    def __init__(self, config, prefix, weights):
         super().__init__()
         self.act = torch.nn.functional.gelu
 
-        if process_group is None:
-            self.dense_h_to_4h = FastLinear(hidden_size, 4 * hidden_size, bias=bias)
-            self.dense_4h_to_h = FastLinear(4 * hidden_size, hidden_size, bias=bias)
-        else:
-            self.dense_h_to_4h = TensorParallelColumnLinear(
-                hidden_size,
-                4 * hidden_size,
-                bias=bias,
-                process_group=process_group,
-            )
-            self.dense_4h_to_h = TensorParallelRowLinear(
-                4 * hidden_size,
-                hidden_size,
-                bias=bias,
-                process_group=process_group,
-                reduce=reduce,
-            )
-        self.process_group = process_group
+        self.dense_h_to_4h = TensorParallelColumnLinear.load(
+            config, prefix=f"{prefix}.dense_h_to_4h", weights=weights, bias=config.bias
+        )
+        self.dense_4h_to_h = load_row(
+            config, prefix=f"{prefix}.dense_4h_to_h", weights=weights, bias=config.bias
+        )
 
     def forward(self, hidden_states):
         hidden_states = self.dense_h_to_4h(hidden_states)
@@ -390,38 +378,44 @@ class FlashMLP(nn.Module):
 class FlashRWLayer(nn.Module):
     def __init__(
         self,
-        num_heads,
-        num_heads_kv,
-        hidden_size,
-        bias,
-        layer_norm_eps,
-        parallel_attn,
-        process_group=None,
+        layer_id,
+        config,
+        weights,
     ):
         super().__init__()
 
+        parallel_attn = config.parallel_attn
         self.parallel_attn = parallel_attn
 
-        self.input_layernorm = FastLayerNorm(hidden_size, eps=layer_norm_eps)
+        prefix = f"transformer.h.{layer_id}"
+
+        self.input_layernorm = FastLayerNorm.load(
+            prefix=f"{prefix}.input_layernorm",
+            weights=weights,
+            eps=config.layer_norm_epsilon,
+        )
         self.self_attention = FlashRWAttention(
-            num_heads,
-            num_heads_kv,
-            hidden_size,
-            bias,
-            process_group=process_group,
-            reduce=False,
+            config,
+            prefix=f"{prefix}.self_attention",
+            weights=weights,
         )
         self.post_attention_layernorm = (
-            FastLayerNorm(hidden_size, eps=layer_norm_eps)
+            FastLayerNorm.load(
+                prefix=f"{prefix}.post_attention_layernorm",
+                weights=weights,
+                eps=config.layer_norm_epsilon,
+            )
             if not parallel_attn
             else None
         )
 
         self.mlp = FlashMLP(
-            hidden_size, bias, process_group=process_group, reduce=False
+            config,
+            prefix=f"{prefix}.mlp",
+            weights=weights,
         )
 
-        self.process_group = process_group
+        self.process_group = weights.process_group
 
     def forward(
         self,
@@ -452,8 +446,7 @@ class FlashRWLayer(nn.Module):
             mlp_output = self.mlp(ln_hidden_states)
             intermediate = mlp_output + attn_output
 
-            # Only reduce once and after the addition instead of once per layer
-            if self.process_group is not None:
+            if self.process_group.size() > 1:
                 torch.distributed.all_reduce(intermediate, group=self.process_group)
 
             return intermediate, residual
@@ -481,33 +474,30 @@ class FlashRWLayer(nn.Module):
 
 
 class FlashRWLargeLayer(nn.Module):
-    def __init__(
-        self,
-        num_heads,
-        num_heads_kv,
-        hidden_size,
-        bias,
-        layer_norm_eps,
-        process_group=None,
-    ):
+    def __init__(self, layer_id, config, weights):
         super().__init__()
-        self.ln_attn = FastLayerNorm(hidden_size, eps=layer_norm_eps)
-        self.ln_mlp = FastLayerNorm(hidden_size, eps=layer_norm_eps)
+        prefix = f"transformer.h.{layer_id}"
+        self.ln_attn = FastLayerNorm.load(
+            prefix=f"{prefix}.ln_attn",
+            weights=weights,
+            eps=config.layer_norm_epsilon,
+        )
+        self.ln_mlp = FastLayerNorm.load(
+            prefix=f"{prefix}.ln_mlp",
+            weights=weights,
+            eps=config.layer_norm_epsilon,
+        )
 
         self.self_attention = FlashRWLargeAttention(
-            num_heads,
-            num_heads_kv,
-            hidden_size,
-            bias,
-            process_group=process_group,
-            reduce=False,
+            config,
+            prefix=f"{prefix}.self_attention",
+            weights=weights,
         )
+        assert config.parallel_attn, "This version doesn't support non parallel_attn"
 
-        self.mlp = FlashMLP(
-            hidden_size, bias, process_group=process_group, reduce=False
-        )
+        self.mlp = FlashMLP(config, prefix=f"{prefix}.mlp", weights=weights)
 
-        self.process_group = process_group
+        self.process_group = weights.process_group
 
     def forward(
         self,
@@ -541,8 +531,7 @@ class FlashRWLargeLayer(nn.Module):
 
         intermediate = attn_output + mlp_output
 
-        # Only reduce once and after the addition instead of once per layer
-        if self.process_group is not None:
+        if self.process_group.size() > 1:
             torch.distributed.all_reduce(intermediate, group=self.process_group)
 
         return intermediate, residual
@@ -553,37 +542,18 @@ class FlashRWPreTrainedModel(PreTrainedModel):
 
 
 class FlashRWModel(FlashRWPreTrainedModel):
-    def __init__(self, config, process_group=None):
+    def __init__(self, config, weights):
         super().__init__(config)
         self.config = config
 
-        self.tp_embeddings = False
-        if process_group is not None:
-            self.tp_rank = process_group.rank()
-            self.tp_world_size = process_group.size()
-            if config.vocab_size % self.tp_world_size == 0:
-                self.tp_embeddings = True
-
-        if self.tp_embeddings:
-            self.word_embeddings = TensorParallelEmbedding(
-                config.vocab_size, config.hidden_size, process_group=process_group
-            )
-        else:
-            self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size)
-
+        self.word_embeddings = TensorParallelEmbedding(
+            prefix="transformer.word_embeddings", weights=weights
+        )
         if config.model_type == "RefinedWebModel":
             self.h = nn.ModuleList(
                 [
-                    FlashRWLayer(
-                        config.n_head,
-                        config.n_head_kv,
-                        config.hidden_size,
-                        config.bias,
-                        config.layer_norm_epsilon,
-                        config.parallel_attn,
-                        process_group,
-                    )
-                    for _ in range(config.num_hidden_layers)
+                    FlashRWLayer(layer_id, config, weights)
+                    for layer_id in range(config.num_hidden_layers)
                 ]
             )
             self.cache_size = (
@@ -594,15 +564,8 @@ class FlashRWModel(FlashRWPreTrainedModel):
         elif config.model_type == "RefinedWeb":
             self.h = nn.ModuleList(
                 [
-                    FlashRWLargeLayer(
-                        config.n_head,
-                        config.n_head_kv,
-                        config.hidden_size,
-                        config.bias,
-                        config.layer_norm_epsilon,
-                        process_group,
-                    )
-                    for _ in range(config.num_hidden_layers)
+                    FlashRWLargeLayer(layer_id, config, weights)
+                    for layer_id in range(config.num_hidden_layers)
                 ]
             )
             self.cache_size = (
@@ -615,31 +578,13 @@ class FlashRWModel(FlashRWPreTrainedModel):
                 f"model_type {config.model_type} is not supported."
             )
 
-        self.ln_f = FastLayerNorm(config.hidden_size, eps=config.layer_norm_epsilon)
-
-        self.head_size = self.h[0].self_attention.head_size
-
-    def post_load_weights(self, load_in_8bit=False):
-        if isinstance(self.word_embeddings, TensorParallelEmbedding):
-            self.word_embeddings.add_null_idx()
-        for layer in self.h:
-            layer: FlashRWLayer
-            layer.self_attention.query_key_value.prepare_weights(load_in_8bit)
-            layer.self_attention.dense.prepare_weights(load_in_8bit)
-            layer.mlp.dense_h_to_4h.prepare_weights(load_in_8bit)
-            layer.mlp.dense_4h_to_h.prepare_weights(load_in_8bit)
-
-    @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
-        # Pop here as we will replace the layer in our own logic and don't want from_pretrained
-        # to do it for us
-        load_in_8bit = kwargs.pop("load_in_8bit", False)
-        model = super(FlashRWModel, cls).from_pretrained(
-            pretrained_model_name_or_path, load_in_8bit=False, *model_args, **kwargs
+        self.ln_f = FastLayerNorm.load(
+            prefix="transformer.ln_f",
+            weights=weights,
+            eps=config.layer_norm_epsilon,
         )
 
-        model.post_load_weights(load_in_8bit)
-        return model
+        self.head_size = self.h[0].self_attention.head_size
 
     def forward(
         self,
@@ -706,44 +651,14 @@ class FlashRWModel(FlashRWPreTrainedModel):
 
 
 class FlashRWForCausalLM(FlashRWPreTrainedModel):
-    def __init__(self, config, process_group=None):
+    def __init__(self, config, weights):
         super().__init__(config)
 
-        self.process_group = process_group
-        if self.process_group is not None:
-            self.world_size = self.process_group.size()
-        else:
-            self.world_size = 1
+        self.transformer = FlashRWModel(config, weights)
 
-        self.transformer = FlashRWModel(config, process_group)
-
-        if self.transformer.tp_embeddings:
-            self.lm_head = FastLinear(
-                config.hidden_size,
-                config.vocab_size // process_group.size(),
-                bias=False,
-            )
-        else:
-            self.lm_head = FastLinear(config.hidden_size, config.vocab_size, bias=False)
-
-    @classmethod
-    def from_config(cls, config, **kwargs):
-        return cls(config, **kwargs)
-
-    def post_load_weights(self, load_in_8bit=False):
-        self.transformer.post_load_weights(load_in_8bit)
-        self.lm_head.prepare_weights()
-
-    @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
-        # Pop here as we will replace the layer in our own logic and don't want from_pretrained
-        # to do it for us
-        load_in_8bit = kwargs.pop("load_in_8bit", False)
-        model = super(FlashRWForCausalLM, cls).from_pretrained(
-            pretrained_model_name_or_path, load_in_8bit=False, *model_args, **kwargs
+        self.lm_head = TensorParallelHead.load(
+            config, prefix="lm_head", weights=weights
         )
-        model.post_load_weights(load_in_8bit)
-        return model
 
     def forward(
         self,
@@ -754,6 +669,7 @@ class FlashRWForCausalLM(FlashRWPreTrainedModel):
         max_s,
         past_key_values: Optional[torch.Tensor] = None,
         pre_allocate_past_size: Optional[int] = None,
+        lm_head_indices: Optional[torch.Tensor] = None,
     ):
         hidden_states, present = self.transformer(
             input_ids,
@@ -764,13 +680,7 @@ class FlashRWForCausalLM(FlashRWPreTrainedModel):
             past_key_values,
             pre_allocate_past_size,
         )
+        if lm_head_indices is not None:
+            hidden_states = hidden_states[lm_head_indices]
         logits = self.lm_head(hidden_states)
-
-        if self.transformer.tp_embeddings:
-            # Logits are sharded, so we need to gather them
-            world_logits = [torch.empty_like(logits) for _ in range(self.world_size)]
-            torch.distributed.all_gather(world_logits, logits, group=self.process_group)
-            world_logits = torch.cat(world_logits, dim=1)
-
-            return world_logits, present
         return logits, present

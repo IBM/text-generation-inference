@@ -143,10 +143,6 @@ WORKDIR /usr/src
 # Install specific version of torch
 RUN pip install torch=="$PYTORCH_VERSION+cpu" --index-url "https://download.pytorch.org/whl/nightly/cpu" --no-cache-dir
 
-# Install specific version of transformers
-COPY server/Makefile-transformers server/Makefile
-RUN cd server && make install-custom-transformers
-
 # Install optimum - not used in tests for now
 #RUN pip install optimum==$OPTIMUM_VERSION --no-cache-dir
 
@@ -198,9 +194,9 @@ RUN pip install torch==$PYTORCH_VERSION+cu118 --index-url "https://download.pyto
 COPY server/Makefile-flash-att server/Makefile
 RUN cd server && make install-flash-attention
 
-# Install specific version of transformers
-COPY server/Makefile-transformers server/Makefile
-RUN cd server && BUILD_EXTENSIONS="True" make install-custom-transformers
+# Build custom kernels
+COPY server/custom_kernels/ /usr/src/.
+RUN cd /usr/src && python setup.py build_ext && python setup.py install
 
 # Install optimum
 RUN pip install optimum[onnxruntime-gpu]==$OPTIMUM_VERSION --no-cache-dir
@@ -239,6 +235,10 @@ RUN cd server && \
     make gen-server && \
     pip install ".[bnb, accelerate]" --no-cache-dir
 
+# Patch codegen model changes into transformers 4.29
+RUN cp server/transformers_patch/modeling_codegen.py \
+       /opt/miniconda/lib/python3.*/site-packages/transformers/models/codegen/modeling_codegen.py
+
 # Install router
 COPY --from=router-builder /usr/local/cargo/bin/text-generation-router /usr/local/bin/text-generation-router
 # Install launcher
@@ -252,9 +252,7 @@ ENV PORT=3000 \
 RUN chmod -R g+rwx ${HOME}
 
 # Temporary for dev
-RUN chmod -R g+w /opt/miniconda/lib/python3.*/site-packages/text_generation_server /usr/src /usr/local/bin \
-    /opt/miniconda/lib/python3.*/site-packages/transformers-* /opt/miniconda/lib/python3.*/site-packages/optimum \
-    /opt/miniconda/lib/python3.*/site-packages/onnxruntime/transformers
+RUN chmod -R g+w /opt/miniconda/lib/python3.*/site-packages/text_generation_server /usr/src /usr/local/bin
 
 # Run as non-root user by default
 USER tgis

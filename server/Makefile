@@ -1,4 +1,3 @@
-include Makefile-transformers
 include Makefile-flash-att
 
 gen-server:
@@ -21,7 +20,7 @@ install-deepspeed:
 	# Install specific version of deepspeed
 	pip install deepspeed==0.7.6 --no-cache-dir
 
-install: gen-server install-torch install-transformers
+install: gen-server install-torch
 	pip install pip --upgrade
 	pip install -e . --no-cache-dir
 

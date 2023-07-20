@@ -13,6 +13,37 @@ import torch.distributed as dist
 RANK = int(os.getenv("RANK", "0"))
 
 
+class FakeBarrier:
+    def wait(self):
+        pass
+
+
+class FakeGroup:
+    def __init__(self, rank, size):
+        self._rank = rank
+        self._size = size
+
+    def allreduce(self, *args, **kwargs):
+        return FakeBarrier()
+
+    def allgather(self, inputs, local_tensor, **kwargs):
+        assert (
+                len(inputs[0]) == len(local_tensor) == 1
+        ), f"{len(inputs[0])} != {len(local_tensor)} != 1, and the FakeGroup is supposed to join on simple tensors"
+        for input_ in inputs:
+            input_[0].data = local_tensor[0].data
+        return FakeBarrier()
+
+    def barrier(self, *args, **kwargs):
+        return FakeBarrier()
+
+    def size(self):
+        return self._size
+
+    def rank(self):
+        return self._rank
+
+
 def run_rank_n(func: partial, barrier: bool = False, rank: int = 0, other_rank_output: Any = None) -> Any:
     # runs function on only process with specified rank
     if not dist.is_initialized():
@@ -37,6 +68,9 @@ def get_torch_dtype(dtype_str: str) -> torch.dtype:
 
 
 def initialize_torch_distributed(world_size: int, rank: int):
+    if world_size == 1 or os.getenv("DEBUG", None) == "1":
+        return FakeGroup(rank, world_size)
+
     if not torch.distributed.is_initialized():
         if torch.cuda.is_available():
             from torch.distributed import ProcessGroupNCCL

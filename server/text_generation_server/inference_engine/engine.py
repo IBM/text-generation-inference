@@ -32,6 +32,3 @@ class BaseInferenceEngine(ABC):
 
     def get_device(self) -> torch.device:
         return self.device
-
-    def process_logits(self, output_logits: torch.Tensor) -> torch.Tensor:
-        return output_logits
