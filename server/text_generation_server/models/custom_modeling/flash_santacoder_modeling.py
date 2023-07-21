@@ -5,8 +5,7 @@ from torch import nn
 from transformers.activations import ACT2FN
 from typing import Optional
 
-# Flash attention imports
-import flash_attn_cuda
+from text_generation_server.utils.flash_attn import attention
 from text_generation_server.utils.layers import (
     TensorParallelRowLinear,
     TensorParallelColumnLinear,
@@ -169,59 +168,41 @@ class FlashMQAttention(torch.nn.Module):
         query = query.view(-1, self.num_heads, self.head_size)
         key_value = key_value.view(-1, 2, 1, self.head_size)
 
+        # output
+        attn_output = torch.empty_like(query)
+
         # Prefill
         if layer_past_present_indices is None:
             # Copy to layer past
             layer_past[...] = key_value
-            # Expand from 1 to num_heads
-            key_value = key_value.expand(-1, 2, self.num_heads, self.head_size)
 
-            # output
-            attn_output = torch.empty_like(query)
             # flash attention
-            flash_attn_cuda.fwd(
+            attention(
                 query,
-                key_value[:, 0],
-                key_value[:, 1],
+                torch.select(key_value, dim=1, index=0),
+                torch.select(key_value, dim=1, index=1),
                 attn_output,
                 cu_seqlens,
-                cu_seqlens,
                 max_s,
-                max_s,
-                0.0,
                 self.softmax_scale,
-                False,
-                True,
-                False,
-                0,
-                None,
             )
         # Decode
         else:
             # Add present to the layer_past tensor at the correct indices
             layer_past[layer_past_present_indices] = key_value
-            # Expand from 1 to num_heads
-            key_value = layer_past.expand(-1, 2, self.num_heads, self.head_size)
 
-            # output
-            attn_output = torch.empty_like(query)
             # flash attention
-            flash_attn_cuda.fwd(
+            attention(
                 query,
-                key_value[:, 0],
-                key_value[:, 1],
+                layer_past[:, 0],
+                layer_past[:, 1],
                 attn_output,
-                cu_seqlens_q,
                 cu_seqlens,
-                1,
                 max_s,
-                0.0,
                 self.softmax_scale,
+                cu_seqlens_q,
+                1,
                 False,
-                False,
-                False,
-                0,
-                None,
             )
 
         return self.c_proj(attn_output.view(-1, self.num_heads * self.head_size))

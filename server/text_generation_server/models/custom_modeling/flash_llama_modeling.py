@@ -26,9 +26,9 @@ from transformers.activations import ACT2FN
 from typing import Optional
 
 # Flash attention imports
-import flash_attn_cuda
 import dropout_layer_norm
 
+from text_generation_server.utils.flash_attn import attention
 from text_generation_server.utils.layers import (
     TensorParallelRowLinear,
     TensorParallelColumnLinear,
@@ -154,22 +154,14 @@ class FlashLlamaAttention(torch.nn.Module):
             # output
             attn_output = torch.empty_like(qkv[:, 0])
             # flash attention
-            flash_attn_cuda.fwd(
+            attention(
                 qkv[:, 0],
                 qkv[:, 1],
                 qkv[:, 2],
                 attn_output,
                 cu_seqlens,
-                cu_seqlens,
                 max_s,
-                max_s,
-                0.0,
                 self.softmax_scale,
-                False,
-                True,
-                False,
-                0,
-                None,
             )
         # Decode
         else:
@@ -180,22 +172,17 @@ class FlashLlamaAttention(torch.nn.Module):
             # output
             attn_output = torch.empty_like(query)
             # flash attention
-            flash_attn_cuda.fwd(
+            attention(
                 query,
                 layer_past[:, 0],
                 layer_past[:, 1],
                 attn_output,
-                cu_seqlens_q,
                 cu_seqlens,
-                1,
                 max_s,
-                0.0,
                 self.softmax_scale,
+                cu_seqlens_q,
+                1,
                 False,
-                False,
-                False,
-                0,
-                None,
             )
 
         return self.o_proj(attn_output.view(-1, self.num_heads * self.head_size))

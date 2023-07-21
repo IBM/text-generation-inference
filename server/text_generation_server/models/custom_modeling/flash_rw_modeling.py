@@ -6,9 +6,7 @@ from transformers.modeling_utils import PreTrainedModel
 from transformers.configuration_utils import PretrainedConfig
 from typing import Optional
 
-# Flash attention imports
-import flash_attn_cuda
-
+from text_generation_server.utils.flash_attn import attention
 from text_generation_server.utils.layers import (
     TensorParallelRowLinear,
     TensorParallelColumnLinear,
@@ -158,59 +156,42 @@ class FlashRWAttention(torch.nn.Module):
         self.rotary_emb(query, cos, sin)
         self.rotary_emb(kv[:, 0], cos, sin)
 
+        # output
+        attn_output = torch.empty_like(query)
+
         # Prefill
         if layer_past_present_indices is None:
             # Copy to layer past
             layer_past[...] = kv
-            # Expand to query shape
-            kv = kv.expand(-1, 2, self.num_heads, self.head_size)
 
-            # output
-            attn_output = torch.empty_like(query)
             # flash attention
-            flash_attn_cuda.fwd(
+            attention(
                 query,
-                kv[:, 0],
-                kv[:, 1],
+                torch.select(kv, dim=1, index=0),
+                torch.select(kv, dim=1, index=1),
                 attn_output,
                 cu_seqlens,
-                cu_seqlens,
                 max_s,
-                max_s,
-                0.0,
                 self.softmax_scale,
-                False,
-                True,
-                False,
-                0,
-                None,
             )
         # Decode
         else:
             # Add present to the layer_past tensor at the correct indices
             layer_past[layer_past_present_indices] = kv
-            # Expand to query shape
-            kv = layer_past.expand(-1, 2, self.num_heads, self.head_size)
 
-            # output
-            attn_output = torch.empty_like(query)
             # flash attention
-            flash_attn_cuda.fwd(
+            attention(
                 query,
-                kv[:, 0],
-                kv[:, 1],
+                layer_past[:, 0],
+                layer_past[:, 1],
+                torch.select(kv, dim=1, index=1),
                 attn_output,
-                cu_seqlens_q,
                 cu_seqlens,
-                1,
                 max_s,
-                0.0,
                 self.softmax_scale,
+                cu_seqlens_q,
+                1,
                 False,
-                False,
-                False,
-                0,
-                None,
             )
 
         return self.dense(attn_output.view(-1, self.num_heads * self.head_size))
@@ -288,67 +269,41 @@ class FlashRWLargeAttention(torch.nn.Module):
         self.rotary_emb(query, cos, sin)
         self.rotary_emb(kv[:, :, 0], cos, sin)
 
+        # output
+        attn_output = torch.empty_like(query)
+
         # Prefill
         if layer_past_present_indices is None:
             # Copy to layer past
             layer_past[...] = kv
-            # Expand to query shape
-            kv = (
-                kv.unsqueeze(2)
-                .expand(-1, self.num_groups, self.num_heads, 2, self.head_size)
-                .reshape(-1, self.num_groups * self.num_heads, 2, self.head_size)
-            )
 
-            # output
-            attn_output = torch.empty_like(query)
             # flash attention
-            flash_attn_cuda.fwd(
+            attention(
                 query,
-                kv[:, :, 0],
-                kv[:, :, 1],
+                torch.select(kv, dim=2, index=0),
+                torch.select(kv, dim=2, index=1),
                 attn_output,
                 cu_seqlens,
-                cu_seqlens,
                 max_s,
-                max_s,
-                0.0,
                 self.softmax_scale,
-                False,
-                True,
-                False,
-                0,
-                None,
             )
         # Decode
         else:
             # Add present to the layer_past tensor at the correct indices
             layer_past[layer_past_present_indices] = kv
-            # Expand to query shape
-            kv = (
-                layer_past.unsqueeze(2)
-                .expand(-1, self.num_groups, self.num_heads, 2, self.head_size)
-                .reshape(-1, self.num_groups * self.num_heads, 2, self.head_size)
-            )
 
-            # output
-            attn_output = torch.empty_like(query)
             # flash attention
-            flash_attn_cuda.fwd(
+            attention(
                 query,
-                kv[:, :, 0],
-                kv[:, :, 1],
+                layer_past[:, :, 0],
+                layer_past[:, :, 1],
                 attn_output,
-                cu_seqlens_q,
                 cu_seqlens,
-                1,
                 max_s,
-                0.0,
                 self.softmax_scale,
+                cu_seqlens_q,
+                1,
                 False,
-                False,
-                False,
-                0,
-                None,
             )
 
         return self.dense(

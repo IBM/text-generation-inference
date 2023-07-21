@@ -1,4 +1,5 @@
 include Makefile-flash-att
+include Makefile-flash-att-v2
 
 gen-server:
 	# Compile protos
@@ -9,8 +10,8 @@ gen-server:
 	find text_generation_server/pb/ -type f -name "*.py" -print0 -exec sed -i -e 's/^\(import.*pb2\)/from . \1/g' {} \;
 	touch text_generation_server/pb/__init__.py
 
-TORCH_URL := https://download.pytorch.org/whl/cu117
-TORCH_VERSION := 2.0.0+cu117  ## 1.12.1+cu116 for deepspeed currently
+TORCH_URL := https://download.pytorch.org/whl/cu118
+TORCH_VERSION := 2.0.0+cu118
 
 install-torch:
 	# Install specific version of torch

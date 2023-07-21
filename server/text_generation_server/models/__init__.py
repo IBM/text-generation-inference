@@ -39,19 +39,9 @@ def get_model(model_name: str, revision: str, deployment_framework: str, dtype_s
         model_config = RWConfig.from_pretrained(model_path, trust_remote_code=TRUST_REMOTE_CODE)
 
     if FLASH_ATTENTION:
-        if not torch.cuda.is_available():
-            raise ValueError("FLASH_ATTENTION requires CUDA")
-
-        major, minor = torch.cuda.get_device_capability()
-        is_sm75 = major == 7 and minor == 5
-        is_sm8x = major == 8 and minor >= 0
-        is_sm90 = major == 9 and minor == 0
-
-        supported = is_sm75 or is_sm8x or is_sm90
-        if not supported:
-            raise ValueError(
-                f"FLASH_ATTENTION not supported by GPU with CUDA capability {major} {minor}"
-            )
+        # This will raise an exception if flash attention is not supported by the device
+        import text_generation_server.utils.flash_attn as flash_attn
+        print(f"Using Flash Attention V2: {flash_attn.HAS_FLASH_ATTN_V2}")
 
         if deployment_framework != "hf_custom_tp":
             print(

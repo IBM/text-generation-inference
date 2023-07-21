@@ -190,7 +190,7 @@ ENV PATH=/opt/miniconda/bin:$PATH
 RUN pip install ninja==1.11.1 --no-cache-dir
 RUN pip install torch==$PYTORCH_VERSION+cu118 --index-url "https://download.pytorch.org/whl/nightly/cu118" --no-cache-dir
 
-# Install specific version of flash attention
+# Build specific version of flash attention
 COPY server/Makefile-flash-att server/Makefile
 RUN cd server && make install-flash-attention
 
