@@ -23,6 +23,7 @@ import torch.distributed
 
 from torch import nn
 from transformers.activations import ACT2FN
+from transformers.configuration_utils import PretrainedConfig
 from typing import Optional
 
 # Flash attention imports
@@ -35,7 +36,60 @@ from text_generation_server.utils.layers import (
     TensorParallelEmbedding,
     PositionRotaryEmbedding,
     TensorParallelHead,
+    get_linear,
 )
+
+
+class LlamaConfig(PretrainedConfig):
+    model_type = "llama"
+
+    def __init__(
+        self,
+        vocab_size=32000,
+        hidden_size=4096,
+        intermediate_size=11008,
+        num_hidden_layers=32,
+        num_attention_heads=32,
+        num_key_value_heads=None,
+        hidden_act="silu",
+        max_position_embeddings=4096,
+        initializer_range=0.02,
+        rms_norm_eps=1e-6,
+        use_cache=True,
+        pad_token_id=0,
+        bos_token_id=1,
+        eos_token_id=2,
+        pretraining_tp=1,
+        tie_word_embeddings=False,
+        rope_scaling=None,
+        **kwargs,
+    ):
+        self.vocab_size = vocab_size
+        self.max_position_embeddings = max_position_embeddings
+        self.hidden_size = hidden_size
+        self.intermediate_size = intermediate_size
+        self.num_hidden_layers = num_hidden_layers
+        self.num_attention_heads = num_attention_heads
+
+        # for backward compatibility
+        if num_key_value_heads is None:
+            num_key_value_heads = num_attention_heads
+
+        self.num_key_value_heads = num_key_value_heads
+        self.hidden_act = hidden_act
+        self.initializer_range = initializer_range
+        self.rms_norm_eps = rms_norm_eps
+        self.pretraining_tp = pretraining_tp
+        self.use_cache = use_cache
+        self.rope_scaling = rope_scaling
+
+        super().__init__(
+            pad_token_id=pad_token_id,
+            bos_token_id=bos_token_id,
+            eos_token_id=eos_token_id,
+            tie_word_embeddings=tie_word_embeddings,
+            **kwargs,
+        )
 
 
 class LlamaRMSNorm(nn.Module):
@@ -55,7 +109,8 @@ class LlamaRMSNorm(nn.Module):
                 hidden_states += residual
             residual = hidden_states
 
-            variance = hidden_states.to(torch.float32).pow(2).mean(-1, keepdim=True)
+            hidden_states = hidden_states.to(torch.float32)
+            variance = hidden_states.pow(2).mean(-1, keepdim=True)
             hidden_states = hidden_states * torch.rsqrt(
                 variance + self.variance_epsilon
             )
@@ -90,6 +145,27 @@ class LlamaRMSNorm(nn.Module):
             return normed_hidden_states, res
 
 
+def _load_gqa(config, prefix: str, weights):
+    w = [
+        weights.get_sharded(f"{prefix}.q_proj.weight", dim=0),
+        weights.get_sharded(f"{prefix}.k_proj.weight", dim=0),
+        weights.get_sharded(f"{prefix}.v_proj.weight", dim=0),
+    ]
+    weight = torch.cat(w, dim=0)
+    weight = weight.to(dtype=weights.dtype).to(device=weights.device)
+    bias = None
+    assert config.hidden_size % config.num_attention_heads == 0
+    head_size = config.hidden_size // config.num_attention_heads
+    assert config.num_attention_heads % weights.process_group.size() == 0
+    num_heads = config.num_attention_heads // weights.process_group.size()
+    num_key_value_heads = config.num_key_value_heads // weights.process_group.size()
+    assert list(weight.shape) == [
+        (num_heads + 2 * num_key_value_heads) * head_size,
+        config.hidden_size,
+    ], f"{list(weight.shape)} != {[(num_heads + 2 * config.num_key_value_heads) * head_size, config.hidden_size]}"
+    return TensorParallelColumnLinear(get_linear(weight, bias, config.quantize))
+
+
 class FlashLlamaAttention(torch.nn.Module):
     def __init__(
         self,
@@ -114,13 +190,19 @@ class FlashLlamaAttention(torch.nn.Module):
                 f"and `num_shards`: {weights.process_group.size()}"
             )
         self.num_heads = self.num_heads // weights.process_group.size()
-        self.query_key_value = TensorParallelColumnLinear.load_multi(
-            config,
-            prefixes=[f"{prefix}.q_proj", f"{prefix}.k_proj", f"{prefix}.v_proj"],
-            dim=0,
-            weights=weights,
-            bias=False,
+        self.num_key_value_heads = (
+            config.num_key_value_heads // weights.process_group.size()
         )
+        if config.num_attention_heads != config.num_key_value_heads:
+            self.query_key_value = _load_gqa(config, prefix, weights)
+        else:
+            self.query_key_value = TensorParallelColumnLinear.load_multi(
+                config,
+                prefixes=[f"{prefix}.q_proj", f"{prefix}.k_proj", f"{prefix}.v_proj"],
+                dim=0,
+                weights=weights,
+                bias=False,
+            )
         self.o_proj = TensorParallelRowLinear.load(
             config,
             prefix=f"{prefix}.o_proj",
@@ -140,24 +222,32 @@ class FlashLlamaAttention(torch.nn.Module):
         cu_seqlens_q,
     ):
         qkv = self.query_key_value(hidden_states)
-        qkv = qkv.view(-1, 3, self.num_heads, self.head_size)
+        query, kv = qkv.split(
+            [
+                self.head_size * self.num_heads,
+                2 * self.head_size * self.num_key_value_heads,
+            ],
+            dim=1,
+        )
+        query = query.view(-1, self.num_heads, self.head_size)
+        kv = kv.view(-1, 2, self.num_key_value_heads, self.head_size)
 
-        # Inplace rotary
-        self.rotary_emb(qkv[:, 0], cos, sin)
-        self.rotary_emb(qkv[:, 1], cos, sin)
+        self.rotary_emb(query, cos, sin)
+        self.rotary_emb(torch.select(kv, dim=1, index=0), cos, sin)
+
+        # output tensor
+        attn_output = torch.empty_like(query)
 
         # Prefill
         if layer_past_present_indices is None:
             # Copy to layer past
-            layer_past[...] = qkv[:, 1:]
+            layer_past[...] = kv
 
-            # output
-            attn_output = torch.empty_like(qkv[:, 0])
             # flash attention
             attention(
-                qkv[:, 0],
-                qkv[:, 1],
-                qkv[:, 2],
+                query,
+                torch.select(kv, dim=1, index=0),
+                torch.select(kv, dim=1, index=1),
                 attn_output,
                 cu_seqlens,
                 max_s,
@@ -165,12 +255,9 @@ class FlashLlamaAttention(torch.nn.Module):
             )
         # Decode
         else:
-            query = qkv[:, 0]
             # Add present to the layer_past tensor at the correct indices
-            layer_past[layer_past_present_indices] = qkv[:, 1:]
+            layer_past[layer_past_present_indices] = kv
 
-            # output
-            attn_output = torch.empty_like(query)
             # flash attention
             attention(
                 query,
@@ -309,6 +396,9 @@ class FlashLlamaModel(torch.nn.Module):
 
         self.head_size = self.layers[0].self_attn.head_size
         self.num_heads = self.layers[0].self_attn.num_heads
+        self.num_key_value_heads = (
+            config.num_key_value_heads // weights.process_group.size()
+        )
 
     def forward(
         self,
@@ -332,7 +422,7 @@ class FlashLlamaModel(torch.nn.Module):
                     if pre_allocate_past_size is None
                     else pre_allocate_past_size,
                     2,
-                    self.num_heads,
+                    self.num_key_value_heads,
                     self.head_size,
                 )
             )

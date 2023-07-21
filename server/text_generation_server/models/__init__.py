@@ -32,12 +32,6 @@ def get_model(model_name: str, revision: str, deployment_framework: str, dtype_s
     model_config = AutoConfig.from_pretrained(model_path, trust_remote_code=TRUST_REMOTE_CODE)
     model_type = model_config.model_type
 
-    if model_type in ["RefinedWeb", "RefinedWebModel"]:
-        # Custom config type for RW models
-        from text_generation_server.models.custom_modeling.flash_rw_modeling import FlashRWForCausalLM, RWConfig
-        RWConfig.model_type = model_type
-        model_config = RWConfig.from_pretrained(model_path, trust_remote_code=TRUST_REMOTE_CODE)
-
     if FLASH_ATTENTION:
         # This will raise an exception if flash attention is not supported by the device
         import text_generation_server.utils.flash_attn as flash_attn
