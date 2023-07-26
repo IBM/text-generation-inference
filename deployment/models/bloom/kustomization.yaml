@@ -29,9 +29,19 @@ patchesStrategicMerge:
                value: bigscience/bloom
              - name: DEPLOYMENT_FRAMEWORK
                value: hf_custom_tp
-             - name: DTYPE_STR
-               value: float16
+               
+             # Measurements showed incremental mem usage to actually be linear
+             # So these could be improved if we change the logic in the code to
+             # support that kind of relationship
              - name: MAX_BATCH_SIZE
-               value: "5"
+               value: "16"
              - name: MAX_CONCURRENT_REQUESTS
                value: "32"
+             - name: MAX_SEQUENCE_LENGTH
+               value: "4096"
+             - name: MAX_NEW_TOKENS
+               value: "1536"
+             - name: MAX_PREFILL_WEIGHT
+               value: "420000"
+             - name: MAX_BATCH_WEIGHT
+               value: "80000000"
