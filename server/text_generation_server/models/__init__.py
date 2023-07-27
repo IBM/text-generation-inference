@@ -44,7 +44,7 @@ def get_model(model_name: str, revision: str, deployment_framework: str, dtype_s
             )
             deployment_framework = "hf_custom_tp"
 
-        if model_type in ["RefinedWeb", "RefinedWebModel"]:
+        if model_type in ["RefinedWeb", "RefinedWebModel", "falcon"]:
             # Custom config type for RW models
             from text_generation_server.models.custom_modeling.flash_rw_modeling import RWConfig
             RWConfig.model_type = model_type
