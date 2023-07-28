@@ -13,11 +13,12 @@ from typing import Optional, Tuple, List, Type, Union, Any
 from text_generation_server.inference_engine import get_inference_engine_class
 from text_generation_server.models import Model
 
-from text_generation_server.models.types import Batch, TokenInfo, GenerateError
+from text_generation_server.models.types import Batch, GenerateError
 from text_generation_server.pb import generate_pb2
 from text_generation_server.pb.generate_pb2 import InputTokens
 from text_generation_server.prompt_cache import PrefixCache
 from text_generation_server.utils.hub import get_model_path
+from text_generation_server.utils.token_types import TokenInfo
 from text_generation_server.utils.tokens import (
     NextTokenChooser, get_token_info, get_input_tokens_info,
 )

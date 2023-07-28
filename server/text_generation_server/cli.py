@@ -5,9 +5,6 @@ import typer
 
 from pathlib import Path
 
-from text_generation_server import server, utils
-from text_generation_server.utils.hub import get_model_path, local_weight_files
-
 app = typer.Typer()
 
 
@@ -27,6 +24,8 @@ def serve(
     cuda_process_memory_fraction: float = 1.0,
     uds_path: Path = "/tmp/text-generation",
 ):
+    from text_generation_server import server
+
     if sharded:
         assert (
             os.getenv("RANK", None) is not None
@@ -63,8 +62,29 @@ def download_weights(
     revision: Optional[str] = None,
     token: Optional[str] = None,
     extension: str = ".safetensors",
+    auto_convert: bool = True,
 ):
-    utils.download_weights(model_name, extension.split(","), revision=revision, auth_token=token)
+    from text_generation_server import utils
+
+    meta_exts = [".json", ".py", ".md"]
+
+    extensions = extension.split(",")
+
+    if len(extensions) == 1 and extensions[0] not in meta_exts:
+        extensions.extend(meta_exts)
+
+    files = utils.download_weights(model_name, extensions, revision=revision, auth_token=token)
+
+    if auto_convert and ".safetensors" in extensions:
+        if not utils.local_weight_files(utils.get_model_path(model_name, revision), ".safetensors"):
+            if ".bin" not in extensions:
+                print(".safetensors weights not found, downloading pytorch weights to convert...")
+                utils.download_weights(model_name, ".bin", revision=revision, auth_token=token)
+
+            print(".safetensors weights not found, converting from pytorch weights...")
+            convert_to_safetensors(model_name, revision)
+        elif not any(f.endswith(".safetensors") for f in files):
+            print(".safetensors weights not found on hub, but were found locally. Remove them first to re-convert")
 
 
 @app.command()
@@ -93,9 +113,16 @@ def convert_to_safetensors(
     model_name: str,
     revision: Optional[str] = None,
 ):
+    from text_generation_server import utils
+
     # Get local pytorch file paths
-    model_path = get_model_path(model_name, revision)
-    local_pt_files = local_weight_files(model_path, ".bin")
+    model_path = utils.get_model_path(model_name, revision)
+    local_pt_files = utils.local_weight_files(model_path, ".bin")
+
+    if not local_pt_files:
+        print("No pytorch .bin files found to convert")
+        return
+
     local_pt_files = [Path(f) for f in local_pt_files]
 
     # Safetensors final filenames
@@ -104,8 +131,32 @@ def convert_to_safetensors(
         for p in local_pt_files
     ]
 
+    if any(os.path.exists(p) for p in local_st_files):
+        print("Existing .safetensors weights found, remove them first to reconvert")
+        return
+
+    print(f"Converting {len(local_st_files)} pytorch .bin files to .safetensors...")
+
+    try:
+        import transformers
+
+        config = transformers.AutoConfig.from_pretrained(
+            model_name,
+            revision=revision,
+        )
+        architecture = config.architectures[0]
+
+        class_ = getattr(transformers, architecture)
+
+        # Name for this variable depends on transformers version
+        discard_names = getattr(class_, "_tied_weights_keys", [])
+        discard_names.extend(getattr(class_, "_keys_to_ignore_on_load_missing", []))
+
+    except Exception:
+        discard_names = []
+
     # Convert pytorch weights to safetensors
-    utils.convert_files(local_pt_files, local_st_files)
+    utils.convert_files(local_pt_files, local_st_files, discard_names)
 
 
 if __name__ == "__main__":

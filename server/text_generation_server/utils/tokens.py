@@ -6,10 +6,10 @@ import torch
 from transformers import PreTrainedTokenizerBase
 from transformers.generation.logits_process import RepetitionPenaltyLogitsProcessor
 
-from text_generation_server.models.types import TokenInfo, TopToken, InputTokens
 from text_generation_server.pb import generate_pb2
 from text_generation_server.utils.dist import RANK
 from text_generation_server.utils.logits_process import static_warper
+from text_generation_server.utils.token_types import TokenInfo, TopToken, InputTokens
 
 FP32_LOGITS = os.getenv("FP32_LOGITS_PROCESS") == "true"
 

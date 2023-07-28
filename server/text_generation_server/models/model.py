@@ -9,11 +9,12 @@ from typing import List, Tuple, Optional, TypeVar, Type
 
 from transformers import PreTrainedModel
 
-from text_generation_server.models.types import Batch, TokenInfo, InputTokens, GenerateError
+from text_generation_server.models.types import Batch, GenerateError
 from text_generation_server.inference_engine.engine import BaseInferenceEngine
 from text_generation_server.pb import generate_pb2
 from text_generation_server.prompt_cache import PrefixCache
 from text_generation_server.utils.dist import print_rank_n
+from text_generation_server.utils.token_types import TokenInfo, InputTokens
 
 B = TypeVar("B", bound=Batch)
 
