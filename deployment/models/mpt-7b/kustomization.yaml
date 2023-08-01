@@ -32,11 +32,21 @@ patchesStrategicMerge:
              #- name: OUTPUT_SPECIAL_TOKENS
              #  value: "true"
 
+             - name: MAX_BATCH_SIZE
+               value: "64"
+             - name: MAX_CONCURRENT_REQUESTS
+               value: "100"
+             - name: MAX_NEW_TOKENS
+               value: "1024"
+             - name: MAX_PREFILL_WEIGHT
+               value: "2000000"
+             - name: MAX_BATCH_WEIGHT
+               value: "200000000"
 
              startupProbe:
                httpGet:
                  port: http
                  path: /health
-               # MPT-7B currently takes more than 20 mins to load :-(
+               # MPT-7B currently takes more than 15 mins to load :-(
                failureThreshold: 52
                periodSeconds: 30
