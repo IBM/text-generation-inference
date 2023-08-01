@@ -29,8 +29,6 @@ patchesStrategicMerge:
                value: "true"
              - name: MAX_SEQUENCE_LENGTH
                value: "2048"
-             - name: DEPLOYMENT_FRAMEWORK
-               value: "hf_transformers"
 
 
              startupProbe:

@@ -3,8 +3,6 @@ import os
 import types
 
 import torch
-import torch._dynamo
-from torch._inductor.compile_fx import compile_fx
 
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Optional, TypeVar, Type
@@ -24,6 +22,11 @@ MAX_PROMPT_PREFIX_LENGTH = 256
 
 CUDA_PAD_TO_MULT_OF_8 = os.getenv("CUDA_PAD_TO_MULT_OF_8", "true").lower() != "false"
 PT2_COMPILE = os.getenv("PT2_COMPILE", "false").lower() != "false"
+
+if PT2_COMPILE:
+    import torch._dynamo
+    from torch._inductor.compile_fx import compile_fx
+
 
 class Model(ABC):
     def __init__(self, engine: BaseInferenceEngine, dtype: torch.dtype):

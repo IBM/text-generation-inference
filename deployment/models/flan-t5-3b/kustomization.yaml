@@ -11,11 +11,8 @@ resources:
 
 patchesStrategicMerge:
   - ../../base/patches/gpus/1-gpu.yaml
-  # To load the trained prompts
-  - ../../base/patches/pvcs/prompts-pvc.yaml
-  # These limits are for the larger t5 model
-  #TODO adjust them for the smaller models
-  - ../../base/patches/limits/t5-xxl.yaml
+  - ../../base/patches/gpus/v100-16g.yaml
+  - ../../base/patches/limits/t5-xl-v100.yaml
   - |-
    apiVersion: apps/v1
    kind: Deployment
@@ -29,10 +26,3 @@ patchesStrategicMerge:
              env:
              - name: MODEL_NAME
                value: google/flan-t5-xl
-             # dtype set to bfloat16 to match tuned prompts
-             - name: DTYPE_STR
-               value: bfloat16
-
-             #TODO This value is for the larger t5 model, can be increased
-             - name: MAX_BATCH_WEIGHT
-               value: "47458400"

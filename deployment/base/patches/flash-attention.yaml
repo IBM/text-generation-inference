@@ -8,8 +8,5 @@ spec:
       containers:
         - name: server
           env:
-            - name: DEPLOYMENT_FRAMEWORK
-              #value: hf_accelerate
-              value: hf_transformers  # hf_transformers loads much slower but has better runtime latency
             - name: FLASH_ATTENTION
               value: "true"

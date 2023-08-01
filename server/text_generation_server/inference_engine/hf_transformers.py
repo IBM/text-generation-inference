@@ -9,11 +9,11 @@ from typing import Any, Optional
 
 class InferenceEngine(BaseInferenceEngine):
     def __init__(
-            self,
-            model_path: str,
-            model_class: type[_BaseAutoModelClass],
-            dtype: torch.dtype,
-            model_config: Optional[Any]
+        self,
+        model_path: str,
+        model_class: type[_BaseAutoModelClass],
+        dtype: torch.dtype,
+        model_config: Optional[Any]
     ) -> None:
         super().__init__(model_path, model_config)
 
@@ -33,5 +33,7 @@ class InferenceEngine(BaseInferenceEngine):
         if slow_but_exact:
             kwargs["slow_but_exact"] = True
 
-        self.model = model_class.from_pretrained(**kwargs)\
-            .requires_grad_(False).eval().to(self.device)
+        with self.device:
+            self.model = model_class.from_pretrained(**kwargs).requires_grad_(False).eval()
+            # This seems to be necessary even with with self.device
+            self.model.to(self.device)

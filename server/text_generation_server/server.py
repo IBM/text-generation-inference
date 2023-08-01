@@ -193,7 +193,7 @@ def serve(
     model_name: str,
     revision: Optional[str],
     deployment_framework: str,
-    dtype_str: str,
+    dtype_str: Optional[str],
     max_sequence_length: int,
     max_new_tokens: int,
     max_batch_size: int,
@@ -206,7 +206,7 @@ def serve(
         model_name: str,
         revision: Optional[str],
         deployment_framework: str,
-        dtype_str: str,
+        dtype_str: Optional[str],
         max_sequence_length: int,
         max_new_tokens: int,
         max_batch_size: int,
@@ -225,6 +225,11 @@ def serve(
         # Set the fraction of cuda/gpu mem available to this process, then load the model
         if torch.cuda.is_available() and cuda_process_memory_fraction < 1:
             torch.cuda.set_per_process_memory_fraction(cuda_process_memory_fraction)
+
+        # Default dtype based on device if not provided
+        if dtype_str is None:
+            dtype_str = "float16" if torch.cuda.is_available() else "float32"
+
         model = get_model(model_name, revision, deployment_framework, dtype_str)
 
         if local_rank == 0:

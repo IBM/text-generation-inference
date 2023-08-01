@@ -8,8 +8,6 @@ spec:
       containers:
         - name: server
           env:
-            - name: DEPLOYMENT_FRAMEWORK
-              value: hf_transformers  # PT2 compile doesn't seem to work with accelerate
             - name: PT2_COMPILE
               value: "true"
 

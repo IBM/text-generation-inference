@@ -12,8 +12,6 @@ spec:
           env:
             - name: TRANSFORMERS_CACHE
               value: /shared_model_storage/transformers_cache
-            - name: HUGGINGFACE_HUB_CACHE
-              value: $(TRANSFORMERS_CACHE)
 
           volumeMounts:
             - mountPath: /shared_model_storage

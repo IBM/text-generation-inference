@@ -16,9 +16,9 @@ path = "src/main.rs"
 [dependencies]
 axum = { version = "0.6.17", features = ["json"] }
 text-generation-client = { path = "client" }
-clap = { version = "^4.2.7", features = ["derive", "env"] }
+clap = { version = "^4.3.17", features = ["derive", "env"] }
 futures = "^0.3.28"
-metrics = "0.21.0"
+metrics = "0.21.1"
 metrics-exporter-prometheus = { version = "0.12.1", features = [] }
 moka = { version = "0.11.2", features = ["future"] }
 nohash-hasher = "^0.2.0"
@@ -28,14 +28,14 @@ openssl = "^0.10.55" # Override to address WS-2023-0082, WS-2023-0083, WS-2023-0
 openssl-sys = "^0.9.90" # Override to address WS-2023-0082, WS-2023-0083, WS-2023-0195
 parking_lot = "^0.12.1"
 rand = "^0.8.5"
-serde = "^1.0.163"
-serde_json = "^1.0.96"
+serde = "^1.0.173"
+serde_json = "^1.0.103"
 # Attempt to address WS-2023-0094
 # spin comes in via tonic->tokio-rustls->rustls->ring but this pins a specific old version 0.5.2 :(
 #spin = "=0.9.8"
-thiserror = "^1.0.40"
+thiserror = "^1.0.43"
 tokenizers = "^0.13.3"
-tokio = { version = "^1.28.2", features = ["rt", "rt-multi-thread", "parking_lot", "signal", "sync", "fs"] }
+tokio = { version = "^1.29.1", features = ["rt", "rt-multi-thread", "parking_lot", "signal", "sync", "fs"] }
 tracing = "^0.1.37"
 tracing-subscriber = { version = "0.3.16", features = ["json"] }
 prost = "^0.11.9"
@@ -46,4 +46,4 @@ unicode-truncate = "^0.2.0"
 
 [build-dependencies]
 tonic-build = "0.9.2"
-tempfile = "^3.5.0" # Override 0.3.3 version from tonic-build/prost-build, due to RUSTSEC-2023-0018
+tempfile = "^3.7.0" # Override 0.3.3 version from tonic-build/prost-build, due to RUSTSEC-2023-0018

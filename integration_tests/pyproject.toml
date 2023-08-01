@@ -8,12 +8,12 @@ authors = ["Nick Hill"]
 python = "^3.9"
 
 [tool.poetry.group.dev.dependencies]
-protobuf = "^4.23.3"
-grpcio-tools = "^1.54.2"
-pytest = "^7.3.1"
-pytest-asyncio = "^0.21.0"
-requests = "^2.30.0"
-pyyaml = "^6.0"
+protobuf = "^4.23.4"
+grpcio-tools = "^1.56.2"
+pytest = "^7.4.0"
+pytest-asyncio = "^0.21.1"
+requests = "^2.31.0"
+pyyaml = "^6.0.1"
 
 [tool.pytest.ini_options]
 markers = [

@@ -66,14 +66,14 @@ impl BatchType for FlashBatch {
     ) -> bool {
         let mut in_sum = 0;
         // Work backwards from longest projected entry
-        for (bs, (ol, il, _)) in tree.iter().rev().enumerate() {
-            let this_ol = *ol;
-            in_sum += *il;
+        for (batch_size, (out_len, in_len, _)) in tree.iter().rev().enumerate() {
+            let this_out_len = *out_len;
+            in_sum += *in_len;
             // Only need to check segments with output_len > current_output_len
             // will have been checked in a prior iteration
-            if this_ol <= current_output_len {
+            if this_out_len <= current_output_len {
                 // Check if we breach max space for this segment
-                let token_count = in_sum + (bs + 1) * this_ol;
+                let token_count = in_sum + (batch_size + 1) * this_out_len;
                 if token_count > max_total_weight {
                     return true
                 }
@@ -122,21 +122,17 @@ impl BatchType for PaddedBatch {
     fn exceeds_weight(
         tree: &BTreeSet<(usize, usize, usize)>, max_total_weight: usize, current_output_len: usize
     ) -> bool {
-        let mut max_in = 0;
-        let mut last_ol = 0;
+        let mut max_in_len = 0;
         // Work backwards from longest projected entry
-        for (bs, (ol, il, _)) in tree.iter().rev().enumerate() {
-            let this_ol = *ol;
-            if this_ol != last_ol {
-                max_in = max(max_in, *il);
-                if this_ol <= current_output_len {
-                    // Check if we breach max space for this segment
-                    let seq_len = max_in + this_ol;
-                    if seq_len.pow(2) * (bs + 1) > max_total_weight {
-                        return true
-                    }
+        for (batch_size, (out_len, in_len, _)) in tree.iter().rev().enumerate() {
+            let this_out_len = *out_len;
+            max_in_len = max(max_in_len, *in_len);
+            if this_out_len <= current_output_len {
+                // Check if we breach max space for this segment
+                let seq_len = max_in_len + this_out_len;
+                if seq_len.pow(2) * (batch_size + 1) > max_total_weight {
+                    return true
                 }
-                last_ol = this_ol;
             }
         }
         false

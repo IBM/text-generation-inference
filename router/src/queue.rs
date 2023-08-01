@@ -173,9 +173,11 @@ impl<B: BatchType> Queue<B> {
     /// shared channel into it's internal buffer. The future never completes.
     pub(crate) async fn service_queue(&mut self) {
         // First prune existing cancelled or expired requests
+        let mut pruned = false;
         self.buffer.retain_mut(|entry| match entry {
             entry if entry.is_cancelled() => {
                 metrics::increment_counter!("tgi_request_failure", "err" => "cancelled");
+                pruned = true;
                 false
             },
             entry if entry.deadline_exceeded() => {
@@ -184,10 +186,15 @@ impl<B: BatchType> Queue<B> {
                 entry.batch_time = Some(Instant::now());
                 entry.send_final(Ok(InferResponse::early_timeout(&entry)))
                     .unwrap_or_default();
+                pruned = true;
                 false
             },
             _ => true,
         });
+
+        if pruned {
+            metrics::gauge!("tgi_queue_size", self.buffer.len() as f64);
+        }
 
         while let Some(ents) = self.receiver.recv().await {
             self.add_to_buffer(ents);
@@ -195,9 +202,8 @@ impl<B: BatchType> Queue<B> {
     }
 
     fn add_to_buffer(&mut self, new_entries: Vec<Entry>) {
-        metrics::increment_gauge!("tgi_queue_size", new_entries.len() as f64);
         self.buffer.extend(new_entries);
-
+        metrics::gauge!("tgi_queue_size", self.buffer.len() as f64);
     }
 
     /// Get the next batch without blocking.
@@ -363,7 +369,7 @@ impl<B: BatchType> Queue<B> {
         );
         metrics::histogram!("tgi_batch_next_tokens", batch_tokens as f64);
         let chosen_count = chosen_count as f64;
-        metrics::decrement_gauge!("tgi_queue_size", chosen_count);
+        metrics::gauge!("tgi_queue_size", self.buffer.len() as f64);
         metrics::histogram!("tgi_batch_next_size", chosen_count);
 
         let batch = Batch { id: self.next_batch_id, requests, total_tokens: batch_tokens as u32 };

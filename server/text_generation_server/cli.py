@@ -15,7 +15,7 @@ app = typer.Typer()
 def serve(
     model_name: str,
     deployment_framework: str,
-    dtype_str: str,
+    dtype: Optional[str] = None,
     # Max seq length, new tokens, batch size and weight
     # only used for PT2 compile warmup
     max_sequence_length: int = 2048,
@@ -46,7 +46,7 @@ def serve(
         model_name,
         revision,
         deployment_framework,
-        dtype_str,
+        dtype,
         max_sequence_length,
         max_new_tokens,
         max_batch_size,

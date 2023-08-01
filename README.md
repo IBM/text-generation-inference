@@ -88,3 +88,19 @@ text-generation-server convert-to-safetensors model_name
 ```
 
 Then ensure that the `CUDA_VISIBLE_DEVICES` environment variable is set appropriately (e.g. "0,1" to use the first two GPUs). The number of GPUs to use will be inferred from this or else can be set explicitly with the `NUM_GPUS` environment variable.
+
+### TLS configuration
+
+TLS can be enabled in the TGIS containers via the following env vars:
+
+- `TLS_CERT_PATH` - path to cert
+- `TLS_KEY_PATH` - path to private key
+- `TLS_CLIENT_CA_CERT_PATH` - path to ca cert to use for client authentication (optional, client auth not enabled if omitted)
+
+These paths can reference mounted secrets containing the certs.
+
+### Metrics
+
+Prometheus metrics are exposed on the same port as the health probe endpoint (default 3000), at `/metrics`.
+
+They are all prefixed with `tgi_`. A full list with descriptions will be added here soon.
