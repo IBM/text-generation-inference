@@ -1,11 +1,11 @@
 ## Global Args #################################################################
-ARG BASE_UBI_IMAGE_TAG=8.8-1009
+ARG BASE_UBI_IMAGE_TAG=9.2-696
 ARG PROTOC_VERSION=23.4
 ARG PYTORCH_VERSION=2.1.0.dev20230730
 ARG OPTIMUM_VERSION=1.9.1
 
 ## Base Layer ##################################################################
-FROM registry.access.redhat.com/ubi8/ubi:${BASE_UBI_IMAGE_TAG} as base
+FROM registry.access.redhat.com/ubi9/ubi:${BASE_UBI_IMAGE_TAG} as base
 WORKDIR /app
 
 RUN dnf install -y --disableplugin=subscription-manager \
@@ -84,7 +84,7 @@ ENV LIBRARY_PATH="$CUDA_HOME/lib64/stubs"
 
 ## Rust builder ################################################################
 # Specific debian version so that compatible glibc version is used
-FROM rust:1.71-buster as rust-builder
+FROM rust:1.71-bullseye as rust-builder
 ARG PROTOC_VERSION
 
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
@@ -124,7 +124,7 @@ RUN cargo install --path .
 ## Tests base ##################################################################
 FROM base as test-base
 
-RUN dnf install -y --disableplugin=subscription-manager make unzip python39 gcc openssl-devel gcc-c++ python39-devel && \
+RUN dnf install -y --disableplugin=subscription-manager make unzip python39 python3-pip gcc openssl-devel gcc-c++ && \
     dnf clean all --disableplugin=subscription-manager && \
     ln -s /usr/bin/python3 /usr/local/bin/python && ln -s /usr/bin/pip3 /usr/local/bin/pip
 
@@ -168,6 +168,7 @@ COPY --from=launcher-builder /usr/local/cargo/bin/text-generation-launcher /usr/
 COPY integration_tests integration_tests
 RUN cd integration_tests && make install
 
+
 ## Build #######################################################################
 FROM cuda-devel as build
 ARG PYTORCH_VERSION
@@ -175,8 +176,8 @@ ARG OPTIMUM_VERSION
 
 RUN dnf install -y --disableplugin=subscription-manager \
     unzip \
-    curl \
     git \
+    ninja-build \
     && dnf clean all --disableplugin=subscription-manager
 
 RUN cd ~ && \
@@ -190,7 +191,7 @@ RUN rm -r /opt/miniconda/pkgs/conda-content-trust-*/info/test/tests
 ENV PATH=/opt/miniconda/bin:$PATH
 
 # Install specific version of torch
-RUN pip install ninja==1.11.1
+RUN pip install ninja==1.11.1 --no-cache-dir
 RUN pip install torch==$PYTORCH_VERSION+cu118 --index-url "https://download.pytorch.org/whl/nightly/cu118" --no-cache-dir
 
 # Install specific version of flash attention
