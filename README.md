@@ -64,23 +64,37 @@ When deploying TGIS, the `MODEL_NAME` environment variable can contain either th
 
 TGIS will not download model data at runtime. To populate the local HF hub cache with models so that it can be used per above, the image can be run with the following command:
 ```shell
-text-generation-server download-weights --extension ".json,.bin,.md,.model,.py" model_name
+text-generation-server download-weights model_name
 ```
 where `model_name` is the name of the model on the HF hub. Ensure that it's run with the same mounted directory and `TRANSFORMERS_CACHE` and `HUGGINGFACE_HUB_CACHE` environment variables, and that it has write access to this mounted filesystem. 
+
+This will attempt to download weights in `.safetensors` format, and if those aren't in the HF hub will download pytorch `.bin` weights and then convert them to `.safetensors`.
+
+`.saftensors` weights are now required for many models, in particular:
+- When using the optimized flash attention mode (`FLASH_ATTENTION=true`) - this is currently supported for Llama, Falcon, Starcoder and GPT-NeoX based models, on newer GPUs
+- When using tensor parallel (see below)
+- Also recommended for BLOOM and T5 type models generally
+
+If needed, specific file extensions can be downloaded by using the `--extension` option, for example:
+```shell
+text-generation-server download-weights --extension ".json,.bin,.md,.model,.py" model_name
+```
 
 ### Running sharded models (Tensor Parallel)
 
 The following model types can currently be run in sharded mode where the weights are split across multiple GPUs:
 - BLOOM
 - T5
+- GPT-NeoX
 - RefinedWeb (Falcon) (*)
 - LLaMA (*)
+- Starcoder (*)
 
 (*) These require GPUs that support Flash Attention such as A100, A10
 
 Model weights must be in `safetensors` format. These are available on the HF hub for some models and can be downloaded like:
 ```shell
-text-generation-server download-weights --extension ".json,.safetensors,.md,.model,.py" model_name
+text-generation-server download-weights model_name
 ```
 or otherwise can be converted from PyTorch `.bin` weights:
 ```shell
