@@ -1,9 +1,10 @@
-flash_att_v2_commit := 4f285b354796fb17df8636485b9a04df3ebbb7dc
+#flash_att_v2_commit := d30f2e1cd50185c98ed88c0684b4a603f15bee37
+flash_att_v2_commit := v2.0.4
 
 flash-attention-v2:
     # Clone flash attention
 	pip install packaging
-	git clone https://github.com/HazyResearch/flash-attention.git flash-attention-v2
+	git clone https://github.com/HazyResearch/flash-attention.git --branch main --single-branch flash-attention-v2
 
 build-flash-attention-v2: flash-attention-v2
 	cd flash-attention-v2 && git fetch && git checkout $(flash_att_v2_commit)

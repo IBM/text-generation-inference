@@ -1,10 +1,17 @@
-flash_att_commit := d2f4324f4c56e017fbf22dc421943793a8ca6c3b
+#flash_att_commit := 6d48e14a6c2f551db96f0badc658a6279a929df3
+flash_att_commit := v1.0.9
 
-install-flash-attention:
-	# Install specific version of flash attention
+flash-attention:
+    # Clone flash attention
 	pip install packaging
-	pip uninstall flash_attn rotary_emb dropout_layer_norm -y || true
-	rm -rf flash-attention || true
 	git clone https://github.com/HazyResearch/flash-attention.git --branch main --single-branch
-	cd flash-attention && git checkout $(flash_att_commit)
+
+build-flash-attention: flash-attention
+	cd flash-attention && git fetch && git checkout $(flash_att_commit)
+	cd flash-attention && python setup.py build
+	cd flash-attention/csrc/rotary && python setup.py build
+	cd flash-attention/csrc/layer_norm && python setup.py build
+
+install-flash-attention: build-flash-attention
+	pip uninstall flash_attn rotary_emb dropout_layer_norm -y || true
 	cd flash-attention && python setup.py install && cd csrc/layer_norm && python setup.py install && cd ../rotary && python setup.py install

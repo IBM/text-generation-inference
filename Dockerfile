@@ -164,9 +164,8 @@ COPY --from=launcher-builder /usr/local/cargo/bin/text-generation-launcher /usr/
 COPY integration_tests integration_tests
 RUN cd integration_tests && make install
 
-
-## Build #######################################################################
-FROM cuda-devel as build
+## Python builder #############################################################
+FROM cuda-devel as python-builder
 ARG PYTORCH_VERSION
 ARG OPTIMUM_VERSION
 
@@ -190,9 +189,26 @@ ENV PATH=/opt/miniconda/bin:$PATH
 RUN pip install ninja==1.11.1 --no-cache-dir
 RUN pip install torch==$PYTORCH_VERSION+cu118 --index-url "https://download.pytorch.org/whl/nightly/cu118" --no-cache-dir
 
-# Build specific version of flash attention
-COPY server/Makefile-flash-att server/Makefile
-RUN cd server && make install-flash-attention
+
+## Build flash attention v2 ####################################################
+FROM python-builder as flash-att-v2-builder
+
+WORKDIR /usr/src
+
+COPY server/Makefile-flash-att-v2 Makefile
+RUN MAX_JOBS=4 make build-flash-attention-v2
+
+## Build flash attention  ######################################################
+FROM python-builder as flash-att-builder
+
+WORKDIR /usr/src
+
+COPY server/Makefile-flash-att Makefile
+RUN make build-flash-attention
+
+
+## Build libraries #############################################################
+FROM python-builder as build
 
 # Build custom kernels
 COPY server/custom_kernels/ /usr/src/.
@@ -209,10 +225,18 @@ RUN cd server && make install-onnx
 COPY server/Makefile-onnx-runtime server/Makefile
 RUN cd server && make install-onnx-runtime
 
-COPY server/Makefile server/Makefile
 
-# Install specific version of deepspeed - excluding for now since we are no longer using it and it doesn't work properly
-# RUN cd server && make install-deepspeed
+## Flash attention cached build image ##########################################
+FROM base as flash-att-cache
+COPY --from=flash-att-builder /usr/src/flash-attention/build /usr/src/flash-attention/build
+COPY --from=flash-att-builder /usr/src/flash-attention/csrc/layer_norm/build /usr/src/flash-attention/csrc/layer_norm/build
+COPY --from=flash-att-builder /usr/src/flash-attention/csrc/rotary/build /usr/src/flash-attention/csrc/rotary/build
+
+
+## Flash attention v2 cached build image #######################################
+FROM base as flash-att-v2-cache
+COPY --from=flash-att-v2-builder /usr/src/flash-attention-v2/build /usr/src/flash-attention-v2/build
+
 
 ## Final Inference Server image ################################################
 FROM cuda-runtime as server-release
@@ -227,6 +251,16 @@ SHELL ["/bin/bash", "-c"]
 COPY --from=build /opt/miniconda/ /opt/miniconda/
 
 ENV PATH=/opt/miniconda/bin:$PATH
+
+# These could instead come from a explicitly cached images
+
+# Copy build artifacts from flash attention builder
+COPY --from=flash-att-cache /usr/src/flash-attention/build/lib.linux-x86_64-cpython-39 /opt/miniconda/lib/python3.9/site-packages
+COPY --from=flash-att-cache /usr/src/flash-attention/csrc/layer_norm/build/lib.linux-x86_64-cpython-39 /opt/miniconda/lib/python3.9/site-packages
+COPY --from=flash-att-cache /usr/src/flash-attention/csrc/rotary/build/lib.linux-x86_64-cpython-39 /opt/miniconda/lib/python3.9/site-packages
+
+# Copy build artifacts from flash attention v2 builder
+COPY --from=flash-att-v2-cache /usr/src/flash-attention-v2/build/lib.linux-x86_64-cpython-39 /opt/miniconda/lib/python3.9/site-packages
 
 # Install server
 COPY proto proto
