@@ -153,11 +153,11 @@ COPY proto proto
 COPY server server
 RUN cd server && \
     make gen-server && \
-    pip install ".[bnb]" --no-cache-dir
+    pip install . --no-cache-dir
 
 # Patch codegen model changes into transformers 4.31
 RUN cp server/transformers_patch/modeling_codegen.py \
-       /opt/miniconda/lib/python3.*/site-packages/transformers/models/codegen/modeling_codegen.py
+       /usr/local/lib/python3.*/site-packages/transformers/models/codegen/modeling_codegen.py
 
 # Install router
 COPY --from=router-builder /usr/local/cargo/bin/text-generation-router /usr/local/bin/text-generation-router
