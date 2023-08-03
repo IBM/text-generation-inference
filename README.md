@@ -88,7 +88,7 @@ The following model types can currently be run in sharded mode where the weights
 - GPT-NeoX
 - RefinedWeb (Falcon) (*)
 - LLaMA (*)
-- Starcoder (*)
+- GPT-BigCode (Starcoder) (*)
 
 (*) These require GPUs that support Flash Attention such as A100, A10
 
@@ -101,7 +101,9 @@ or otherwise can be converted from PyTorch `.bin` weights:
 text-generation-server convert-to-safetensors model_name
 ```
 
-Then ensure that the `CUDA_VISIBLE_DEVICES` environment variable is set appropriately (e.g. "0,1" to use the first two GPUs). The number of GPUs to use will be inferred from this or else can be set explicitly with the `NUM_GPUS` environment variable.
+Then:
+1. Ensure that the `CUDA_VISIBLE_DEVICES` environment variable is set appropriately (e.g. "0,1" to use the first two GPUs). The number of GPUs to use will be inferred from this or else can be set explicitly with the `NUM_GPUS` environment variable.
+2. Set the environment variable `DEPLOYMENT_FRAMEWORK=hf_custom_tp`
 
 ### TLS configuration
 
