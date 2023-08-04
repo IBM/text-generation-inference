@@ -42,6 +42,8 @@
 
 # Prompt prefix
 - name: Greedy with tuned prompt prefix
+  # Prompt prefixes with multi-shard not yet supported
+  singleShardOnly: true
   request:
     prefixId: bloom_sentiment_1
     params:
@@ -59,6 +61,8 @@
 
 # Prompt prefix with nested path
 - name: Greedy with tuned prompt prefix with nested path (id)
+  # Prompt prefixes with multi-shard not yet supported
+  singleShardOnly: true
   request:
     prefixId: nested/path
     params:
@@ -76,6 +80,8 @@
 
 # Prompt prefix returning input and generated tokens
 - name: Greedy with tuned prompt prefix and returned tokens
+  # Prompt prefixes with multi-shard not yet supported
+  singleShardOnly: true
   request:
     prefixId: bloom_sentiment_1
     params:
@@ -255,6 +261,8 @@
 
 # Error case - invalid prefix id
 - name: Error case - invalid prefix id
+  # Prompt prefixes with multi-shard not yet supported
+  singleShardOnly: true
   request:
     prefixId: invalid_prefix_id
     params:

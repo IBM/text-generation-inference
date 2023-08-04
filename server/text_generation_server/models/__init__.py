@@ -38,7 +38,7 @@ def get_model(model_name: str, revision: str, deployment_framework: str, dtype_s
         print(f"Using Flash Attention V2: {flash_attn.HAS_FLASH_ATTN_V2}")
 
         if deployment_framework != "hf_custom_tp":
-            print(
+            print_rank_n(
                 f"WARNING: Using deployment engine hf_custom_tp rather than {deployment_framework} "
                 "because FLASH_ATTENTION is enabled"
             )
@@ -57,6 +57,13 @@ def get_model(model_name: str, revision: str, deployment_framework: str, dtype_s
 
         from text_generation_server.models.flash_causal_lm import FlashCausalLM
         return FlashCausalLM(model_name, revision, deployment_framework, dtype, model_config)
+
+    elif deployment_framework == "hf_transformers" and int(os.getenv("WORLD_SIZE", "1")) > 1:
+        print_rank_n(
+            f"WARNING: Using deployment engine hf_custom_tp rather than {deployment_framework} "
+            "because more than one shard is configured"
+        )
+        deployment_framework = "hf_custom_tp"
 
     supports_causal_lm = model_type in modeling_auto.MODEL_FOR_CAUSAL_LM_MAPPING_NAMES \
         or type(model_config) in AutoModelForCausalLM._model_mapping \

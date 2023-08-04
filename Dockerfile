@@ -153,7 +153,7 @@ COPY proto proto
 COPY server server
 RUN cd server && \
     make gen-server && \
-    pip install . --no-cache-dir
+    pip install ".[accelerate]" --no-cache-dir
 
 # Patch codegen model changes into transformers 4.31
 RUN cp server/transformers_patch/modeling_codegen.py \

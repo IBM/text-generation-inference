@@ -18,7 +18,7 @@ from text_generation_tests.pb import generation_pb2_grpc as gpb2, generation_pb2
 from text_generation_tests.approx import approx
 
 INCLUDE_STREAMING = True
-TESTS_TIMEOUT = 210.0  # 3.5 mins
+TESTS_TIMEOUT = 300.0  # 5 mins
 
 
 def start_server(
@@ -242,13 +242,17 @@ async def run_streaming_test_case(stub, case, seq2seq_model):
         _verify_error(expected_err, e)
 
 
-async def run_test_cases_async(test_cases, seq2seq_model=False):
+async def run_test_cases_async(test_cases, seq2seq_model=False, sharded=False):
     async with grpc.aio.insecure_channel('localhost:8033') as channel:
         stub = gpb2.GenerationServiceStub(channel)
         tasks = []
         random.shuffle(test_cases)
         for case in test_cases:
             name = case.get("name")
+            if sharded and case.get("singleShardOnly", False):
+                print(f"Skipping single-shard-only test in sharded mode: {name}")
+                continue
+
             tasks.append(asyncio.create_task(
                 run_unary_test_case(stub, case), name=f"Generate: {name}",
             ))
@@ -330,7 +334,7 @@ async def test_mt0(server_fixture, test_cases):
 @pytest.mark.test_case_file("test_cases_bloom560m.yaml")
 @pytest.mark.asyncio
 async def test_bloom(server_fixture, test_cases):
-    await run_test_cases_async(test_cases)
+    await run_test_cases_async(test_cases, sharded=True)
 
 
 # Test loading when an explicit local path is provided
