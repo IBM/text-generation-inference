@@ -219,7 +219,7 @@ impl<B: BatchType> Queue<B> {
         }
 
         let mut total_count = entries.len();
-        if total_count + min_size >= self.config.size_limit {
+        if total_count + min_size > self.config.size_limit {
             // Not enough space to fit min_size within max batch size
             return None
         }
