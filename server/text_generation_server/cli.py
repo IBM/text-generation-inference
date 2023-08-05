@@ -135,8 +135,6 @@ def convert_to_safetensors(
         print("Existing .safetensors weights found, remove them first to reconvert")
         return
 
-    print(f"Converting {len(local_st_files)} pytorch .bin files to .safetensors...")
-
     try:
         import transformers
 

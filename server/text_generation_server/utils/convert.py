@@ -90,18 +90,18 @@ def convert_file(pt_file: Path, sf_file: Path, discard_names: List[str]):
 def convert_files(pt_files: List[Path], sf_files: List[Path], discard_names: List[str] = None):
     assert len(pt_files) == len(sf_files)
 
-    N = len(pt_files)
-    # We do this instead of using tqdm because we want to parse the logs with the launcher
+    # Filter non-inference files
+    pairs = [p for p in zip(pt_files, sf_files) if not any(s in p[0].name for s in ["arguments", "args", "training"])]
 
-    for i, (pt_file, sf_file) in enumerate(zip(pt_files, sf_files)):
-        # Skip blacklisted files
-        if (
-            "arguments" in pt_file.name
-            or "args" in pt_file.name
-            or "training" in pt_file.name
-        ):
-            continue
+    N = len(pairs)
 
+    if N == 0:
+        logger.warning("No pytorch .bin weight files found to convert")
+        return
+
+    logger.info(f"Converting {N} pytorch .bin files to .safetensors...")
+
+    for i, (pt_file, sf_file) in enumerate(pairs):
         start = datetime.datetime.now()
         convert_file(pt_file, sf_file, discard_names)
         elapsed = datetime.datetime.now() - start
