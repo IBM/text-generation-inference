@@ -1,7 +1,9 @@
 ## Global Args #################################################################
 ARG BASE_UBI_IMAGE_TAG=9.2-696
 ARG PROTOC_VERSION=23.4
-ARG PYTORCH_VERSION=2.1.0.dev20230730
+#ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
+ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
+ARG PYTORCH_VERSION=2.0.1
 ARG OPTIMUM_VERSION=1.9.1
 
 ## Base Layer ##################################################################
@@ -135,13 +137,14 @@ ENV CUDA_VISIBLE_DEVICES=""
 
 ## Tests #######################################################################
 FROM test-base as cpu-tests
+ARG PYTORCH_INDEX
 ARG PYTORCH_VERSION
 ARG OPTIMUM_VERSION
 
 WORKDIR /usr/src
 
 # Install specific version of torch
-RUN pip install torch=="$PYTORCH_VERSION+cpu" --index-url "https://download.pytorch.org/whl/nightly/cpu" --no-cache-dir
+RUN pip install torch=="$PYTORCH_VERSION+cpu" --index-url "${PYTORCH_INDEX}/cpu" --no-cache-dir
 
 # Install optimum - not used in tests for now
 #RUN pip install optimum==$OPTIMUM_VERSION --no-cache-dir
@@ -170,6 +173,7 @@ RUN cd integration_tests && make install
 
 ## Python builder #############################################################
 FROM cuda-devel as python-builder
+ARG PYTORCH_INDEX
 ARG PYTORCH_VERSION
 ARG OPTIMUM_VERSION
 
@@ -191,7 +195,7 @@ ENV PATH=/opt/miniconda/bin:$PATH
 
 # Install specific version of torch
 RUN pip install ninja==1.11.1 --no-cache-dir
-RUN pip install torch==$PYTORCH_VERSION+cu118 --index-url "https://download.pytorch.org/whl/nightly/cu118" --no-cache-dir
+RUN pip install torch==$PYTORCH_VERSION+cu118 --index-url "${PYTORCH_INDEX}/cu118" --no-cache-dir
 
 
 ## Build flash attention v2 ####################################################
