@@ -8,7 +8,7 @@ It's not clear yet whether/when we will be able to reconcile the repos completel
 
 Some features here are similar/equivalent to those in the upstream repo but are implemented differently. This is generally because we had implemented them first internally, and they were subsequently implemented independently in the upstream repo before we had had a chance to contribute back that feature. One example of this is response streaming. In some other cases we had opened PRs against the upstream repo but the maintainers decided to reimplement in another way.
 
-Some upstream changes were intentionally not pulled in because they weren't required for our current usage, for example LLaMA model support. Others we have just not caught up with and ported back yet.
+Some upstream changes were intentionally not pulled in because they weren't required for our current usage, for example OPT/Galactica model support. Others we have just not caught up with and ported back yet.
 
 ---
 
