@@ -1,20 +1,22 @@
 ## Global Args #################################################################
-ARG BASE_UBI_IMAGE_TAG=9.2-696
-ARG PROTOC_VERSION=23.4
+ARG BASE_UBI_IMAGE_TAG=9.2-722
+ARG PROTOC_VERSION=24.0
 #ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
 ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
 ARG PYTORCH_VERSION=2.0.1
-ARG OPTIMUM_VERSION=1.9.1
 
 ## Base Layer ##################################################################
 FROM registry.access.redhat.com/ubi9/ubi:${BASE_UBI_IMAGE_TAG} as base
 WORKDIR /app
 
-RUN dnf install -y --disableplugin=subscription-manager \
-    make \
-    # to help with debugging
-    procps \
-    && dnf clean all --disableplugin=subscription-manager
+RUN dnf remove -y --disableplugin=subscription-manager \
+        subscription-manager \
+        # we install newer version of requests via pip
+        python3-requests \
+    && dnf install -y make \
+        # to help with debugging
+        procps \
+    && dnf clean all
 
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
@@ -29,14 +31,14 @@ ENV CUDA_VERSION=11.8.0 \
     NV_CUDA_CUDART_VERSION=11.8.89-1 \
     NV_CUDA_COMPAT_VERSION=520.61.05-1
 
-RUN dnf config-manager --disableplugin=subscription-manager \
+RUN dnf config-manager \
        --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo \
-    && dnf install -y --disableplugin=subscription-manager \
+    && dnf install -y \
         cuda-cudart-11-8-${NV_CUDA_CUDART_VERSION} \
         cuda-compat-11-8-${NV_CUDA_COMPAT_VERSION} \
     && echo "/usr/local/nvidia/lib" >> /etc/ld.so.conf.d/nvidia.conf \
     && echo "/usr/local/nvidia/lib64" >> /etc/ld.so.conf.d/nvidia.conf \
-    && dnf clean all --disableplugin=subscription-manager
+    && dnf clean all
 
 ENV CUDA_HOME="/usr/local/cuda" \
     PATH="/usr/local/nvidia/bin:${CUDA_HOME}/bin:${PATH}" \
@@ -50,15 +52,15 @@ ENV NV_NVTX_VERSION=11.8.86-1 \
     NV_LIBCUBLAS_VERSION=11.11.3.6-1 \
     NV_LIBNCCL_PACKAGE_VERSION=2.15.5-1+cuda11.8
 
-RUN dnf config-manager --disableplugin=subscription-manager \
+RUN dnf config-manager \
        --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo \
-    && dnf install -y --disableplugin=subscription-manager \
+    && dnf install -y \
         cuda-libraries-11-8-${NV_CUDA_LIB_VERSION} \
         cuda-nvtx-11-8-${NV_NVTX_VERSION} \
         libnpp-11-8-${NV_LIBNPP_VERSION} \
         libcublas-11-8-${NV_LIBCUBLAS_VERSION} \
         libnccl-${NV_LIBNCCL_PACKAGE_VERSION} \
-    && dnf clean all --disableplugin=subscription-manager
+    && dnf clean all
 
 ## CUDA Development ############################################################
 FROM cuda-base as cuda-devel
@@ -69,9 +71,9 @@ ENV NV_CUDA_CUDART_DEV_VERSION=11.8.89-1 \
     NV_LIBNPP_DEV_VERSION=11.8.0.86-1 \
     NV_LIBNCCL_DEV_PACKAGE_VERSION=2.15.5-1+cuda11.8
 
-RUN dnf config-manager --disableplugin=subscription-manager \
+RUN dnf config-manager \
        --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo \
-    && dnf install -y --disableplugin=subscription-manager make \
+    && dnf install -y \
         cuda-command-line-tools-11-8-${NV_CUDA_LIB_VERSION} \
         cuda-libraries-devel-11-8-${NV_CUDA_LIB_VERSION} \
         cuda-minimal-build-11-8-${NV_CUDA_LIB_VERSION} \
@@ -80,7 +82,7 @@ RUN dnf config-manager --disableplugin=subscription-manager \
         libcublas-devel-11-8-${NV_LIBCUBLAS_DEV_VERSION} \
         libnpp-devel-11-8-${NV_LIBNPP_DEV_VERSION} \
         libnccl-devel-${NV_LIBNCCL_DEV_PACKAGE_VERSION} \
-    && dnf clean all --disableplugin=subscription-manager
+    && dnf clean all
 
 ENV LIBRARY_PATH="$CUDA_HOME/lib64/stubs"
 
@@ -126,8 +128,8 @@ RUN cargo install --path .
 ## Tests base ##################################################################
 FROM base as test-base
 
-RUN dnf install -y --disableplugin=subscription-manager make unzip python39 python3-pip gcc openssl-devel gcc-c++ && \
-    dnf clean all --disableplugin=subscription-manager && \
+RUN dnf install -y make unzip python39 python3-pip gcc openssl-devel gcc-c++ && \
+    dnf clean all && \
     ln -s /usr/bin/python3 /usr/local/bin/python && ln -s /usr/bin/pip3 /usr/local/bin/pip
 
 RUN pip install --upgrade pip && pip install pytest && pip install pytest-asyncio
@@ -139,15 +141,11 @@ ENV CUDA_VISIBLE_DEVICES=""
 FROM test-base as cpu-tests
 ARG PYTORCH_INDEX
 ARG PYTORCH_VERSION
-ARG OPTIMUM_VERSION
 
 WORKDIR /usr/src
 
 # Install specific version of torch
 RUN pip install torch=="$PYTORCH_VERSION+cpu" --index-url "${PYTORCH_INDEX}/cpu" --no-cache-dir
-
-# Install optimum - not used in tests for now
-#RUN pip install optimum==$OPTIMUM_VERSION --no-cache-dir
 
 COPY server/Makefile server/Makefile
 
@@ -175,13 +173,8 @@ RUN cd integration_tests && make install
 FROM cuda-devel as python-builder
 ARG PYTORCH_INDEX
 ARG PYTORCH_VERSION
-ARG OPTIMUM_VERSION
 
-RUN dnf install -y --disableplugin=subscription-manager \
-    unzip \
-    git \
-    ninja-build \
-    && dnf clean all --disableplugin=subscription-manager
+RUN dnf install -y unzip git ninja-build && dnf clean all
 
 RUN cd ~ && \
     curl -L -O https://repo.anaconda.com/miniconda/Miniconda3-py39_23.5.2-0-Linux-x86_64.sh && \
@@ -222,18 +215,6 @@ FROM python-builder as build
 COPY server/custom_kernels/ /usr/src/.
 RUN cd /usr/src && python setup.py build_ext && python setup.py install
 
-# Install optimum
-RUN pip install optimum[onnxruntime-gpu]==$OPTIMUM_VERSION --no-cache-dir
-
-# Install onnx
-COPY server/Makefile-onnx server/Makefile
-RUN cd server && make install-onnx
-
-# Install onnx runtime
-COPY server/Makefile-onnx-runtime server/Makefile
-RUN cd server && make install-onnx-runtime
-
-
 ## Flash attention cached build image ##########################################
 FROM base as flash-att-cache
 COPY --from=flash-att-builder /usr/src/flash-attention/build /usr/src/flash-attention/build
@@ -250,8 +231,7 @@ COPY --from=flash-att-v2-builder /usr/src/flash-attention-v2/build /usr/src/flas
 FROM cuda-runtime as server-release
 
 # Install C++ compiler (required at runtime when PT2_COMPILE is enabled)
-RUN dnf install -y --disableplugin=subscription-manager gcc-c++ \
-    && dnf clean all --disableplugin=subscription-manager \
+RUN dnf install -y gcc-c++ && dnf clean all \
     && useradd -u 2000 tgis -m -g 0
 
 SHELL ["/bin/bash", "-c"]
@@ -275,7 +255,7 @@ COPY proto proto
 COPY server server
 RUN cd server && \
     make gen-server && \
-    pip install ".[bnb, accelerate]" --no-cache-dir
+    pip install ".[bnb, accelerate, onnx-gpu]" --no-cache-dir
 
 # Patch codegen model changes into transformers 4.31
 RUN cp server/transformers_patch/modeling_codegen.py \

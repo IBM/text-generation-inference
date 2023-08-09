@@ -1,5 +1,0 @@
-onnx_commit := 1.14.0
-
-install-onnx:
-	# Install a specific version of onnx
-	pip install onnx==$(onnx_commit) --no-cache-dir
