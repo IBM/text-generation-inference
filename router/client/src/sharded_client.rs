@@ -1,11 +1,12 @@
 /// Multi shard Client
-use crate::{ClientError, GenerateError, Result};
-use crate::{Batch, Client, HealthResponse, Token};
+use crate::{ClientError, Result};
+use crate::{Batch, Client, HealthResponse};
 use futures::future::join_all;
 use tokio::runtime::Handle;
 use tokio::sync::{broadcast, mpsc};
 use tonic::transport::Uri;
-use crate::pb::generate::v1::{CachedBatch, InputTokens};
+use crate::client::GenerateTokenResponse;
+use crate::pb::generate::v1::CachedBatch;
 use crate::pb::generate::v1::model_info_response::ModelType;
 use crate::sharded_client::Request::{NextToken, Prefill};
 
@@ -19,9 +20,7 @@ enum Request {
 #[derive(Debug)]
 pub struct ShardedClient {
     clients: Vec<Client>,
-    sender: broadcast::Sender<(Request, mpsc::Sender<
-        Result<Option<(Vec<Token>, Vec<InputTokens>, Vec<GenerateError>, u64)>>
-    >)>,
+    sender: broadcast::Sender<(Request, mpsc::Sender<Result<Option<GenerateTokenResponse>>>)>,
     handle: Handle,
 }
 
@@ -94,7 +93,7 @@ impl ShardedClient {
     /// Optionally prunes existing batches first to maximize available memory
     pub async fn prefill(
         &mut self, batch: Batch, to_prune: Vec<CachedBatch>,
-    ) -> Result<Option<(Vec<Token>, Vec<InputTokens>, Vec<GenerateError>, u64)>> {
+    ) -> Result<Option<GenerateTokenResponse>> {
         if batch.requests.is_empty() {
             return Ok(None);
         }
@@ -108,9 +107,8 @@ impl ShardedClient {
     ///
     /// Returns next generated token of each request in the batches and id of the next cached batch
     pub async fn next_token(
-        &mut self,
-        batches: Vec<CachedBatch>,
-    ) -> Result<Option<(Vec<Token>, Vec<InputTokens>, Vec<GenerateError>, u64)>> {
+        &mut self, batches: Vec<CachedBatch>,
+    ) -> Result<Option<GenerateTokenResponse>> {
         let (tx, mut rx) = mpsc::channel(1);
         self.sender.send((NextToken(batches), tx))
             .map_err(|e| ClientError::Generation(e.to_string()))?;

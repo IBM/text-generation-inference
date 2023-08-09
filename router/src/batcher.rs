@@ -13,7 +13,7 @@ use std::task::{Context, Poll};
 use futures::{FutureExt, pin_mut, TryFutureExt};
 use futures::future::Map;
 use nohash_hasher::IntMap;
-use text_generation_client::{ClientError, Token, ShardedClient, CachedBatch, RequestsStatus, InputTokens, GenerateError, Batch};
+use text_generation_client::{ClientError, Token, ShardedClient, CachedBatch, RequestsStatus, InputTokens, GenerateError, Batch, GenerateTokenResponse};
 use thiserror::Error;
 use tokio::select;
 
@@ -547,9 +547,7 @@ impl<'a> TokenProcessor<'a> {
     /// Wrap a future inside a match statement to handle errors and send the response to the Batcher
     async fn _wrap_future<B: BatchType>(
         &mut self,
-        future: impl Future<Output = Result<
-            Option<(Vec<Token>, Vec<InputTokens>, Vec<GenerateError>, u64)>, ClientError
-        >>,
+        future: impl Future<Output = Result<Option<GenerateTokenResponse>, ClientError>>,
         method: &'static str,
         start_time: Instant,
         // First request id in this batch if it doesn't comprise all current entries
@@ -573,7 +571,7 @@ impl<'a> TokenProcessor<'a> {
 
         match result {
             Ok(
-                Some((generated_tokens, input_tokens, errors, next_batch_id))
+                Some((generated_tokens, input_tokens, errors, next_batch_id, forward_duration))
             ) => {
                 self.process_input_tokens(input_tokens);
                 let completed_request_ids = self.process_next_tokens(
@@ -584,6 +582,12 @@ impl<'a> TokenProcessor<'a> {
                 metrics::histogram!(
                     "tgi_batch_inference_duration",
                     start_time.elapsed().as_secs_f64(),
+                    "method" => method,
+                    "makeup" => "single_only", // later will possibly be beam_only or mixed
+                );
+                metrics::histogram!(
+                    "tgi_batch_inference_forward_duration",
+                    forward_duration,
                     "method" => method,
                     "makeup" => "single_only", // later will possibly be beam_only or mixed
                 );

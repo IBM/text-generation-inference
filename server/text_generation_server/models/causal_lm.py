@@ -1,4 +1,5 @@
 import logging
+import time
 from operator import itemgetter
 
 import torch
@@ -467,7 +468,7 @@ class CausalLM(Model):
 
         # Perform a forward pass to determine the ordering of past key attention tensor dimensions
         one_token = torch.tensor([[1]], device=inference_engine.get_device())
-        _, past_key_values = self.forward(input_ids=one_token, attention_mask=one_token)
+        _, past_key_values, _ = self.forward(input_ids=one_token, attention_mask=one_token)
         key_past, value_past = past_key_values[0]
         keys_head_dim_last = key_past.shape[-1] == value_past.shape[-1]
         self.batch_type = CausalLMBatch if keys_head_dim_last else KeysDimTransposedCausalLMBatch
@@ -487,7 +488,7 @@ class CausalLM(Model):
         position_ids: Optional[torch.Tensor] = None,
         past_key_values: Optional = None,
         inputs_embeds: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, List[Tuple[torch.Tensor, torch.Tensor]]]:
+    ) -> Tuple[torch.Tensor, List[Tuple[torch.Tensor, torch.Tensor]], int]:
         model_inputs = self.model.prepare_inputs_for_generation(
             input_ids, past_key_values,
             attention_mask=attention_mask,
@@ -506,18 +507,18 @@ class CausalLM(Model):
             model_inputs["inputs_embeds"] = inputs_embeds
 
         # Model Forward
+        start_time = time.time_ns()
         outputs = self.model.forward(**model_inputs)
-        return (
-            outputs.logits, outputs.past_key_values,
-        )
+        took_ns = time.time_ns() - start_time
+        return outputs.logits, outputs.past_key_values, took_ns
 
     def generate_token(
         self, batch: CausalLMBatch, first: bool = False, for_concat: bool = False,
-    ) -> Tuple[List[TokenInfo], Optional[List[InputTokens]], List[GenerateError]]:
+    ) -> Tuple[List[TokenInfo], Optional[List[InputTokens]], List[GenerateError], int]:
         # slice the attention mask to the correct shape
         attention_mask = batch.attention_mask[:, : -batch.padding_right_offset]
 
-        logits, past = self.forward(
+        logits, past, forward_time_ns = self.forward(
             batch.input_ids, attention_mask, batch.position_ids, batch.past_key_values, batch.inputs_embeds,
         )
 
@@ -605,7 +606,7 @@ class CausalLM(Model):
         batch.max_sequence_length += 1
         batch.padding_right_offset -= 1
 
-        return generated_tokens, input_token_infos, decode_errors
+        return generated_tokens, input_token_infos, decode_errors, forward_time_ns
 
 
 class KeysDimTransposedCausalLMBatch(CausalLMBatch):

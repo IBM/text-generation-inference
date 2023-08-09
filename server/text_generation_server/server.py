@@ -120,7 +120,7 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
             if batch is not None:
                 for_concat = len(self.cache) > 0
                 # Prefill and generate first token
-                output_tokens, input_token_info, decode_errors = self.model.generate_token(
+                output_tokens, input_token_info, decode_errors, forward_time_ns = self.model.generate_token(
                     batch, first=True, for_concat=for_concat,
                 )
                 if not is_healthcheck:
@@ -140,6 +140,7 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
                     ],
                     errors=[err.to_pb() for err in errors] if errors else None,
                     batch_id=batch_id,
+                    forward_time_ns=forward_time_ns,
                 ),
                 input_tokens=[
                     input_tokens.to_pb() for input_tokens in input_token_info
@@ -175,7 +176,7 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
             # Ensure batches are garbage-collected post-concatenation
             del batches
 
-            output_tokens, _, errors = self.model.generate_token(batch)
+            output_tokens, _, errors, forward_time_ns = self.model.generate_token(batch)
             self.cache.set(batch)
 
             return generate_pb2.NextTokenResponse(
@@ -185,6 +186,7 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
                     ],
                     errors=[err.to_pb() for err in errors] if errors else None,
                     batch_id=batch.get_id(),
+                    forward_time_ns=forward_time_ns,
                 )
             )
 

@@ -1,4 +1,5 @@
 import logging
+import time
 from operator import itemgetter
 
 import torch
@@ -492,7 +493,7 @@ class Seq2SeqLM(Model):
 
         # Perform a forward pass to determine the ordering of past key attention tensor dimensions
         one_token = torch.tensor([[bos_token_id]], device=inference_engine.get_device())
-        _, _, past_key_values = self.forward(
+        _, _, past_key_values, _ = self.forward(
             input_ids=one_token,
             attention_mask=torch.ones_like(one_token),
             decoder_input_ids=one_token,
@@ -523,12 +524,14 @@ class Seq2SeqLM(Model):
         torch.Tensor,
         torch.Tensor,
         List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]],
+        int,
     ]:
         if inputs_embeds is not None:
             input_ids = None
         if decoder_inputs_embeds is not None:
             decoder_input_ids = None
 
+        start_time = time.time_ns()
         outputs = self.model.forward(
             input_ids=input_ids,
             inputs_embeds=inputs_embeds,
@@ -541,13 +544,14 @@ class Seq2SeqLM(Model):
             use_cache=True,
             return_dict=True,
         )
+        took_ns = time.time_ns() - start_time
         return (
-            outputs.logits, outputs.encoder_last_hidden_state, outputs.past_key_values,
+            outputs.logits, outputs.encoder_last_hidden_state, outputs.past_key_values, took_ns
         )
 
     def generate_token(
         self, batch: Seq2SeqLMBatch, first: bool = False, for_concat: bool = False,
-    ) -> Tuple[List[TokenInfo], Optional[List[InputTokens]], List[GenerateError]]:
+    ) -> Tuple[List[TokenInfo], Optional[List[InputTokens]], List[GenerateError], int]:
         # slice to the correct shape
         decoder_attention_mask = None if batch.decoder_attention_mask is None \
             else batch.decoder_attention_mask[:, : -batch.padding_right_offset]
@@ -555,7 +559,7 @@ class Seq2SeqLM(Model):
         encoder_outputs = None if batch.encoder_last_hidden_state is None \
             else BaseModelOutput(last_hidden_state=batch.encoder_last_hidden_state)
 
-        logits, encoder_last_hidden_state, past = self.forward(
+        logits, encoder_last_hidden_state, past, forward_time_ns = self.forward(
             batch.input_ids,
             batch.attention_mask,
             batch.decoder_input_ids,
@@ -647,7 +651,7 @@ class Seq2SeqLM(Model):
         batch.max_decoder_input_length += 1
         batch.padding_right_offset -= 1
 
-        return generated_tokens, input_token_infos, decode_errors
+        return generated_tokens, input_token_infos, decode_errors, forward_time_ns
 
 
 class KeysDimTransposedSeq2SeqLMBatch(Seq2SeqLMBatch):

@@ -13,6 +13,7 @@ pub use pb::generate::v1::{
 };
 pub use pb::generate::v1::next_token_chooser_parameters::LengthPenalty;
 pub use sharded_client::ShardedClient;
+pub use client::GenerateTokenResponse;
 use thiserror::Error;
 use tonic::transport;
 use tonic::Status;

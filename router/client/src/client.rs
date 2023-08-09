@@ -15,6 +15,8 @@ pub struct Client {
     stub: TextGenerationServiceClient<Channel>,
 }
 
+pub type GenerateTokenResponse = (Vec<Token>, Vec<InputTokens>, Vec<GenerateError>, u64, Duration);
+
 impl Client {
     /// Returns a client connected to the given url
     pub async fn connect(uri: Uri) -> Result<Self> {
@@ -116,7 +118,7 @@ impl Client {
     #[instrument(skip(self))]
     pub async fn prefill(
         &mut self, batch: Batch, to_prune: Vec<CachedBatch>,
-    ) -> Result<(Vec<Token>, Vec<InputTokens>, Vec<GenerateError>, u64)> {
+    ) -> Result<GenerateTokenResponse> {
         let request = tonic::Request::new(PrefillRequest{
             batch: Some(batch), to_prune,
         });
@@ -129,7 +131,13 @@ impl Client {
         let result = response
             .result
             .ok_or_else(|| ClientError::Generation("Unexpected empty response".into()))?;
-        Ok((result.output_tokens, response.input_tokens, result.errors, result.batch_id))
+        Ok((
+            result.output_tokens,
+            response.input_tokens,
+            result.errors,
+            result.batch_id,
+            Duration::from_nanos(result.forward_time_ns),
+        ))
     }
 
     /// Generate one token for each request in the given cached batch(es)
@@ -137,9 +145,8 @@ impl Client {
     /// Returns next generated token of each request in the batches and id of the next cached batch
     #[instrument(skip(self))]
     pub async fn next_token(
-        &mut self,
-        batches: Vec<CachedBatch>,
-    ) -> Result<Option<(Vec<Token>, Vec<InputTokens>, Vec<GenerateError>, u64)>> {
+        &mut self, batches: Vec<CachedBatch>,
+    ) -> Result<Option<GenerateTokenResponse>> {
         let request = tonic::Request::new(
             NextTokenRequest { batches }
         );
@@ -149,6 +156,12 @@ impl Client {
             .instrument(info_span!("generate_with_cache"))
             .await?
             .into_inner();
-        Ok(response.result.map(|r| (r.output_tokens, vec![], r.errors, r.batch_id)))
+        Ok(response.result.map(|result| (
+            result.output_tokens,
+            vec![],
+            result.errors,
+            result.batch_id,
+            Duration::from_nanos(result.forward_time_ns),
+        )))
     }
 }

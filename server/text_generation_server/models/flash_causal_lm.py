@@ -1,4 +1,5 @@
 import logging
+import time
 from operator import itemgetter
 
 import torch
@@ -319,7 +320,7 @@ class FlashCausalLM(Model):
 
     def generate_token(
         self, batch: FlashCausalLMBatch, first: bool = False, for_concat: bool = False,
-    ) -> Tuple[List[TokenInfo], Optional[List[InputTokens]], List[GenerateError]]:
+    ) -> Tuple[List[TokenInfo], Optional[List[InputTokens]], List[GenerateError], int]:
 
         batch_size = len(batch)
         past_key_values = batch.past_key_values if first or batch_size > 1 \
@@ -333,6 +334,7 @@ class FlashCausalLM(Model):
         else:
             prealloc_length = None
 
+        start_time = time.time_ns()
         out, present = self.model.forward(
             batch.input_ids,
             batch.position_ids,
@@ -342,6 +344,7 @@ class FlashCausalLM(Model):
             past_key_values,
             prealloc_length,
         )
+        forward_time_ns = time.time_ns() - start_time
 
         # Update present
         present_pad = self.present_pad
@@ -369,7 +372,7 @@ class FlashCausalLM(Model):
         batch.cu_seqlens.add_(batch.cu_seqlens_q)
         batch.max_seqlen += 1
 
-        return generated_tokens, input_token_infos, decode_errors
+        return generated_tokens, input_token_infos, decode_errors, forward_time_ns
 
     def _process_prefill(
         self, batch: FlashCausalLMBatch, out,

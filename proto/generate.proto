@@ -157,8 +157,12 @@ message PrefillRequest {
 message GenerateResult {
     /// Next tokens
     repeated Token output_tokens = 1;
+    /// Request-specific errors
     repeated GenerateError errors = 2;
     uint64 batch_id = 3;
+
+    /// Time taken by model forward pass in nanoseconds
+    uint64 forward_time_ns = 4;
 }
 
 message PrefillResponse {

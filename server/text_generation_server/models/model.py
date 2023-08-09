@@ -123,7 +123,7 @@ class Model(ABC):
     @abstractmethod
     def generate_token(
         self, batch: B, first: bool = False, for_concat: bool = False,
-    ) -> Tuple[List[TokenInfo], Optional[List[InputTokens]], List[GenerateError]]:
+    ) -> Tuple[List[TokenInfo], Optional[List[InputTokens]], List[GenerateError], int]:
         raise NotImplementedError
 
     @staticmethod
