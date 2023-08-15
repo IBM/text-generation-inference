@@ -9,7 +9,7 @@ python = "^3.9"
 
 [tool.poetry.group.dev.dependencies]
 protobuf = "^4.24.0"
-grpcio-tools = "^1.56.2"
+grpcio-tools = "^1.57.0"
 pytest = "^7.4.0"
 pytest-asyncio = "^0.21.1"
 requests = "^2.31.0"
