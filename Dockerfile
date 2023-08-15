@@ -180,7 +180,10 @@ RUN dnf install -y unzip git ninja-build && dnf clean all
 RUN cd ~ && \
     curl -L -O https://repo.anaconda.com/miniconda/Miniconda3-py311_23.9.0-0-Linux-x86_64.sh && \
     chmod +x Miniconda3-*-Linux-x86_64.sh && \
-    bash ./Miniconda3-*-Linux-x86_64.sh -bf -p /opt/miniconda
+    bash ./Miniconda3-*-Linux-x86_64.sh -bf -p /opt/miniconda && \
+    /opt/miniconda/bin/conda update -y --all && \
+    /opt/miniconda/bin/conda update -y cryptography && \
+    /opt/miniconda/bin/conda clean -y --all
 
 ENV PATH=/opt/miniconda/bin:$PATH
 
