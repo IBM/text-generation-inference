@@ -82,7 +82,7 @@ fn main() -> Result<(), std::io::Error> {
             );
         }
     }
-    tokenizer.with_truncation(None).with_padding(None);
+    tokenizer.with_truncation(None).unwrap().with_padding(None);
 
     // Launch Tokio runtime
     tokio::runtime::Builder::new_multi_thread()
