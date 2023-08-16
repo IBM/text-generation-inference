@@ -70,14 +70,23 @@ where `model_name` is the name of the model on the HF hub. Ensure that it's run 
 
 This will attempt to download weights in `.safetensors` format, and if those aren't in the HF hub will download pytorch `.bin` weights and then convert them to `.safetensors`.
 
+If needed, specific file extensions can be downloaded by using the `--extension` option, for example:
+```shell
+text-generation-server download-weights --extension ".json,.bin,.md,.model,.py" model_name
+```
+
+### Converting weights to `safetensors` format
+
 `.saftensors` weights are now required for many models, in particular:
 - When using the optimized flash attention mode (`FLASH_ATTENTION=true`) - this is currently supported for Llama, Falcon, Starcoder and GPT-NeoX based models, on newer GPUs
 - When using tensor parallel (see below)
 - Also recommended for BLOOM and T5 type models generally
 
-If needed, specific file extensions can be downloaded by using the `--extension` option, for example:
+They can be downloaded directly from the huggingface hub for some models. As explained above, the download command by default will download and convert them from PyTorch weights if safetensors weights aren't available.
+
+To convert from pre-existing PyTorch `.bin` weights:
 ```shell
-text-generation-server download-weights --extension ".json,.bin,.md,.model,.py" model_name
+text-generation-server convert-to-safetensors model_name
 ```
 
 ### Running sharded models (Tensor Parallel)
@@ -92,18 +101,9 @@ The following model types can currently be run in sharded mode where the weights
 
 (*) These require GPUs that support Flash Attention such as A100, A10
 
-Model weights must be in `safetensors` format. These are available on the HF hub for some models and can be downloaded like:
-```shell
-text-generation-server download-weights model_name
-```
-or otherwise can be converted from PyTorch `.bin` weights:
-```shell
-text-generation-server convert-to-safetensors model_name
-```
-
-Then:
-1. Ensure that the `CUDA_VISIBLE_DEVICES` environment variable is set appropriately (e.g. "0,1" to use the first two GPUs). The number of GPUs to use will be inferred from this or else can be set explicitly with the `NUM_GPUS` environment variable.
-2. Set the environment variable `DEPLOYMENT_FRAMEWORK=hf_custom_tp`
+1. Ensure that the model weights are in `safetensors format (see above)
+2. Ensure that the `CUDA_VISIBLE_DEVICES` environment variable is set appropriately (e.g. "0,1" to use the first two GPUs). The number of GPUs to use will be inferred from this or else can be set explicitly with the `NUM_GPUS` environment variable.
+3. Set the environment variable `DEPLOYMENT_FRAMEWORK=hf_custom_tp`
 
 ### TLS configuration
 
@@ -119,4 +119,37 @@ These paths can reference mounted secrets containing the certs.
 
 Prometheus metrics are exposed on the same port as the health probe endpoint (default 3000), at `/metrics`.
 
-They are all prefixed with `tgi_`. A full list with descriptions will be added here soon.
+They are all prefixed with `tgi_`. Descriptions will be added to the table below soon.
+
+| Metric                                     | Kind        | Labels                                              | Description  |
+|--------------------------------------------|-------------|-----------------------------------------------------|--------------|
+| `tgi_request_count`                        | `counter`   | kind = "single" or "batch" or "stream"              |              |
+| `tgi_request_input_count`                  | `counter`   |                                                     |              |
+| `tgi_request_failure`                      | `counter`   | err                                                 |              |
+| `tgi_request_success`                      | `counter`   | stop_reason, kind = "single" or "batch" or "stream" |              |
+| `tgi_request_max_new_tokens`               | `histogram` |                                                     |              |
+| `tgi_request_input_length`                 | `histogram` |                                                     |              |
+| `tgi_request_raw_input_length`             | `histogram` |                                                     |              |
+| `tgi_request_mean_time_per_token_duration` | `histogram` |                                                     |              |
+| `tgi_request_validation_duration`          | `histogram` |                                                     |              |
+| `tgi_request_queue_duration`               | `histogram` |                                                     |              |
+| `tgi_request_generated_tokens`             | `histogram` |                                                     |              |
+| `tgi_request_total_tokens`                 | `histogram` |                                                     |              |
+| `tgi_request_duration`                     | `histogram` |                                                     |              |
+| `tgi_request_inference_duration`           | `histogram` |                                                     |              |
+| `tgi_batch_inference_count`                | `counter`   | method = "prefill" or "next_token"                  |              |
+| `tgi_batch_inference_success`              | `counter`   | method = "prefill" or "next_token"                  |              |
+| `tgi_batch_inference_failure`              | `counter`   | method = "prefill" or "next_token"                  |              |
+| `tgi_batch_inference_batch_size`           | `histogram` | method = "prefill" or "next_token"                  |              |
+| `tgi_batch_inference_duration`             | `histogram` | method = "prefill" or "next_token", makeup          |              |
+| `tgi_batch_inference_forward_duration`     | `histogram` | method = "prefill" or "next_token", makeup          |              |
+| `tgi_batch_next_tokens`                    | `histogram` |                                                     | Prefill only |
+| `tgi_batch_current_size`                   | `gauge`     |                                                     |              |
+| `tgi_batch_input_tokens`                   | `gauge`     |                                                     |              |
+| `tgi_batch_max_remaining_tokens`           | `gauge`     |                                                     |              |
+| `tgi_queue_size`                           | `gauge`     |                                                     |              |
+| `tgi_queue_jump`                           | `counter`   |                                                     |              |
+| `tgi_granular_batch_addition`              | `counter`   |                                                     |              |
+| `tgi_prefill_weight_limit_exceeded`        | `counter`   |                                                     |              |
+| `tgi_prompt_load_failure`                  | `counter`   |                                                     |              |
+| `tgi_prompt_load_duration`                 | `histogram` |                                                     |              |

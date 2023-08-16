@@ -367,11 +367,7 @@ impl<B: BatchType> Queue<B> {
             requests.iter().map(|r| r.input_length as usize),
             chosen_count,
         );
-        metrics::histogram!("tgi_batch_next_tokens", batch_tokens as f64);
-        let chosen_count = chosen_count as f64;
         metrics::gauge!("tgi_queue_size", self.buffer.len() as f64);
-        metrics::histogram!("tgi_batch_next_size", chosen_count);
-
         let batch = Batch { id: self.next_batch_id, requests, total_tokens: batch_tokens as u32 };
         // Increment batch id
         self.next_batch_id += 1;

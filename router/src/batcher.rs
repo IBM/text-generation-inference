@@ -523,6 +523,10 @@ impl<'a> TokenProcessor<'a> {
         let batch_size = batch.requests.len();
         let batch_tokens = batch.total_tokens;
         let start_time = Instant::now();
+        metrics::histogram!("tgi_batch_next_tokens", batch_tokens as f64);
+        metrics::histogram!(
+            "tgi_batch_inference_batch_size", batch_size as f64, "method" => "prefill"
+        );
         self._wrap_future(
             client.prefill(batch, to_prune).map(|r| {
                 info!(
@@ -538,6 +542,9 @@ impl<'a> TokenProcessor<'a> {
     async fn next_token<B: BatchType>(
         &mut self, client: &mut ShardedClient, batches: Vec<CachedBatch>, queue: &mut Queue<B>,
     ) -> Option<CachedBatch> {
+        metrics::histogram!(
+            "tgi_batch_inference_batch_size", self.entries.len() as f64, "method" => "next_token"
+        );
         let start_time = Instant::now();
         self._wrap_future(
             client.next_token(batches), "next_token", start_time, None, queue
@@ -555,9 +562,6 @@ impl<'a> TokenProcessor<'a> {
         queue: &mut Queue<B>,
     ) -> Option<CachedBatch> {
         metrics::increment_counter!("tgi_batch_inference_count", "method" => method);
-        metrics::histogram!(
-            "tgi_batch_inference_batch_size", self.entries.len() as f64, "method" => method,
-        );
 
         // We process the shared queue while waiting for the response from the python shard(s)
         let queue_servicer = queue.service_queue().fuse();
