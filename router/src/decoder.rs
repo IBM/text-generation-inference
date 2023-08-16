@@ -101,7 +101,7 @@ impl Decoder {
             Some(Metaspace(_) | WordPiece(_) | Sequence(_)) => {
                 // For these, the first token in the sequence is treated differently,
                 // so we add and then strip a placeholder token.
-                let ids = [from_ref(&0), ids].concat();
+                let ids = [from_ref(&self.single_tok_id), ids].concat();
                 let result = self.decode_full(&*ids)?;
                 let mut text = result.strip_prefix(&self.single_tok).ok_or_else(
                     || DetokenizationError("Unexpected".into())
