@@ -91,7 +91,9 @@ def convert_files(pt_files: List[Path], sf_files: List[Path], discard_names: Lis
     assert len(pt_files) == len(sf_files)
 
     # Filter non-inference files
-    pairs = [p for p in zip(pt_files, sf_files) if not any(s in p[0].name for s in ["arguments", "args", "training"])]
+    pairs = [p for p in zip(pt_files, sf_files) if not any(
+        s in p[0].name for s in ["arguments", "args", "training", "optimizer", "scheduler"]
+    )]
 
     N = len(pairs)
 
@@ -102,7 +104,8 @@ def convert_files(pt_files: List[Path], sf_files: List[Path], discard_names: Lis
     logger.info(f"Converting {N} pytorch .bin files to .safetensors...")
 
     for i, (pt_file, sf_file) in enumerate(pairs):
+        logger.info(f"Converting: [{i + 1}/{N}] \"{pt_file.name}\"")
         start = datetime.datetime.now()
         convert_file(pt_file, sf_file, discard_names)
         elapsed = datetime.datetime.now() - start
-        logger.info(f"Convert: [{i + 1}/{N}] -- Took: {elapsed}")
+        logger.info(f"Converted: [{i + 1}/{N}] \"{sf_file.name}\" -- Took: {elapsed}")
