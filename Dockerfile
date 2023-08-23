@@ -1,9 +1,9 @@
 ## Global Args #################################################################
 ARG BASE_UBI_IMAGE_TAG=9.2-722
 ARG PROTOC_VERSION=24.0
-#ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
-ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
-ARG PYTORCH_VERSION=2.0.1
+#ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
+ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
+ARG PYTORCH_VERSION=2.1.0.dev20230822
 
 ## Base Layer ##################################################################
 FROM registry.access.redhat.com/ubi9/ubi:${BASE_UBI_IMAGE_TAG} as base
@@ -240,7 +240,7 @@ COPY --from=build /opt/miniconda/ /opt/miniconda/
 
 ENV PATH=/opt/miniconda/bin:$PATH
 
-# These could instead come from a explicitly cached images
+# These could instead come from explicitly cached images
 
 # Copy build artifacts from flash attention builder
 COPY --from=flash-att-cache /usr/src/flash-attention/build/lib.linux-x86_64-cpython-39 /opt/miniconda/lib/python3.9/site-packages
