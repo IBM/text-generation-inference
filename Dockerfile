@@ -1,6 +1,6 @@
 ## Global Args #################################################################
-ARG BASE_UBI_IMAGE_TAG=9.2-722
-ARG PROTOC_VERSION=24.0
+ARG BASE_UBI_IMAGE_TAG=9.2-722.1692769367
+ARG PROTOC_VERSION=24.1
 #ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
 ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
 ARG PYTORCH_VERSION=2.1.0.dev20230822
