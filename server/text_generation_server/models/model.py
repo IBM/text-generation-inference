@@ -27,6 +27,8 @@ PT2_COMPILE = os.getenv("PT2_COMPILE", "false").lower() != "false"
 if PT2_COMPILE:
     import torch._dynamo
     from torch._inductor.compile_fx import compile_fx
+    from einops._torch_specific import allow_ops_in_compiled_graph
+    allow_ops_in_compiled_graph()
 
 
 class Model(ABC):
@@ -70,6 +72,12 @@ class Model(ABC):
         if not PT2_COMPILE:
             self.compiled = False
         else:
+
+            # Perform a forward pass using a single token. This serves 2 purposes:
+            # (1) work-around for PT2C issue #107721
+            # (2) determine types of past_key_value output
+            type_pkv_dim0, type_pkv_dim1 = self.determine_pkv_types()
+
             torch._dynamo.config.cache_size_limit = 512
             self.n_kernels = 0
 
@@ -93,8 +101,13 @@ class Model(ABC):
             run_forward = torch._dynamo.run(compiled_forward)
 
             def parse_kwargs(kwargs):
-                if "past_key_values" in kwargs and type(kwargs["past_key_values"]) is list:
-                    kwargs["past_key_values"] = tuple(tuple(t) for t in kwargs["past_key_values"])
+                # after batch concatentation the past_key_value tensor is a list of lists.
+                # this will lead to guard failures unless we convert them to the typical
+                # types that we expect to be returned by forward.
+                pkv = kwargs.get("past_key_values")
+                if pkv is not None:
+                    if type(pkv) != type_pkv_dim0 or type(pkv[0]) != type_pkv_dim1:
+                        kwargs["past_key_values"] = type_pkv_dim0(type_pkv_dim1(t) for t in pkv)
                 return kwargs
 
             def override_forward_with_compile(self, *args, **kwargs):

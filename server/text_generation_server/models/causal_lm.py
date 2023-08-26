@@ -481,6 +481,14 @@ class CausalLM(Model):
     def batch_type(self, value):
         self._batch_type = value
 
+    def determine_pkv_types(self) -> Tuple[Type, Type]:
+        one_token = torch.tensor([[1]], device=self.device)
+        _, pkv, _ = self.forward(
+            input_ids=one_token,
+            attention_mask=one_token,
+        )
+        return type(pkv), type(pkv[0])
+
     def forward(
         self,
         input_ids: torch.Tensor,

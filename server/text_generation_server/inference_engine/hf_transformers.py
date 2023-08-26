@@ -23,6 +23,10 @@ class InferenceEngine(BaseInferenceEngine):
             "trust_remote_code": TRUST_REMOTE_CODE,
         }
 
+        if model_config.model_type == "mpt":
+            model_config.init_device = str(self.device)
+            kwargs["config"] = model_config
+
         if dtype == torch.int8:
             # using LLM.int8()
             kwargs["load_in_8bit"] = True

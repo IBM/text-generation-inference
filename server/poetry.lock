@@ -218,11 +218,11 @@ graph = ["objgraph (>=1.7.2)"]
 
 [[package]]
 name = "einops"
-version = "0.6.1"
+version = "0.7.0rc2"
 description = "A new flavour of deep learning operations"
 category = "main"
 optional = false
-python-versions = ">=3.7"
+python-versions = ">=3.8"
 
 [[package]]
 name = "evaluate"
@@ -1076,7 +1076,7 @@ onnx-gpu = ["optimum", "onnxruntime-gpu", "onnx"]
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.9"
-content-hash = "2e856d4459bb5e8292f050b31b59298c96f069197d2f8c1a2c4a3dc0e8849f51"
+content-hash = "d3bac6bb1e0b0f6007dbb31ade247dcffdb4d9572d78137cb025c06f4b486c84"
 
 [metadata.files]
 accelerate = [
@@ -1381,8 +1381,8 @@ dill = [
     {file = "dill-0.3.7.tar.gz", hash = "sha256:cc1c8b182eb3013e24bd475ff2e9295af86c1a38eb1aff128dac8962a9ce3c03"},
 ]
 einops = [
-    {file = "einops-0.6.1-py3-none-any.whl", hash = "sha256:99149e46cc808956b174932fe563d920db4d6e5dadb8c6ecdaa7483b7ef7cfc3"},
-    {file = "einops-0.6.1.tar.gz", hash = "sha256:f95f8d00f4ded90dbc4b19b6f98b177332614b0357dde66997f3ae5d474dc8c8"},
+    {file = "einops-0.7.0rc2-py3-none-any.whl", hash = "sha256:864a685729720687143c1e9b19c32feebef68b9bd35e181cdf595a799d3c3d0d"},
+    {file = "einops-0.7.0rc2.tar.gz", hash = "sha256:7a1406be4f9157aea5074a72ebb0a67df3b08fc1f808c8c48b5e1bbcb0e0e01a"},
 ]
 evaluate = [
     {file = "evaluate-0.4.0-py3-none-any.whl", hash = "sha256:4b528de0f270cdfb077ca4877035dc17584d2c4b1cbc3fdd46afc3942ed557fd"},
