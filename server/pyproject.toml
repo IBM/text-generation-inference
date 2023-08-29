@@ -34,6 +34,7 @@ cryptography = ">=41.0.3"
 [tool.poetry.extras]
 accelerate = ["accelerate"]
 bnb = ["bitsandbytes"]
+onnx = ["optimum", "onnxruntime", "onnx"]
 onnx-gpu = ["optimum", "onnxruntime-gpu", "onnx"]
 
 [tool.poetry.group.dev.dependencies]

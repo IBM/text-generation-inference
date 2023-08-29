@@ -1071,12 +1071,13 @@ multidict = ">=4.0"
 [extras]
 accelerate = ["accelerate"]
 bnb = ["bitsandbytes"]
+onnx = ["optimum", "onnxruntime", "onnx"]
 onnx-gpu = ["optimum", "onnxruntime-gpu", "onnx"]
 
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.9"
-content-hash = "d3bac6bb1e0b0f6007dbb31ade247dcffdb4d9572d78137cb025c06f4b486c84"
+content-hash = "cbba0f914c95dd9ba7596115ab7d11000c5db33dcd660ff6fc89c8e1800d826e"
 
 [metadata.files]
 accelerate = [
