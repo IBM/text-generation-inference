@@ -94,6 +94,11 @@ fn main() -> ExitCode {
     // Determine number of shards based on command line arg and env vars
     let num_shard = find_num_shards(args.num_shard);
 
+    // Resolve fast tokenizer path
+    let tokenizer_path = resolve_tokenizer_path(
+        &args.model_name, args.revision.as_deref()
+    ).expect("Could not find tokenizer for model");
+
     // Signal handler
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
@@ -172,9 +177,6 @@ fn main() -> ExitCode {
         shutdown_shards(shutdown, shutdown_receiver);
         return ExitCode::SUCCESS;
     }
-
-    let tokenizer_path = resolve_tokenizer_path(args.model_name, args.revision)
-        .expect("Could not find tokenizer for model");
 
     // All shard started
     // Start webserver
@@ -546,7 +548,7 @@ fn shutdown_shards(shutdown: Arc<Mutex<bool>>, shutdown_receiver: &mpsc::Receive
 }
 
 
-fn resolve_tokenizer_path(model_name: String, revision: Option<String>) -> Result<String, io::Error> {
+fn resolve_tokenizer_path(model_name: &str, revision: Option<&str>) -> Result<String, io::Error> {
     let cache = env::var("TRANSFORMERS_CACHE")
         .or_else(|_| env::var("HUGGINGFACE_HUB_CACHE")).ok();
     let mut model_dir = cache.as_ref().map(
@@ -558,18 +560,21 @@ fn resolve_tokenizer_path(model_name: String, revision: Option<String>) -> Resul
         }
     }
     if let Some(dir) = model_dir {
-        let ref_name = revision.unwrap_or("main".into());
-        let ref_path = dir.join("refs").join(&ref_name);
-        let ref_contents = fs::read_to_string(ref_path)?;
+        let revision = revision.unwrap_or("main");
+        let ref_path = dir.join("refs").join(&revision);
+        let revision = match ref_path.try_exists()? {
+            true => fs::read_to_string(ref_path)?,
+            false => revision.to_string(),
+        };
         let tok_path = dir.join("snapshots")
-            .join(ref_contents).join("tokenizer.json");
+            .join(&revision).join("tokenizer.json");
         if tok_path.try_exists()? {
             Ok(tok_path.to_string_lossy().into())
         } else {
             Err(io::Error::new(
                 ErrorKind::NotFound,
                 format!(
-                    "Tokenizer file not found in local cache for model {model_name}, revision {ref_name}"
+                    "Tokenizer file not found in local cache for model {model_name}, revision {revision}"
                 )
             ))
         }
