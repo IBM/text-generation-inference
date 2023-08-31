@@ -190,7 +190,7 @@ impl<B: BatchType> BatchConfigValidator<B> {
         let single_request_stats = <B>::update_stats(
             &B::Stats::default(), max_sequence_length, 0
         );
-        let single_request_weight = <B>::batch_weight(
+        let single_request_weight = <B>::batch_initial_weight(
             &single_request_stats, 1
         );
         let weight_upper_bound = single_request_weight * max_batch_size;

@@ -232,6 +232,19 @@ impl<B: BatchType> Queue<B> {
         let now = Instant::now();
         let mut batch_stats = <B>::compute_stats(entries);
         let mut prefill_stats = <B>::compute_stats(&self.empty_map);
+
+        // Compute the effective prefill weight limit, taking into account space already consumed
+        // by the in-progress batch
+        let effective_prefill_weight_limit = match self.config.prefill_weight_limit {
+            prefill_limit if prefill_limit == 0 || total_count == 0 => prefill_limit,
+            prefill_limit => {
+                let current_batch_weight = <B>::batch_initial_weight(&batch_stats, total_count);
+                let pct_space_free = 1.0 - (
+                    current_batch_weight as f64 / self.config.weight_limit as f64
+                );
+                (pct_space_free * prefill_limit as f64) as usize
+            },
+        };
         // We first do a read-only pass over the queue to allow skipping over large entries
         // that don't fit in the current batch to reach smaller entries that do
         for (index, entry) in self.buffer.iter().enumerate() {
@@ -247,7 +260,7 @@ impl<B: BatchType> Queue<B> {
             );
 
             // Avoid more granular analysis if possible
-            if <B>::batch_weight(&batch_stats, total_count + 1) > config.weight_limit {
+            if <B>::batch_max_weight(&batch_stats, total_count + 1) > config.weight_limit {
                 // We aren't sure whether this next request will fit, so populate
                 // a btree with the current batch of requests, the set of
                 // requests already evaluated, and this one, and perform more
@@ -274,9 +287,7 @@ impl<B: BatchType> Queue<B> {
                 tree.insert((output_len, input_len, tree.len()));
 
                 // Perform analysis
-                if <B>::exceeds_weight(
-                    tree, config.weight_limit, output_len,
-                ) {
+                if <B>::exceeds_weight(tree, config.weight_limit, output_len) {
                     if chosen_indices.len() + buffer_size < min_size + index + 1 {
                         // We don't have enough remaining to meet min_size
                         return None
@@ -296,28 +307,22 @@ impl<B: BatchType> Queue<B> {
                 metrics::increment_counter!("tgi_queue_jump");
             }
 
-            // Also check whether adding this request will make the batch of new requests
-            // too expensive latency-wise to perform in a single forward-pass.
-            let mut prefill_weight_exceeded = false;
-            if config.prefill_weight_limit > 0 {
+            // Also check whether adding this request will breach the prefill weight limit
+            if effective_prefill_weight_limit > 0 {
                 let next_prefill_stats = <B>::update_stats(
                     &prefill_stats, input_len, 0
                 );
                 let prefill_weight = <B>::prefill_weight(
                     &next_prefill_stats, chosen_indices.len() + 1
                 );
-                if prefill_weight > config.prefill_weight_limit {
-                    if chosen_indices.is_empty() {
-                        prefill_weight_exceeded = true;
-                    } else {
-                        if let Some(tree) = btree.as_mut() {
-                            // Remove our tuple from the set
-                            tree.remove(&(output_len, input_len, tree.len() - 1));
-                        }
-                        time_cutoff.get_or_insert_with(|| entry.queue_time.add(CUTOFF_DURATION));
-                        metrics::increment_counter!("tgi_prefill_weight_limit_exceeded");
-                        continue
+                if prefill_weight > effective_prefill_weight_limit {
+                    if let Some(tree) = btree.as_mut() {
+                        // Remove our tuple from the set
+                        tree.remove(&(output_len, input_len, tree.len() - 1));
                     }
+                    time_cutoff.get_or_insert_with(|| entry.queue_time.add(CUTOFF_DURATION));
+                    metrics::increment_counter!("tgi_prefill_weight_limit_exceeded");
+                    continue
                 }
                 prefill_stats = next_prefill_stats;
             }
@@ -326,7 +331,7 @@ impl<B: BatchType> Queue<B> {
 
             chosen_indices.push(index);
             total_count += 1;
-            if total_count >= config.size_limit || prefill_weight_exceeded {
+            if total_count >= config.size_limit {
                 break
             }
         }

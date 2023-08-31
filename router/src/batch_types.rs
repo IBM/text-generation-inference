@@ -9,8 +9,10 @@ pub(crate) trait BatchType: Send + Sync + Clone + 'static {
 
     /// Update batch statistics with an additional request
     fn update_stats(stats: &Self::Stats, input_length: usize, output_length: usize) -> Self::Stats;
-    /// Calculate batch weight given batch statistics
-    fn batch_weight(stats: &Self::Stats, batch_size: usize) -> usize;
+    /// Calculate worst-case max batch weight given batch statistics
+    fn batch_max_weight(stats: &Self::Stats, batch_size: usize) -> usize;
+    /// Calculate initial max batch weight given batch statistics (based on input lengths only)
+    fn batch_initial_weight(stats: &Self::Stats, batch_size: usize) -> usize;
     /// Calculate prefill batch weight given prefill batch statistics
     fn prefill_weight(prefill_stats: &Self::Stats, batch_size: usize) -> usize;
     /// Indicate whether a hypothetical batch will exceed the combined weight limit
@@ -44,21 +46,29 @@ pub(crate) trait BatchType: Send + Sync + Clone + 'static {
 pub(crate) struct FlashBatch {}
 
 impl BatchType for FlashBatch {
-    /// Keep track of total number of tokens in the batch
-    type Stats = usize;
+    /// Keep track of total number of input and output tokens in the batch
+    type Stats = (usize, usize);
 
     fn update_stats(
         total_tokens: &Self::Stats, input_length: usize, output_length: usize
     ) -> Self::Stats {
-        total_tokens + input_length + output_length
+        let (total_in_tokens, total_out_tokens) = total_tokens;
+        (total_in_tokens + input_length, total_out_tokens + output_length)
     }
 
-    fn batch_weight(total_tokens: &Self::Stats, _batch_size: usize) -> usize {
-        *total_tokens
+    fn batch_max_weight(total_tokens: &Self::Stats, _batch_size: usize) -> usize {
+        let (total_in_tokens, total_out_tokens) = total_tokens;
+        total_in_tokens + total_out_tokens
+    }
+
+    fn batch_initial_weight(total_tokens: &Self::Stats, _batch_size: usize) -> usize {
+        let (total_in_tokens, _) = total_tokens;
+        *total_in_tokens
     }
 
     fn prefill_weight(total_tokens: &Self::Stats, _batch_size: usize) -> usize {
-        *total_tokens
+        let (total_in_tokens, _) = total_tokens;
+        *total_in_tokens
     }
 
     fn exceeds_weight(
@@ -106,11 +116,16 @@ impl BatchType for PaddedBatch {
         (max(*max_input_length, input_length), max(*max_output_length, output_length))
     }
 
-    fn batch_weight(max_in_out_lengths: &Self::Stats, batch_size: usize) -> usize {
+    fn batch_max_weight(max_in_out_lengths: &Self::Stats, batch_size: usize) -> usize {
         let (max_input_length, max_output_length) = max_in_out_lengths;
         let max_seq_len = max_input_length + max_output_length;
         // Memory requirement roughly proportional to batch_size * seq_len^2
         batch_size * max_seq_len.pow(2)
+    }
+
+    fn batch_initial_weight(max_in_out_lengths: &Self::Stats, batch_size: usize) -> usize {
+        let (max_input_length, _) = max_in_out_lengths;
+        batch_size * max_input_length
     }
 
     fn prefill_weight(max_in_out_lengths: &Self::Stats, batch_size: usize) -> usize {
