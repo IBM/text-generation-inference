@@ -86,14 +86,7 @@ class Model(ABC):
                 self.n_kernels += 1
 
             compiled_forward = torch._dynamo.optimize(
-                lambda model, inputs: compile_fx(
-                    model,
-                    inputs,
-                    config_patches={
-                        "triton.cudagraphs": False,
-                        "size_asserts": False,
-                    },
-                ),
+                compile_fx,
                 dynamic=True,
                 guard_fail_fn=count_kernels,
             )(self.model.forward)
@@ -155,12 +148,14 @@ class Model(ABC):
         return next_batch_keep_indices
 
     def _setup_prompt_encoder(self) -> bool:
-        if hasattr(self.model, "named_children"):
+        vocab_size = getattr(self.model.config, "vocab_size", None)
+
+        if vocab_size is not None and hasattr(self.model, "named_children"):
             # Logic derived from https://github.com/huggingface/peft/blob/75925b1aaee47fe483a3fd0322d86df3d3eb8d22/src/peft/peft_model.py#L185
             for name, module in self.model.named_children():
                 if isinstance(module, PreTrainedModel):
                     for named_param, value in list(module.named_parameters()):
-                        if value.shape[0] == self.model.config.vocab_size:
+                        if value.shape[0] == vocab_size:
                             self.word_embeddings = module.get_submodule(named_param.replace(".weight", ""))
                             return True
 
