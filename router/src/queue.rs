@@ -123,6 +123,10 @@ pub(crate) struct Queue<B: BatchType> {
     /// Id of the next batch
     next_batch_id: u64,
 
+    // Keep track what was logged in the last call to try_next_batch
+    // so as to avoid many repeating entries in the log
+    last_logged: Option<(usize, usize)>,
+
     /// Just a constant empty map to reuse
     empty_map: IntMap<u64, Entry>,
 }
@@ -138,6 +142,7 @@ impl<B: BatchType> Queue<B> {
             next_id: 0,
             next_batch_id: 1,
             batch_type: PhantomData,
+            last_logged: None,
             empty_map: IntMap::default(),
         }
     }
@@ -215,12 +220,14 @@ impl<B: BatchType> Queue<B> {
         let buffer_size = self.buffer.len();
         if buffer_size < min_size {
             // Not enough requests waiting to reach min_size
+            self.last_logged = None;
             return None
         }
 
         let mut total_count = entries.len();
         if total_count + min_size > self.config.size_limit {
             // Not enough space to fit min_size within max batch size
+            self.last_logged = None;
             return None
         }
 
@@ -290,6 +297,7 @@ impl<B: BatchType> Queue<B> {
                 if <B>::exceeds_weight(tree, config.weight_limit, output_len) {
                     if chosen_indices.len() + buffer_size < min_size + index + 1 {
                         // We don't have enough remaining to meet min_size
+                        self.last_logged = None;
                         return None
                     }
                     // Remove our tuple from the set
@@ -337,11 +345,20 @@ impl<B: BatchType> Queue<B> {
         }
 
         let chosen_count = chosen_indices.len();
-        info!("Chose {chosen_count} out of {buffer_size} requests from buffer, \
-                total now {total_count}");
         if chosen_count == 0 {
+            // Don't repeatedly log when no requests were chosen if the current/waiting
+            // request counts haven't changed
+            let current_counts = Some((buffer_size, total_count));
+            if self.last_logged != current_counts {
+                self.last_logged = current_counts;
+                info!("Chose 0 out of {buffer_size} requests from buffer, total now {total_count}");
+            }
             return None
         }
+
+        self.last_logged = None;
+        info!("Chose {chosen_count} out of {buffer_size} requests from buffer, \
+                total now {total_count}");
 
         let some_now = Some(now);
         let requests = chosen_indices.iter().enumerate().map(|(i, index)| {
