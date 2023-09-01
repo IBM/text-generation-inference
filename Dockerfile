@@ -182,6 +182,10 @@ RUN cd ~ && \
     chmod +x Miniconda3-*-Linux-x86_64.sh && \
     bash ./Miniconda3-*-Linux-x86_64.sh -bf -p /opt/miniconda
 
+# Remove tests directory containing test private keys
+# conda clean will clean this directory but just in case, it will check the directory existence and remove it
+RUN if [ -d " /opt/miniconda/pkgs/conda-content-trust-*/info/test/tests" ]; then rm -rf "/opt/miniconda/pkgs/conda-content-trust-*/info/test/tests"; fi
+
 ENV PATH=/opt/miniconda/bin:$PATH
 
 # Install specific version of torch
