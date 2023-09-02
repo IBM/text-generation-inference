@@ -125,7 +125,7 @@ impl BatchType for PaddedBatch {
 
     fn batch_initial_weight(max_in_out_lengths: &Self::Stats, batch_size: usize) -> usize {
         let (max_input_length, _) = max_in_out_lengths;
-        batch_size * max_input_length
+        batch_size * max_input_length.pow(2)
     }
 
     fn prefill_weight(max_in_out_lengths: &Self::Stats, batch_size: usize) -> usize {

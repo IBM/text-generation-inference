@@ -249,7 +249,7 @@ class CausalLMBatch(Batch):
             # and to remove unused allocated space
             left_offset = max_sequence_length - batch.max_sequence_length
             batch_left_offset = (
-                    batch.attention_mask.shape[1] - batch.max_sequence_length - batch.padding_right_offset
+                batch.attention_mask.shape[1] - batch.max_sequence_length - batch.padding_right_offset
             )
             attention_mask[
                 start_index:end_index, left_offset:-padding_right_offset,
