@@ -1,0 +1,114 @@
+# Test empty requests
+- name: Empty
+  request: {}
+  response: {}
+
+
+# Basic Greedy (implicit)
+- name: Basic Greedy, max new tokens (implicit)
+  request:
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 20
+        inputTokenCount: 6
+        stopReason: MAX_TOKENS
+        text: '
+
+          The first time I saw the movie, I was in the middle of a movie with my wife'
+
+
+# Basic Greedy (explicit)
+- name: Basic Greedy, max new tokens (explicit)
+  request:
+    params:
+      method: GREEDY
+      stopping: {"maxNewTokens": 20}
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 20
+        inputTokenCount: 6
+        stopReason: MAX_TOKENS
+        text: '
+
+          The first time I saw the movie, I was in the middle of a movie with my wife'
+
+
+# Multiple inputs with token info
+- name: Multiple inputs with token info
+  request:
+    params:
+      method: GREEDY
+      stopping: {"maxNewTokens": 2}
+      response:
+        generatedTokens: true
+        tokenLogprobs: true
+        topNTokens: 2
+    requests:
+      - {"text": "A very long story:\n"}
+      - {"text": "I am a "}
+      - {"text": "Hello, "}
+  response:
+    responses:
+    - generatedTokenCount: 2
+      inputTokenCount: 6
+      stopReason: MAX_TOKENS
+      text: '
+
+        The'
+      tokens:
+      - logprob: -0.03937243
+        text: "\u010A"
+        topTokens:
+        - logprob: -0.03937243
+          text: "\u010A"
+        - logprob: -5.819852
+          text: The
+      - logprob: -2.627593
+        text: The
+        topTokens:
+        - logprob: -2.627593
+          text: The
+        - logprob: -2.828246
+          text: I
+    - generatedTokenCount: 2
+      inputTokenCount: 4
+      stopReason: MAX_TOKENS
+      text: "\_young"
+      tokens:
+      - logprob: -2.2894902
+        text: "\xC2\u0142"
+        topTokens:
+        - logprob: -2.2894902
+          text: "\xC2\u0142"
+        - logprob: -2.3675122
+          text: _____
+      - logprob: -3.8699257
+        text: young
+        topTokens:
+        - logprob: -3.8699257
+          text: young
+        - logprob: -4.3716497
+          text: professional
+    - generatedTokenCount: 2
+      inputTokenCount: 3
+      stopReason: MAX_TOKENS
+      text: "\_I"
+      tokens:
+      - logprob: -1.7967854
+        text: "\xC2\u0142"
+        topTokens:
+        - logprob: -1.7967854
+          text: "\xC2\u0142"
+        - logprob: -2.579813
+          text: '!!!'
+      - logprob: -1.3872381
+        text: I
+        topTokens:
+        - logprob: -1.3872381
+          text: I
+        - logprob: -2.9594731
+          text: you

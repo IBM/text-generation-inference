@@ -311,6 +311,14 @@ async def _test_multi_input_seeds(stub):
             assert 0 <= seed <= 4294967295
 
 
+@pytest.mark.model("gpt2")
+@pytest.mark.extensions(".safetensors,.json")
+@pytest.mark.shards(1)
+@pytest.mark.test_case_file("test_cases_gpt2.yaml")
+@pytest.mark.asyncio
+async def test_gpt2(server_fixture, test_cases):
+    await run_test_cases_async(test_cases)
+
 @pytest.mark.model("bigscience/bloom-560m")
 @pytest.mark.extensions(".safetensors,.json,.model")
 @pytest.mark.shards(1)
