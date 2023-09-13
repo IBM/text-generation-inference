@@ -46,8 +46,14 @@ class CausalLMBatch(Batch):
     padding_right_offset: int
     max_remaining_tokens: List[int]
 
-    # Past metadata
+    # Metadata for the past_key_values cache
+
+    # for BLOOM: the "head_dim" of the K tensor is transposed with the sequence
+    # (i.e. K and V have different dims)
     keys_head_dim_last: bool = True
+    # for GPTBigCode: the K/V tensors are merged into one tensor with dims
+    # [batch, sequence, params]
+    merged_kv_cache: bool = False
 
     def get_id(self) -> int:
         return self.batch_id
@@ -209,10 +215,13 @@ class CausalLMBatch(Batch):
         position_ids = None
         past_key_values = []
 
+        # We only concatenate batches that did at least one step
+        if any(batch.past_key_values is None for batch in batches):
+            raise ValueError("can only concatenate prefilled batches")
+
         # Check the past keys/values shape so that we can revert to that
         # shape after the convenience slicing if necessary
-        three_dim_pkvs = batches[0].past_key_values is not None \
-            and len(batches[0].past_key_values[0][0].shape) == 3
+        three_dim_pkvs = not batches[0].merged_kv_cache and len(batches[0].past_key_values[0][0].shape) == 3
 
         # Used for slicing correctly inside the tensors
         # Equivalent to a cumsum on batch sizes
@@ -226,10 +235,6 @@ class CausalLMBatch(Batch):
 
             # Slicing end index for this batch
             end_index = start_index + len(batch)
-
-            # We only concatenate batches that did at least one step
-            if batch.past_key_values is None:
-                raise ValueError("only concatenate prefilled batches")
 
             # Create empty tensor
             # input_ids is always of shape [batch_size, 1]
@@ -276,78 +281,112 @@ class CausalLMBatch(Batch):
 
             start_index = end_index
 
-        # Shenanigans to get dimensions because BLOOM outputs a past with a different shape
-        # BLOOM Keys:   [batch_size * num_heads, head_dim, seq_length]
-        # BLOOM Values: [batch_size * num_heads, seq_length, head_dim]
         first_past_kvs = batches[0].past_key_values
-        _, num_heads, padded_sequence_length, head_dim = first_past_kvs[0][1].shape
+        if batches[0].merged_kv_cache:
+            # For GPTBigCode the K and V tensors of the cache are merged into
+            # one with dims [batch, sequence, params]
+            _, _, cache_size = first_past_kvs[0].shape
+            padded_past_shape = (
+                total_batch_size,
+                max_sequence_length - 1,
+                cache_size,
+            )
+            # Iterate over attention layers
+            for j in range(len(first_past_kvs)):
+                padded_past = first_past_kvs[j].new_zeros(padded_past_shape)
+                start_index = 0
+                for batch in batches:
+                    past = batch.past_key_values[j]
+                    # Clear reference to the original tensor
+                    batch.past_key_values[j] = None
 
-        padded_past_values_shape = (
-            total_batch_size,
-            num_heads,
-            max_sequence_length - 1,
-            head_dim,
-        )
+                    # Slicing end index for this batch
+                    end_index = start_index + len(batch)
+                    # slice to remove the padding from previous batches
+                    past_seq_len = batch.max_sequence_length - 1
 
-        padded_past_keys_shape = padded_past_values_shape if batches[0].keys_head_dim_last \
-            else (
-                # seq_length is last for BLOOM
+                    # assumes the "head_dim" is last
+                    padded_past[
+                        start_index:end_index, -past_seq_len:, :
+                    ] = past[:, -past_seq_len:, :]
+                    del past
+
+                    start_index = end_index
+
+                past_key_values.append(padded_past)
+    
+        else:
+            # Shenanigans to get dimensions because BLOOM outputs a past with a different shape
+            # BLOOM Keys:   [batch_size * num_heads, head_dim, seq_length]
+            # BLOOM Values: [batch_size * num_heads, seq_length, head_dim]
+            _, num_heads, padded_sequence_length, head_dim = first_past_kvs[0][1].shape
+
+            padded_past_values_shape = (
                 total_batch_size,
                 num_heads,
-                head_dim,
                 max_sequence_length - 1,
+                head_dim,
             )
 
-        # Iterate over attention layers
-        for j in range(len(first_past_kvs)):
-            padded_past_keys = first_past_kvs[j][0].new_zeros(padded_past_keys_shape)
-            start_index = 0
-            for batch in batches:
-                past_keys = batch.past_key_values[j][0]
-                # Clear reference to the original tensor
-                batch.past_key_values[j][0] = None
+            padded_past_keys_shape = padded_past_values_shape if batches[0].keys_head_dim_last \
+                else (
+                    # seq_length is last for BLOOM
+                    total_batch_size,
+                    num_heads,
+                    head_dim,
+                    max_sequence_length - 1,
+                )
 
-                # Slicing end index for this batch
-                end_index = start_index + len(batch)
-                # We slice the keys to remove the padding from previous batches
-                past_seq_len = batch.max_sequence_length - 1
-                if batch.keys_head_dim_last:
-                    padded_past_keys[
+            # Iterate over attention layers
+            for j in range(len(first_past_kvs)):
+                padded_past_keys = first_past_kvs[j][0].new_zeros(padded_past_keys_shape)
+                start_index = 0
+                for batch in batches:
+                    past_keys = batch.past_key_values[j][0]
+                    # Clear reference to the original tensor
+                    batch.past_key_values[j][0] = None
+
+                    # Slicing end index for this batch
+                    end_index = start_index + len(batch)
+                    # We slice the keys to remove the padding from previous batches
+                    past_seq_len = batch.max_sequence_length - 1
+                    if batch.keys_head_dim_last:
+                        padded_past_keys[
+                            start_index:end_index, :, -past_seq_len:, :
+                        ] = past_keys[:, :, -past_seq_len:, :]
+                    else:
+                        # BLOOM case
+                        padded_past_keys[
+                            start_index:end_index, :, :, -past_seq_len:
+                        ] = past_keys[:, :, :, -past_seq_len:]
+                    del past_keys
+
+                    start_index = end_index
+
+                padded_past_values = first_past_kvs[j][1].new_zeros(padded_past_values_shape)
+                start_index = 0
+                for batch in batches:
+                    past_values = batch.past_key_values[j][1]
+                    # Clear reference to the original tensor
+                    batch.past_key_values[j][1] = None
+
+                    # Slicing end index for this batch
+                    end_index = start_index + len(batch)
+                    # We slice the past values to remove the padding from previous batches
+                    past_seq_len = batch.max_sequence_length - 1
+                    padded_past_values[
                         start_index:end_index, :, -past_seq_len:, :
-                    ] = past_keys[:, :, -past_seq_len:, :]
-                else:
-                    # BLOOM case
-                    padded_past_keys[
-                        start_index:end_index, :, :, -past_seq_len:
-                    ] = past_keys[:, :, :, -past_seq_len:]
-                del past_keys
+                    ] = past_values[:, :, -past_seq_len:, :]
+                    del past_values
 
-                start_index = end_index
+                    start_index = end_index
 
-            padded_past_values = first_past_kvs[j][1].new_zeros(padded_past_values_shape)
-            start_index = 0
-            for batch in batches:
-                past_values = batch.past_key_values[j][1]
-                # Clear reference to the original tensor
-                batch.past_key_values[j][1] = None
+                if three_dim_pkvs:
+                    # Revert reshaped past kv shape to what's expected by the model
+                    padded_past_keys = padded_past_keys.reshape(-1, *padded_past_keys.shape[-2:])
+                    padded_past_values = padded_past_values.reshape(-1, *padded_past_values.shape[-2:])
 
-                # Slicing end index for this batch
-                end_index = start_index + len(batch)
-                # We slice the past values to remove the padding from previous batches
-                past_seq_len = batch.max_sequence_length - 1
-                padded_past_values[
-                    start_index:end_index, :, -past_seq_len:, :
-                ] = past_values[:, :, -past_seq_len:, :]
-                del past_values
-
-                start_index = end_index
-
-            if three_dim_pkvs:
-                # Revert reshaped past kv shape to what's expected by the model
-                padded_past_keys = padded_past_keys.reshape(-1, *padded_past_keys.shape[-2:])
-                padded_past_values = padded_past_values.reshape(-1, *padded_past_values.shape[-2:])
-
-            past_key_values.append([padded_past_keys, padded_past_values])
+                past_key_values.append([padded_past_keys, padded_past_values])
 
         return cls(
             batch_id=batches[0].batch_id,
@@ -364,6 +403,7 @@ class CausalLMBatch(Batch):
             max_sequence_length=max_sequence_length,
             padding_right_offset=padding_right_offset,
             keys_head_dim_last=batches[0].keys_head_dim_last,
+            merged_kv_cache=batches[0].merged_kv_cache,
         )
 
     @classmethod
@@ -388,7 +428,7 @@ class CausalLMBatch(Batch):
 
         # Check the past keys/values shape so that we can revert to that
         # shape after the convenience slicing if necessary
-        three_dim_pkvs = len(batch.past_key_values[0][0].shape) == 3
+        three_dim_pkvs = not batch.merged_kv_cache and len(batch.past_key_values[0][0].shape) == 3
 
         #TODO maybe a single loop for all these list slices
         slice_list = itemgetter(*keep_indices) if new_size > 1 else lambda l: (l[keep_indices[0]],)
@@ -408,9 +448,12 @@ class CausalLMBatch(Batch):
             batch.past_key_values = list(batch.past_key_values)
 
         for i, layer in enumerate(batch.past_key_values):
-            batch.past_key_values[i] = update_layer(
-                layer, size_before, keep_indices, past_kv_length, batch.keys_head_dim_last, three_dim_pkvs
-            )
+            if batch.merged_kv_cache:
+                batch.past_key_values[i] = layer[keep_indices, -past_kv_length:, :]
+            else:
+                batch.past_key_values[i] = update_layer(
+                    layer, size_before, keep_indices, past_kv_length, batch.keys_head_dim_last, three_dim_pkvs, 
+                )
 
         batch.input_ids = batch.input_ids[keep_indices]
         batch.attention_mask = batch.attention_mask[
@@ -469,9 +512,15 @@ class CausalLM(Model):
         # Perform a forward pass to determine the ordering of past key attention tensor dimensions
         one_token = torch.tensor([[1]], device=inference_engine.get_device())
         _, past_key_values, _ = self.forward(input_ids=one_token, attention_mask=one_token)
-        key_past, value_past = past_key_values[0]
-        keys_head_dim_last = key_past.shape[-1] == value_past.shape[-1]
-        self.batch_type = CausalLMBatch if keys_head_dim_last else KeysDimTransposedCausalLMBatch
+        pkv_tensors_per_layer = len(past_key_values[0])
+        if pkv_tensors_per_layer == 2:
+            key_past, value_past = past_key_values[0]
+            keys_head_dim_last = key_past.shape[-1] == value_past.shape[-1]
+            self.batch_type = CausalLMBatch if keys_head_dim_last else KeysDimTransposedCausalLMBatch
+        elif pkv_tensors_per_layer == 1:
+            self.batch_type = CombinedKVCausalLMBatch
+        else:
+            raise ValueError("Unexpected number of elements in past_key_values cache")
 
     @property
     def batch_type(self) -> Type[CausalLMBatch]:
@@ -601,9 +650,13 @@ class CausalLM(Model):
                 # Trim attention mask and past kvs if we padded to multiple of 8. This is important to be able to
                 # generate up to the model's token limit.
                 batch.attention_mask = batch.attention_mask[:, left_pad:]
-                for key, value in past:
-                    key.data = key.data[..., left_pad:, :] if batch.keys_head_dim_last else key.data[..., left_pad:]
-                    value.data = value.data[..., left_pad:, :]
+                if len(past[0]) == 1:
+                    for cache in past:
+                        cache.data = cache.data[..., left_pad:, :]
+                else:
+                    for key, value in past:
+                        key.data = key.data[..., left_pad:, :] if batch.keys_head_dim_last else key.data[..., left_pad:]
+                        value.data = value.data[..., left_pad:, :]
 
         # Update position ids
         if batch.position_ids is not None:
@@ -623,4 +676,12 @@ class KeysDimTransposedCausalLMBatch(CausalLMBatch):
         batch, errors = super(KeysDimTransposedCausalLMBatch, cls).from_pb(*args, **kwargs)
         if batch is not None:
             batch.keys_head_dim_last = False
+        return batch, errors
+
+class CombinedKVCausalLMBatch(CausalLMBatch):
+    @classmethod
+    def from_pb(cls, *args, **kwargs) -> Tuple[Optional["CausalLMBatch"], List[GenerateError]]:
+        batch, errors = super(CombinedKVCausalLMBatch, cls).from_pb(*args, **kwargs)
+        if batch is not None:
+            batch.merged_kv_cache = True
         return batch, errors

@@ -1,0 +1,259 @@
+# Test empty requests
+- name: Empty 1
+  request: {}
+  response: {}
+- name: Empty 2
+  request:
+    params: {}
+    requests: []
+  response: {}
+
+# Simple
+- name: Simple
+  request:
+    requests:
+      - {"text": "def hello_world():\n"}
+  response:
+    responses:
+      - generatedTokenCount: 14
+        inputTokenCount: 6
+        stopReason: EOS_TOKEN
+        text: "\tprint(\"Hello World!\")\n\nhello_world()\n"
+
+# Basic Greedy (implicit)
+- name: Basic Greedy, max new tokens (implicit)
+  request:
+    requests:
+      - {"text": "'''Implement the class Shape'''\n"}
+  response:
+    responses:
+      - generatedTokenCount: 20
+        inputTokenCount: 7
+        stopReason: MAX_TOKENS
+        text: "\nclass Shape(object):\n    '''Shape class'''\n\n    def __init__(self, x,"
+
+# Basic Greedy (explicit)
+- name: Basic Greedy, max new tokens (implicit)
+  request:
+    params:
+      method: GREEDY
+      stopping: {"maxNewTokens": 24}
+    requests:
+      - {"text": "'''Implement the class Shape'''\n"}
+  response:
+    responses:
+      - generatedTokenCount: 24
+        inputTokenCount: 7
+        stopReason: MAX_TOKENS
+        text: "\nclass Shape(object):\n    '''Shape class'''\n\n    def __init__(self, x, y, z):"
+
+# Multiple inputs with token info
+- name: Multiple inputs with token info
+  request:
+    params:
+      method: GREEDY
+      stopping: {"maxNewTokens": 2}
+      response:
+        generatedTokens: true
+        tokenLogprobs: true
+        topNTokens: 2
+    requests:
+      - {"text": "def hello_world():\n"}
+      - {"text": "def merge_lists("}
+      - {"text": "if __name__ == \""}
+  response:
+    responses:
+      - generatedTokenCount: 2
+        inputTokenCount: 6
+        stopReason: MAX_TOKENS
+        text: "\tprint"
+        tokens:
+        - logprob: -0.08069111
+          text: "\u0109"
+          topTokens:
+          - logprob: -0.08069111
+            text: "\u0109"
+          - logprob: -3.2008388
+            text: '#'
+        - logprob: -0.89866674
+          text: print
+          topTokens:
+          - logprob: -0.89866674
+            text: print
+          - logprob: -1.8317665
+            text: return
+      - generatedTokenCount: 2
+        inputTokenCount: 5
+        stopReason: MAX_TOKENS
+        text: l1
+        tokens:
+        - logprob: -1.9720234
+          text: l
+          topTokens:
+          - logprob: -1.9720234
+            text: l
+          - logprob: -2.3360019
+            text: list
+        - logprob: -0.24351147
+          text: '1'
+          topTokens:
+          - logprob: -0.24351147
+            text: '1'
+          - logprob: -2.4751484
+            text: ','
+      - generatedTokenCount: 2
+        inputTokenCount: 6
+        stopReason: MAX_TOKENS
+        text: 'main":'
+        tokens:
+        - logprob: -1.5838054
+          text: main
+          topTokens:
+          - logprob: -1.5838054
+            text: main
+          - logprob: -3.0222993
+            text: test
+        - logprob: -0.18766436
+          text: '":'
+          topTokens:
+          - logprob: -0.18766436
+            text: '":'
+          - logprob: -2.5319178
+            text: '"'
+
+
+# Prompt prefix
+- name: Greedy with tuned prompt prefix
+  # Prompt prefixes with multi-shard not yet supported
+  singleShardOnly: true
+  request:
+    # Prefix is "def hello_world():\n"
+    prefixId: tiny_starcoder
+    params:
+      method: GREEDY
+    requests:
+      - {"text": "\tprint"}
+  response:
+    responses:
+      - generatedTokenCount: 12
+        inputTokenCount: 2
+        stopReason: EOS_TOKEN
+        text: "(\"Hello World!\")\n\nhello_world()\n"
+
+
+# Prompt prefix returning input and generated tokens
+- name: Greedy with tuned prompt prefix and returned tokens
+  # Prompt prefixes with multi-shard not yet supported
+  singleShardOnly: true
+  request:
+    # Prefix is "def hello_world():\n"
+    prefixId: tiny_starcoder
+    params:
+      method: GREEDY
+      stopping: {"maxNewTokens": 2}
+      response:
+        inputTokens: true
+        generatedTokens: true
+        tokenLogprobs: true
+        tokenRanks: true
+        topNTokens: 2
+    requests:
+      - {"text": "\tprint(\"Hello"}
+  response:
+    responses:
+      - generatedTokenCount: 2
+        inputTokenCount: 4
+        text: ' World!")'
+        stopReason: MAX_TOKENS
+        inputTokens:
+          - logprob: NaN
+            text: <|endoftext|>
+          - logprob: -10.14109
+            rank: 2574
+            text: <|endoftext|>
+            topTokens:
+            - logprob: -3.447822
+              text: "\u0120_"
+            - logprob: -3.672276
+              text: "\u0120__"
+          - logprob: -12.594888
+            rank: 1165
+            text: <|endoftext|>
+            topTokens:
+            - logprob: -1.1129533
+              text: _
+            - logprob: -1.2004529
+              text: (
+          - logprob: -13.206944
+            rank: 4837
+            text: <|endoftext|>
+            topTokens:
+            - logprob: -0.32641557
+              text: world
+            - logprob: -4.8018546
+              text: server
+          - logprob: -11.724733
+            rank: 76
+            text: <|endoftext|>
+            topTokens:
+            - logprob: -0.70839006
+              text: '():'
+            - logprob: -0.9568966
+              text: (
+          - logprob: -11.811299
+            rank: 122
+            text: <|endoftext|>
+            topTokens:
+            - logprob: -0.15292865
+              text: "\u010A\u0120\u0120\u0120"
+            - logprob: -3.31403
+              text: "\u010D\u010A\u0120\u0120\u0120"
+          - logprob: -0.080691434
+            rank: 1
+            text: "\u0109"
+            topTokens:
+            - logprob: -0.080691434
+              text: "\u0109"
+            - logprob: -3.2008343
+              text: '#'
+          - logprob: -0.8986669
+            rank: 1
+            text: print
+            topTokens:
+            - logprob: -0.8986669
+              text: print
+            - logprob: -1.8317685
+              text: return
+          - logprob: -0.67005044
+            rank: 1
+            text: ("
+            topTokens:
+            - logprob: -0.67005044
+              text: ("
+            - logprob: -1.3652618
+              text: ('
+          - logprob: -0.6229511
+            rank: 1
+            text: Hello
+            topTokens:
+            - logprob: -0.6229511
+              text: Hello
+            - logprob: -1.4623008
+              text: hello
+        tokens:
+          - logprob: -0.61369985
+            rank: 1
+            text: "\u0120World"
+            topTokens:
+            - logprob: -0.61369985
+              text: "\u0120World"
+            - logprob: -1.7381792
+              text: ','
+          - logprob: -0.7115159
+            rank: 1
+            text: '!")'
+            topTokens:
+            - logprob: -0.7115159
+              text: '!")'
+            - logprob: -1.0358996
+              text: '")'

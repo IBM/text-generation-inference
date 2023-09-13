@@ -19,6 +19,7 @@ from text_generation_tests.approx import approx
 
 INCLUDE_STREAMING = True
 TESTS_TIMEOUT = 300.0  # 5 mins
+TESTS_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 
 
 def start_server(
@@ -65,6 +66,7 @@ def start_server(
 
     env = os.environ.copy()
     env["RUST_BACKTRACE"] = "full"
+    env["PREFIX_STORE_PATH"] = os.path.join(TESTS_DIR, "prompt_prefixes")
     if not include_cache_env_vars:
         env.pop("TRANSFORMERS_CACHE", None)
         env.pop("HUGGING_FACE_HUB_CACHE", None)
@@ -122,7 +124,7 @@ def server_fixture(request):
 @pytest.fixture
 def test_cases(request):
     filename = request.node.get_closest_marker("test_case_file").args[0]
-    with open(filename) as f:
+    with open(os.path.join(TESTS_DIR, filename)) as f:
         return yaml.load(f, Loader=yaml.Loader)
 
 
@@ -290,7 +292,7 @@ async def run_test_cases_async(test_cases, seq2seq_model=False, sharded=False):
 async def _test_multi_input_seeds(stub):
     # Ensure that sending a batch of identical inputs in sampling mode results
     # in different output seeds and texts
-    with open("test_cases_common.yaml") as f:
+    with open(os.path.join(TESTS_DIR, "test_cases_common.yaml")) as f:
         test_case = yaml.load(f, Loader=yaml.Loader)
         request = test_case["seed_test"]["request"]
         message = json_format.ParseDict(request, pb2.BatchedGenerationRequest())
@@ -325,6 +327,15 @@ async def test_bloom(server_fixture, test_cases):
 @pytest.mark.asyncio
 async def test_mt0(server_fixture, test_cases):
     await run_test_cases_async(test_cases, seq2seq_model=True)
+
+# test with tiny GPTBigCode model for the merged kv cache
+@pytest.mark.model("bigcode/tiny_starcoder_py")
+@pytest.mark.extensions(".safetensors,.json")
+@pytest.mark.shards(1)
+@pytest.mark.test_case_file("test_cases_tinystarcoderpy.yaml")
+@pytest.mark.asyncio
+async def test_gptbigcode(server_fixture, test_cases):
+    await run_test_cases_async(test_cases)
 
 
 # Test distributed inference - two shards
@@ -375,4 +386,3 @@ def event_loop():
         loop = asyncio.new_event_loop()
     yield loop
     loop.close()
-
