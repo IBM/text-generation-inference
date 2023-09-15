@@ -3,7 +3,7 @@ include Makefile-flash-att-v2
 
 gen-server:
 	# Compile protos
-	pip install grpcio-tools==1.57.0 mypy-protobuf==3.4.0 'types-protobuf>=3.20.4' --no-cache-dir
+	pip install grpcio-tools==1.58.0 mypy-protobuf==3.4.0 'types-protobuf>=3.20.4' --no-cache-dir
 	mkdir text_generation_server/pb || true
 	python -m grpc_tools.protoc -I../proto --python_out=text_generation_server/pb \
 		--grpc_python_out=text_generation_server/pb --mypy_out=text_generation_server/pb ../proto/generate.proto
