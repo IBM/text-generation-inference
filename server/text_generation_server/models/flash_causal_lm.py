@@ -107,6 +107,10 @@ class FlashCausalLMBatch(Batch):
 
             tokenized_input = tokenized_input[-input_length:]
 
+            # Fill in bos token in truncation case if needed
+            if r.truncate and getattr(tokenizer, "add_bos_token", False):
+                tokenized_input[0] = tokenizer.bos_token_id
+
             input_lengths.append(input_length)
 
             tokenized_input = torch.tensor(tokenized_input, device=device)
