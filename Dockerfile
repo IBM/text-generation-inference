@@ -253,9 +253,7 @@ COPY --from=flash-att-v2-cache /usr/src/flash-attention-v2/build/lib.linux-x86_6
 # Install server
 COPY proto proto
 COPY server server
-RUN cd server && \
-    make gen-server && \
-    pip install ".[bnb, accelerate, onnx-gpu]" --no-cache-dir
+RUN cd server && make gen-server && pip install ".[accelerate, onnx-gpu]" --no-cache-dir
 
 # Patch codegen model changes into transformers 4.31
 RUN cp server/transformers_patch/modeling_codegen.py \
