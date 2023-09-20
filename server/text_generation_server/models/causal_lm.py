@@ -517,18 +517,16 @@ class CausalLM(Model):
             else:
                 self.tokenizer.add_special_tokens({"pad_token": "[PAD]"})
 
-        # Perform a forward pass to determine the ordering of past key attention tensor dimensions
+        # Perform a forward pass to determine the structure of the past_key_values
         one_token = torch.tensor([[1]], device=inference_engine.get_device())
         _, past_key_values, _ = self.forward(input_ids=one_token, attention_mask=one_token)
-        pkv_tensors_per_layer = len(past_key_values[0])
-        if pkv_tensors_per_layer == 2:
+        if torch.is_tensor(past_key_values[0]):
+            self.batch_type = CombinedKVCausalLMBatch
+        else:
+            # check the ordering of the key tensor dimensions
             key_past, value_past = past_key_values[0]
             keys_head_dim_last = key_past.shape[-1] == value_past.shape[-1]
             self.batch_type = CausalLMBatch if keys_head_dim_last else KeysDimTransposedCausalLMBatch
-        elif pkv_tensors_per_layer == 1:
-            self.batch_type = CombinedKVCausalLMBatch
-        else:
-            raise ValueError("Unexpected number of elements in past_key_values cache")
 
     @property
     def batch_type(self) -> Type[CausalLMBatch]:
@@ -658,7 +656,8 @@ class CausalLM(Model):
                 # Trim attention mask and past kvs if we padded to multiple of 8. This is important to be able to
                 # generate up to the model's token limit.
                 batch.attention_mask = batch.attention_mask[:, left_pad:]
-                if len(past[0]) == 1:
+                # For a combined KV cache, past is a list of Tensors, not Tuples
+                if torch.is_tensor(past[0]):
                     for cache in past:
                         cache.data = cache.data[..., left_pad:, :]
                 else:
