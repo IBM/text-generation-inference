@@ -150,6 +150,18 @@ class Seq2SeqLMBatch(Batch):
         input_ids = tokenized_inputs["input_ids"]
         attention_mask = tokenized_inputs["attention_mask"]
 
+        # Mask out truncated tokens
+        # (input_texts aren't truncated, only input_lengths are)
+        if truncate_indices:
+            add_bos_token = getattr(tokenizer, "add_bos_token", False)
+            for i in truncate_indices:
+                orig_input_length = requests[i].input_length
+                attention_mask[i, :-orig_input_length] = 0
+                input_ids[i, :-orig_input_length] = tokenizer.pad_token_id
+                if add_bos_token:
+                    # Ensure that first non-virtual token is set to BOS
+                    input_ids[i, -orig_input_length] = tokenizer.bos_token_id
+
         if encoder_prefix_ids:
             # Get input embeddings
             inputs_embeds = embeddings_lookup(input_ids)
@@ -162,23 +174,6 @@ class Seq2SeqLMBatch(Batch):
                 attention_mask[i, -input_length:] = 1
         else:
             inputs_embeds = None
-
-        # Mask out truncated tokens
-        # (input_texts aren't truncated, only input_lengths are)
-        if truncate_indices:
-            for i in truncate_indices:
-                add_bos_token = getattr(tokenizer, "add_bos_token", False)
-                input_length = input_lengths[i]
-                attention_mask[i, :-input_length] = 0
-                input_ids[i, :-input_length] = tokenizer.pad_token_id
-                if add_bos_token:
-                    input_ids[i, -input_length] = tokenizer.bos_token_id
-                if inputs_embeds is not None:
-                    inputs_embeds[i, :-input_length, :] = 0
-                    if add_bos_token:
-                        p = encoder_prefix_ids.get(i)
-                        orig_length = input_length if p is None else input_length - p.shape[0]
-                        inputs_embeds[i, -orig_length] = prefix_cache.bos_embedding
 
         if decoder_prefix_ids:
             # Construct decoder embeddings and attention mask

@@ -150,18 +150,15 @@ class PrefixCache:
         max_length: int,
         encoder_decoder: bool,
         decoder_start_tok_embedding: torch.Tensor,
-        bos_embedding: torch.Tensor,
     ):
         self.max_length = max_length
         self.embed_size = decoder_start_tok_embedding.shape[1] \
-            if decoder_start_tok_embedding is not None else \
-            (bos_embedding.shape[1] if bos_embedding is not None else None)
+            if decoder_start_tok_embedding is not None else None
         self.device: torch.device = device
         self.dtype = dtype
 
         self.is_encoder_decoder = encoder_decoder
         self.decoder_start_tok_embedding = decoder_start_tok_embedding
-        self.bos_embedding = bos_embedding
 
         self.cache_map: Dict[str, PromptCacheNode] = {}
         self.cache_dll: DoublyLinkedList = DoublyLinkedList()

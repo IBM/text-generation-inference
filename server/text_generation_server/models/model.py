@@ -48,10 +48,9 @@ class Model(ABC):
 
         if prompt_prefix_supported:
             # Set up prefix cache
-            bos_token_id = getattr(self.tokenizer, "bos_token_id", None)
             decoder_start_token_id = self.model.config.decoder_start_token_id
             if decoder_start_token_id is None:
-                decoder_start_token_id = bos_token_id
+                decoder_start_token_id = self.tokenizer.bos_token_id
             self.prefix_cache = PrefixCache(
                 device=self.device,
                 dtype=dtype,
@@ -60,9 +59,6 @@ class Model(ABC):
                 decoder_start_tok_embedding=self.word_embeddings(
                     torch.tensor([decoder_start_token_id], device=self.device, dtype=torch.long)
                 ) if decoder_start_token_id is not None else None,
-                bos_embedding=self.word_embeddings(
-                    torch.tensor([bos_token_id], device=self.device, dtype=torch.long)
-                ) if bos_token_id is not None else None,
             )
         else:
             self.prefix_cache = None

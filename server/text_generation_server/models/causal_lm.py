@@ -140,6 +140,18 @@ class CausalLMBatch(Batch):
         # Copy tokenizer attention_mask into fully allocated attention_mask
         attention_mask[:, :tokenize_length] = tokenized_inputs["attention_mask"]
 
+        # Mask out truncated tokens
+        # (input_texts aren't truncated, only input_lengths are)
+        if truncate_indices:
+            add_bos_token = getattr(tokenizer, "add_bos_token", False)
+            for i in truncate_indices:
+                orig_input_length = requests[i].input_length
+                attention_mask[i, :-orig_input_length-padding_right_offset] = 0
+                all_input_ids[i, :-orig_input_length] = tokenizer.pad_token_id
+                if add_bos_token:
+                    # Ensure that first non-virtual token is set to BOS
+                    all_input_ids[i, -orig_input_length] = tokenizer.bos_token_id
+
         if prefix_ids:
             # Get input embeddings
             inputs_embeds = embeddings_lookup(all_input_ids)
@@ -154,24 +166,6 @@ class CausalLMBatch(Batch):
         else:
             input_ids = all_input_ids
             inputs_embeds = None
-
-        # Mask out truncated tokens
-        # (input_texts aren't truncated, only input_lengths are)
-        if truncate_indices:
-            add_bos_token = getattr(tokenizer, "add_bos_token", False)
-            for i in truncate_indices:
-                input_length = input_lengths[i]
-                attention_mask[i, :-input_length-padding_right_offset] = 0
-                if inputs_embeds is not None:
-                    inputs_embeds[i, :-input_length, :] = 0
-                    if add_bos_token:
-                        p = prefix_ids.get(i)
-                        orig_length = input_length if p is None else input_length - p.shape[0]
-                        inputs_embeds[i, -orig_length] = prefix_cache.bos_embedding
-                else:
-                    input_ids[i, :-input_length] = tokenizer.pad_token_id
-                    if add_bos_token:
-                        input_ids[i, -input_length] = tokenizer.bos_token_id
 
         if use_position_ids:
             # Fix up position ids
