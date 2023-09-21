@@ -31,8 +31,12 @@ class FlashCausalLMBatch(Batch):
     requests: List[generate_pb2.Request]
 
     # Decoder values
+    # tensors have sequences from the batch concatenated
+    # shape is [sum(seq_lengths)]
     input_ids: torch.Tensor
     position_ids: torch.Tensor
+    # shape is [sum(seq_lengths), embedding_size]
+    inputs_embeds: torch.Tensor
     # cumulative sequence lengths
     cu_seqlens: torch.Tensor
     # cumulative query sequence lengths, only used in decode
@@ -68,77 +72,97 @@ class FlashCausalLMBatch(Batch):
     ) -> Tuple[Optional["FlashCausalLMBatch"], List[GenerateError]]:
         errors = []
         batch_inputs = []
-        max_seqlen = 0
-        for r in pb.requests:
-            if r.prefix_id:
-                message = f"Prompt prefixes not yet supported with flash attention (request #{r.id})"
-                logging.error(message)
-                # Exclude this request from the batch, return an error
-                errors.append(GenerateError(request_id=r.id, message=message))
-                continue
-            batch_inputs.append(r.inputs)
-            max_seqlen = max(max_seqlen, r.input_length)
+        requests = pb.requests
 
+        # track indices of valid requests that have prefixes
+        i = 0
+        prefix_ids = {}
+        # compute sequence lengths in this loop too
+        #  if there is a prefix, input_lengths will include its length
+        input_lengths = []
+        max_seqlen = 0
+        # Cumulative length
+        cu_seqlens = [0]
+        cumulative_length = 0
+        for r in requests:
+            input_length = r.input_length
+            # TODO: Also fail depending on the model type for ones that don't
+            # have input_embeds implemented?
+            if r.prefix_id:
+                try:
+                    prefix_embeds = prefix_cache.get(r.prefix_id)
+                except Exception:
+                    message = f"Prefix lookup error for request #{r.id}, prefix id {r.prefix_id}"
+                    logging.error(message)
+                    # Exclude this request from the batch, return an error
+                    errors.append(GenerateError(request_id=r.id, message=message))
+                    continue
+                prefix_ids[i] = prefix_embeds
+                input_length += prefix_embeds.shape[0]
+            batch_inputs.append(r.inputs)
+            input_lengths.append(input_length)
+            max_seqlen = max(max_seqlen, input_length)
+            cumulative_length += input_length
+            cu_seqlens.append(cumulative_length)
+            i += 1
+
+        # remove errored requests
         if errors:
             requests = [r for r in pb.requests if not any(r.id == er.request_id for er in errors)]
+            # early exit if no requests are valid
             if not requests:
                 return None, errors
 
+        # return as lists to avoid unnecessary padding;
+        # sequences will be concatenated across the batch
         batch_tokenized_inputs = tokenizer(
             batch_inputs, truncation=True, max_length=max_seqlen, return_token_type_ids=False
         )["input_ids"]
 
+        # Process inputs to generate the needed tensors
         input_ids = []
         position_ids = []
-        cu_seqlens = [0]
-
-        input_lengths = []
         all_input_ids_tensor = []
-
         next_token_choosers = []
-
-        # Cumulative length
-        cumulative_length = 0
-
-        # Parse batch
-        requests = pb.requests
-        for r, tokenized_input in zip(requests, batch_tokenized_inputs):
-            input_length = r.input_length
-
-            tokenized_input = tokenized_input[-input_length:]
-
-            # Fill in bos token in truncation case if needed
-            if r.truncate and getattr(tokenizer, "add_bos_token", False):
-                tokenized_input[0] = tokenizer.bos_token_id
-
-            input_lengths.append(input_length)
-
+        for r, tokenized_input, input_length in zip(requests, batch_tokenized_inputs, input_lengths):
+            if r.truncate:
+                tokenized_input = tokenized_input[-r.input_length:]
+                # Fill in bos token in truncation case if needed
+                if getattr(tokenizer, "add_bos_token", False):
+                    tokenized_input[0] = tokenizer.bos_token_id
             tokenized_input = torch.tensor(tokenized_input, device=device)
-            input_ids.append(tokenized_input)
-
-            # Position ids
-            position_ids.append(torch.arange(0, input_length, dtype=torch.int32))
-
-            # Add cumulative lengths of all previous inputs
-            cu_seqlens.append(cumulative_length + input_length)
-
+            # LHS pad for prefix, if it exists; RHS pad to max output
+            padded_input_ids = F.pad(tokenized_input, (input_length - r.input_length, r.max_output_length))
+            all_input_ids_tensor.append(padded_input_ids)
+            # input_ids needs prefix padding but not output padding
+            input_ids.append(tokenized_input if input_length == r.input_length else padded_input_ids[:input_length])
             next_token_choosers.append(
                 NextTokenChooser.from_pb(r.parameters, r.details.logprobs, tokenizer, device)
             )
-            all_input_ids_tensor.append(F.pad(tokenized_input, (0, r.max_output_length)))
-
-            cumulative_length += input_length
-
+            position_ids.append(torch.arange(0, input_length, dtype=torch.int32))
         input_ids = torch.cat(input_ids)
-        position_ids = torch.cat(position_ids).to(device, non_blocking=True)
-        cu_seqlens = torch.tensor(cu_seqlens, dtype=torch.int32, device=device)
+
+        # convert all requests to embeddings if any request has a prefix_id
+        if prefix_ids:
+            # TODO: Handle TP distributed embeddings layer
+            inputs_embeds = embeddings_lookup(input_ids)
+            input_ids = None
+            # fill in the prefix embeddings into the space that we already
+            # allocated due to the padding in input_ids
+            for i, p in prefix_ids.items():
+                start = cu_seqlens[i]
+                prefix_length = p.shape[0]
+                inputs_embeds[start:start+prefix_length, :] = p
+        else:
+            inputs_embeds = None
 
         return cls(
             batch_id=pb.id,
             requests=requests,
             input_ids=input_ids,
-            position_ids=position_ids,
-            cu_seqlens=cu_seqlens,
+            inputs_embeds=inputs_embeds,
+            position_ids=torch.cat(position_ids).to(device, non_blocking=True),
+            cu_seqlens=torch.tensor(cu_seqlens, dtype=torch.int32, device=device),
             cu_seqlens_q=None,
             max_seqlen=max_seqlen,
             past_key_values=None,
@@ -195,6 +219,7 @@ class FlashCausalLMBatch(Batch):
             batch_id=batches[0].batch_id,
             requests=requests,
             input_ids=torch.cat(input_ids),
+            inputs_embeds=None,
             position_ids=torch.cat(position_ids),
             cu_seqlens=torch.cat(cu_seqlens),
             cu_seqlens_q=torch.arange(len(requests) + 1, device=device, dtype=torch.int32),
@@ -345,6 +370,7 @@ class FlashCausalLM(Model):
             batch.cu_seqlens,
             batch.cu_seqlens_q,
             batch.max_seqlen,
+            batch.inputs_embeds,
             past_key_values,
             prealloc_length,
         )
@@ -410,6 +436,7 @@ class FlashCausalLM(Model):
         # Create final next batch tensors
         batch.input_ids = torch.cat(next_batch_input_ids) \
             if batch_size > 1 else next_batch_input_ids[0].view(1)
+        batch.inputs_embeds = None
 
         batch.cu_seqlens_q = torch.arange(
             batch_size + 1, device=self.device, dtype=torch.int32

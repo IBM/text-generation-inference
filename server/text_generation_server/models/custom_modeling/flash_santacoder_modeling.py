@@ -327,10 +327,20 @@ class FlashSantacoderModel(nn.Module):
         cu_seqlens,
         cu_seqlens_q,
         max_s,
+        inputs_embeds: Optional[torch.Tensor] = None,
         past_key_values: Optional[torch.Tensor] = None,
         pre_allocate_past_size: Optional[int] = None,
     ):
-        hidden_states = self.wte(input_ids) + self.wpe(position_ids)
+        if input_ids is not None and inputs_embeds is not None:
+            raise ValueError(
+                "You cannot specify both input_ids and inputs_embeds at the same time"
+            )
+
+        if inputs_embeds is not None:
+            hidden_states = inputs_embeds + self.wpe(position_ids)
+            # TODO: support TP for the position embeddings
+        else:
+            hidden_states = self.wte(input_ids) + self.wpe(position_ids)
 
         if self.process_group.size() > 1:
             torch.distributed.all_reduce(hidden_states, group=self.process_group)
@@ -396,6 +406,7 @@ class FlashSantacoderForCausalLM(nn.Module):
         cu_seqlens,
         cu_seqlens_q,
         max_s,
+        inputs_embeds: Optional[torch.Tensor] = None,
         past_key_values: Optional[torch.Tensor] = None,
         pre_allocate_past_size: Optional[int] = None,
         lm_head_indices: Optional[torch.Tensor] = None,
@@ -406,6 +417,7 @@ class FlashSantacoderForCausalLM(nn.Module):
             cu_seqlens,
             cu_seqlens_q,
             max_s,
+            inputs_embeds,
             past_key_values,
             pre_allocate_past_size,
         )

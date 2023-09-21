@@ -152,6 +152,11 @@ class Model(ABC):
         return next_batch_keep_indices
 
     def _setup_prompt_encoder(self) -> bool:
+        # this is the most common name for the word embedding module for transformers models
+        if hasattr(self.model, 'transformer') and hasattr(self.model.transformer, 'wte'):
+            self.word_embeddings = self.model.transformer.wte
+            return True
+
         vocab_size = getattr(self.model.config, "vocab_size", None)
 
         if vocab_size is not None and hasattr(self.model, "named_children"):
