@@ -267,7 +267,7 @@ impl<B: BatchType> Queue<B> {
             );
 
             // Avoid more granular analysis if possible
-            if <B>::batch_max_weight(&batch_stats, total_count + 1) > config.weight_limit {
+            if <B>::batch_max_weight(&next_stats, total_count + 1) > config.weight_limit {
                 // We aren't sure whether this next request will fit, so populate
                 // a btree with the current batch of requests, the set of
                 // requests already evaluated, and this one, and perform more
