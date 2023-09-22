@@ -634,10 +634,14 @@ class FlashRWForCausalLM(FlashRWPreTrainedModel):
         cu_seqlens,
         cu_seqlens_q,
         max_s,
+        inputs_embeds: Optional[torch.Tensor] = None,
         past_key_values: Optional[torch.Tensor] = None,
         pre_allocate_past_size: Optional[int] = None,
         lm_head_indices: Optional[torch.Tensor] = None,
     ):
+        if inputs_embeds is not None:
+            raise ValueError("input_embeds not yet supported for flash rw (falcon)")
+
         hidden_states, present = self.transformer(
             input_ids,
             position_ids,

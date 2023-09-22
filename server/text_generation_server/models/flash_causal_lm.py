@@ -36,7 +36,7 @@ class FlashCausalLMBatch(Batch):
     input_ids: torch.Tensor
     position_ids: torch.Tensor
     # shape is [sum(seq_lengths), embedding_size]
-    inputs_embeds: torch.Tensor
+    inputs_embeds: Optional[torch.Tensor]
     # cumulative sequence lengths
     cu_seqlens: torch.Tensor
     # cumulative query sequence lengths, only used in decode

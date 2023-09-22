@@ -398,10 +398,14 @@ class FlashGPTNeoXForCausalLM(FlashGPTNeoXPreTrainedModel):
         cu_seqlens,
         cu_seqlens_q,
         max_s,
+        inputs_embeds: Optional[torch.Tensor] = None,
         past_key_values: Optional[torch.Tensor] = None,
         pre_allocate_past_size: Optional[int] = None,
         lm_head_indices: Optional[torch.Tensor] = None,
     ):
+        if inputs_embeds is not None:
+            raise ValueError("input_embeds not yet supported for flash neox")
+
         hidden_states, present = self.gpt_neox(
             input_ids,
             position_ids,
