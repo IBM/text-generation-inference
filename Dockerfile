@@ -88,7 +88,7 @@ ENV LIBRARY_PATH="$CUDA_HOME/lib64/stubs"
 
 ## Rust builder ################################################################
 # Specific debian version so that compatible glibc version is used
-FROM rust:1.72-bullseye as rust-builder
+FROM rust:1.72.1-bullseye as rust-builder
 ARG PROTOC_VERSION
 
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
@@ -255,7 +255,7 @@ COPY proto proto
 COPY server server
 RUN cd server && make gen-server && pip install ".[accelerate, onnx-gpu]" --no-cache-dir
 
-# Patch codegen model changes into transformers 4.31
+# Patch codegen model changes into transformers 4.33.2
 RUN cp server/transformers_patch/modeling_codegen.py \
        /opt/miniconda/lib/python3.*/site-packages/transformers/models/codegen/modeling_codegen.py
 
