@@ -207,20 +207,20 @@ class PrefixCache:
             Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]
                 Loaded encoder / decoder prompt tensor for the model under consideration.
         """
-        decoder_prefix = self._load_embedding_tensor(prefix_id, "decoder.pt")
+        decoder_prefix = self._load_embedding_tensor(prefix_id, "decoder.pt", dtype=self.dtype)
         # For encoder-decoder we store a tuple of (encoder_prefix, decoder_prefix),
         # at least one must be non-None
         if self.is_encoder_decoder:
-            encoder_prefix = self._load_embedding_tensor(prefix_id, "encoder.pt")
+            encoder_prefix = self._load_embedding_tensor(prefix_id, "encoder.pt", dtype=self.dtype)
             if decoder_prefix is None:
                 if encoder_prefix is None:
                     raise PrefixNotFound(f"Prefix id {prefix_id} not found")
             else:
                 # TODO confirm this cat is correct
                 decoder_prefix = torch.cat((decoder_prefix, self.decoder_start_tok_embedding))
-                decoder_prefix = decoder_prefix.to(self.dtype).to(self.device, non_blocking=True)
+                decoder_prefix = decoder_prefix.to(self.device, non_blocking=True)
             if encoder_prefix is not None:
-                encoder_prefix = encoder_prefix.to(self.dtype).to(self.device, non_blocking=True)
+                encoder_prefix = encoder_prefix.to(self.device, non_blocking=True)
             prefix = encoder_prefix, decoder_prefix
         # For decoder-only we store just the decoder prefix
         elif decoder_prefix is None:
@@ -229,7 +229,7 @@ class PrefixCache:
             prefix = decoder_prefix.to(self.dtype).to(self.device, non_blocking=True)
         return prefix
 
-    def _load_embedding_tensor(self, prefix_id: str, filename: str) -> torch.Tensor:
+    def _load_embedding_tensor(self, prefix_id: str, filename: str, dtype: torch.dtype) -> torch.Tensor:
         """Load an embedding tensor from a single file.
 
         Args:
@@ -264,9 +264,18 @@ class PrefixCache:
             raise Exception(
                 f"Prefix embedding tensor dim {prefix.shape[1]} does not match model ({self.embed_size})"
             )
+        # convert to the desired dtype
+        converted_prefix = prefix.to(dtype)
+        # detect if we have non-finite elements after the conversion that will
+        # cause problems for inference
+        if not converted_prefix.isfinite().all():
+            # check if the problem was in the pre-converted tensor
+            if not prefix.isfinite().all():
+                raise Exception(f"Prefix contains non-finite elements")
+            raise Exception(f"Prefix contains non-finite elements after conversion from {prefix.dtype} to {dtype}")
 
-        prefix.requires_grad = False
-        return prefix
+        converted_prefix.requires_grad = False
+        return converted_prefix
 
     def _add_prefix_id_to_cache(
         self,

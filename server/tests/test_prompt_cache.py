@@ -20,7 +20,7 @@ def temp_prompt_cache():
     return prompt_cache.PrefixCache(
         device=DEVICE,
         dtype=torch.float32,
-        max_length=256,
+        max_length=8,
         encoder_decoder=False,
         decoder_start_tok_embedding=None
     )
@@ -264,3 +264,72 @@ def test_get_cache_len(mock_load_tensors, temp_prompt_cache):
     temp_prompt_cache.get("prompt1")
     temp_prompt_cache.get("prompt2")
     assert len(temp_prompt_cache) == 2
+
+### Test cases for invalid prompts
+@patch("pathlib.Path.is_file")
+def test_prompt_not_exist(mock_is_file, temp_prompt_cache):
+    mock_is_file.return_value = False
+    with pytest.raises(Exception):
+        temp_prompt_cache.get("bad_prompt")
+    assert len(temp_prompt_cache) == 0
+
+@patch("torch.load")
+@patch("pathlib.Path.is_file")
+def test_prompt_with_wrong_dims(mock_is_file, mock_torch_load, temp_prompt_cache):
+    mock_is_file.return_value = True
+
+    # one dimension is not enough
+    mock_torch_load.return_value = torch.ones((3))
+    with pytest.raises(Exception):
+        temp_prompt_cache.get("bad_prompt")
+    assert len(temp_prompt_cache) == 0
+
+    # three dimensions is too many
+    mock_torch_load.return_value = torch.ones((3, 3, 3))
+    with pytest.raises(Exception):
+        temp_prompt_cache.get("bad_prompt")
+    assert len(temp_prompt_cache) == 0
+
+@patch("torch.load")
+@patch("pathlib.Path.is_file")
+def test_prompt_too_many_virtual_tokens(mock_is_file, mock_torch_load, temp_prompt_cache):
+    mock_is_file.return_value = True
+
+    mock_torch_load.return_value = torch.ones((9,16))
+    with pytest.raises(Exception):
+        temp_prompt_cache.get("bad_prompt")
+    assert len(temp_prompt_cache) == 0
+
+@patch("torch.load")
+@patch("pathlib.Path.is_file")
+def test_prompt_wrong_embed_size(mock_is_file, mock_torch_load, temp_prompt_cache):
+    mock_is_file.return_value = True
+    # set embed_size to 16
+    temp_prompt_cache.embed_size = 16
+    mock_torch_load.return_value = torch.ones((1,15))
+    with pytest.raises(Exception):
+        temp_prompt_cache.get("bad_prompt")
+    assert len(temp_prompt_cache) == 0
+
+@patch("torch.load")
+@patch("pathlib.Path.is_file")
+def test_prompt_with_infinite_after_conversion(mock_is_file, mock_torch_load, temp_prompt_cache):
+    mock_is_file.return_value = True
+    bad_tensor = torch.ones((3,3), dtype=torch.float64)
+    bad_tensor[1, 1] = torch.finfo(torch.float64).max
+    mock_torch_load.return_value = bad_tensor
+    with pytest.raises(Exception) as e:
+        temp_prompt_cache.get("bad_prompt")
+    assert e.match("torch.float64 to torch.float32")
+    assert len(temp_prompt_cache) == 0
+
+@patch("torch.load")
+@patch("pathlib.Path.is_file")
+def test_prompt_with_nan(mock_is_file, mock_torch_load, temp_prompt_cache):
+    mock_is_file.return_value = True
+    bad_tensor = torch.ones((3,3), dtype=torch.float16)
+    bad_tensor[1, 1] = torch.nan
+    mock_torch_load.return_value = bad_tensor
+    with pytest.raises(Exception):
+        temp_prompt_cache.get("bad_prompt")
+    assert len(temp_prompt_cache) == 0
