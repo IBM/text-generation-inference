@@ -15,6 +15,19 @@ else:
     DEVICE = None
 
 @pytest.fixture()
+def temp_prompt_cache_enc_dec_meta():
+    """Build an empty prompt cache for an encoder-decoder model with the 'meta'
+        device."""
+    dtype = torch.float16
+    return prompt_cache.PrefixCache(
+        device='meta',
+        dtype=dtype,
+        max_length=16,
+        encoder_decoder=True,
+        decoder_start_tok_embedding=torch.rand((1, 8), dtype=dtype, device='meta')
+    )
+
+@pytest.fixture()
 def temp_prompt_cache():
     """Build an empty prompt cache that we can test with."""
     return prompt_cache.PrefixCache(
@@ -165,6 +178,7 @@ def test_thread_lock_manager():
 ### Tests for prompt cache node objects
 def test_prompt_cache_node_tensor():
     """Verify that our tensor size estimation is correct for a single tensor prompt."""
+    gc.collect()
     initial_memory = torch.cuda.memory_allocated() if torch.cuda.is_available() else None
     node = prompt_cache.PromptCacheNode(torch.ones((3, 3)), prefix_id="1")
     expected_memory_allocation = 512 # measured in bytes
@@ -175,6 +189,7 @@ def test_prompt_cache_node_tensor():
 
 def test_prompt_cache_node_tuple_all_tensors():
     """Verify that our tensor size estimation is correct for a multitensor prompt."""
+    gc.collect()
     initial_memory = torch.cuda.memory_allocated() if torch.cuda.is_available() else None
     node = prompt_cache.PromptCacheNode((torch.ones((3, 3)), torch.ones((3, 3)),), prefix_id="1")
     expected_memory_allocation = 1024 # measured in bytes
@@ -185,6 +200,7 @@ def test_prompt_cache_node_tuple_all_tensors():
 
 def test_prompt_cache_node_tuple_with_one_tensor():
     """Ensure our tensor size estimation is correct if we have a None in our prompt tuple."""
+    gc.collect()
     initial_memory = torch.cuda.memory_allocated() if torch.cuda.is_available() else None
     node = prompt_cache.PromptCacheNode((torch.ones((3, 3)), None,), prefix_id="1")
     expected_memory_allocation = 512 # measured in bytes
@@ -264,6 +280,15 @@ def test_get_cache_len(mock_load_tensors, temp_prompt_cache):
     temp_prompt_cache.get("prompt1")
     temp_prompt_cache.get("prompt2")
     assert len(temp_prompt_cache) == 2
+
+### Test code paths for encoder decoder model
+# TODO: add more tests here!
+@patch("text_generation_server.prompt_cache.PrefixCache._load_embedding_tensor")
+def test_prompt_model_device_diff(mock_load, temp_prompt_cache_enc_dec_meta):
+    # create prefix tensor on CPU which should be converted to the 'meta' device
+    # before the decoder_start_tok_embedding is added to it
+    mock_load.return_value = torch.ones((3,8), device='cpu')
+    temp_prompt_cache_enc_dec_meta.get("bad_prompt")
 
 ### Test cases for invalid prompts
 @patch("pathlib.Path.is_file")

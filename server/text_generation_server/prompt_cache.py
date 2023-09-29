@@ -216,9 +216,9 @@ class PrefixCache:
                 if encoder_prefix is None:
                     raise PrefixNotFound(f"Prefix id {prefix_id} not found")
             else:
+                decoder_prefix = decoder_prefix.to(self.device, non_blocking=True)
                 # TODO confirm this cat is correct
                 decoder_prefix = torch.cat((decoder_prefix, self.decoder_start_tok_embedding))
-                decoder_prefix = decoder_prefix.to(self.device, non_blocking=True)
             if encoder_prefix is not None:
                 encoder_prefix = encoder_prefix.to(self.device, non_blocking=True)
             prefix = encoder_prefix, decoder_prefix
