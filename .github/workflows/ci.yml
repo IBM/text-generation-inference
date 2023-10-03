@@ -2,9 +2,11 @@
 #   gh actions-importer dry-run travis-ci --source-file-path .travis.yml -o .github/workflows -r ibm/text-generation-inference
 name: CI
 on:
+  workflow_dispatch:
   push:
     branches:
-    - "!/^[0-9a-z]{7}$/"
+      - main
+
 jobs:
   test:
     runs-on: ubuntu-latest
