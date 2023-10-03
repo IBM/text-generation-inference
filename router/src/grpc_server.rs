@@ -423,7 +423,7 @@ fn convert_params(params: Option<Parameters>) -> Result<GenerateParameters, Vali
                     gp.temperature = s.temperature;
                     gp.top_k = s.top_k as i32;
                     if s.top_p != 0.0 { gp.top_p = s.top_p }
-                    gp.typical_p = s.typical_p;
+                    if s.typical_p != 0.0 { gp.typical_p = s.typical_p }
                     gp.seed = s.seed;
                 }
                 if gp.temperature == 0.0 {
@@ -431,7 +431,8 @@ fn convert_params(params: Option<Parameters>) -> Result<GenerateParameters, Vali
                 }
             } else if STRICT_PARAMETER_VALIDATION {
                 if let Some(s) = p.sampling {
-                    if s.temperature != 0.0 || s.top_p != 0.0 || s.top_k != 0 || s.seed.is_some() {
+                    if s.temperature != 0.0 || s.top_p != 0.0 || s.typical_p != 0.0
+                        || s.top_k != 0 || s.seed.is_some() {
                         return Err(ValidationError::SampleParametersGreedy)
                     }
                 }
