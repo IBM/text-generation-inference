@@ -45,13 +45,13 @@ class PromptCacheNode:
         ) -> None:
         self.prefix_id = prefix_id
         self.prompt = prompt
-        self.prompt_size_mb = PromptCacheNode._get_prompt_size_mb(prompt)
+        self.prompt_virtual_tokens, self.prompt_size_mb = PromptCacheNode._get_prompt_stats(prompt)
         self.next = next
         self.prev = prev
 
     @staticmethod
-    def _get_prompt_size_mb(prompt: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]) -> int:
-        """Get the memory size of a prompt. Note that we round up to the nearest
+    def _get_prompt_stats(prompt: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]) -> Tuple[int, int]:
+        """Get the number of virtual tokens and memory size of a prompt. Note that we round up to the nearest
         increment of 512.
 
         Args:
@@ -59,20 +59,20 @@ class PromptCacheNode:
                 Prompt tuple/tensor we want to take the size of.
         
         Return:
-            Prompt size in Mb.
+            (prompt virtual token count, prompt size in MiB)
         """
         # In some cases, we may have None, e.g., an encoder / decoder
         # where we don't have prompts to inject for both components
         if prompt is None:
-            return 0
+            return 0, 0
         # We either have a Tensor or an iterable of tensors; if it's not
         # a tensor, take the size of all contained tensor objects.
         elif not isinstance(prompt, torch.Tensor):
-            return sum(map(PromptCacheNode._get_prompt_size_mb, prompt))
+            return tuple(sum(x) for x in zip(*map(PromptCacheNode._get_prompt_stats, prompt)))
         # Otherwise it's a tensor; round up to nearest 512 increment & convert to mb.
         # See: https://discuss.pytorch.org/t/how-to-know-the-memory-allocated-for-a-tensor-on-gpu/28537/15
         raw_size = prompt.element_size() * prompt.nelement()
-        return (math.ceil(raw_size / 512) * 512) / (1024 ** 2)
+        return prompt.shape[0], (math.ceil(raw_size / 512) * 512) / (1024 ** 2)
 
 
 class DoublyLinkedList:
@@ -299,6 +299,8 @@ class PrefixCache:
         new_cache_node = PromptCacheNode(prompt=prefix, prefix_id=prefix_id)
         del_tensors = {}
 
+        new_prompt_virtual_tokens = new_cache_node.prompt_virtual_tokens
+        new_prompt_size_mb = new_cache_node.prompt_size_mb
         with self.requires_lock:
             # If we already have it, return the node in the cache.
             # This will release the tensor we just loaded.
@@ -309,7 +311,7 @@ class PrefixCache:
             if new_cache_node.prompt_size_mb > PROMPT_CACHE_SIZE_MB:
                 raise ValueError(f"Prefix ID object {prefix_id} exceeds the allowed cache size")
 
-            while self.cache_size_mb + new_cache_node.prompt_size_mb > PROMPT_CACHE_SIZE_MB:
+            while self.cache_size_mb + new_prompt_size_mb > PROMPT_CACHE_SIZE_MB:
                 # Hold a reference to the set of things to be deallocated until we're out of the
                 # critical section; then, we can handle the cache keys in a thread safe way
                 # without deallocating our tensors in it.
@@ -322,10 +324,15 @@ class PrefixCache:
                 self.cache_size_mb -= del_node.prompt_size_mb
             self.cache_dll.add_node_as_head(new_cache_node)
             self.cache_map[prefix_id] = new_cache_node
-            self.cache_size_mb += new_cache_node.prompt_size_mb
-        logger.info(f"Added prefix {prefix_id} to the prompt cache")
+            self.cache_size_mb += new_prompt_size_mb
+            cache_size_mb = self.cache_size_mb
         if del_tensors:
             logger.info(f"Deleted prefixes {list(del_tensors.keys())} from the prompt cache")
+
+        logger.info(
+            f"Added prefix {prefix_id} to the prompt cache, has {new_prompt_virtual_tokens} virtual tokens"
+            f", size {new_prompt_size_mb:.3f}MiB, total cache size is now {cache_size_mb:.2f}MiB"
+        )
         return new_cache_node
 
     def _get_from_cache(self, prefix_id: str) -> PromptCacheNode:

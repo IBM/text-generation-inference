@@ -90,6 +90,7 @@ impl GenerationService for GenerationServicer {
         skip_all,
         fields(
             input=?request.get_ref().requests.iter().map(|r| truncate(&r.text, 32)).collect::<Vec<Cow<'_,str>>>(),
+            prefix_id=?request.get_ref().prefix_id,
             correlation_id=?request.metadata().get("x-correlation-id").map(|mv| mv.to_str().unwrap_or("<non-ascii>")).unwrap_or("<none>"),
             input_bytes=?request.get_ref().requests.iter().map(|r| r.text.len()).collect::<Vec<usize>>(),
             params=?request.get_ref().params,
@@ -171,6 +172,7 @@ impl GenerationService for GenerationServicer {
         skip_all,
         fields(
             input=?truncate(&request.get_ref().request.as_ref().map(|r| &*r.text).unwrap_or(""), 32),
+            prefix_id=?request.get_ref().prefix_id,
             correlation_id=?request.metadata().get("x-correlation-id").map(|mv| mv.to_str().unwrap_or("<non-ascii>")).unwrap_or("<none>"),
             input_bytes=?request.get_ref().request.as_ref().map(|r| r.text.len()).unwrap_or(0),
             params=?request.get_ref().params,
