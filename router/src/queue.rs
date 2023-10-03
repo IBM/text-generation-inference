@@ -411,9 +411,8 @@ impl From<&GenerateParameters> for NextTokenChooserParameters {
                 theta => Some(theta),
             },
             length_penalty: parameters.length_penalty
-                .map(|lp| LengthPenalty {
-                    start_index: lp.0,
-                    decay_factor: lp.1,
+                .map(|(start_index, decay_factor)| LengthPenalty {
+                    start_index, decay_factor
                 }),
         }
     }
