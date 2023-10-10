@@ -67,6 +67,9 @@ struct Args {
     output_special_tokens: bool,
     #[clap(default_value = "1.0", long, short, env)]
     cuda_process_memory_fraction: f32,
+    // Default for default_include_stop_seqs is true for now, for backwards compatibility
+    #[clap(default_value = "true", long, env, action = clap::ArgAction::Set)]
+    default_include_stop_seqs: bool,
 }
 
 fn main() -> ExitCode {
@@ -231,6 +234,10 @@ fn main() -> ExitCode {
 
     if args.output_special_tokens {
         argv.push("--output-special-tokens".into());
+    }
+
+    if args.default_include_stop_seqs {
+        argv.push("--default-include-stop-seqs".into());
     }
 
     let mut webserver = match Popen::create(

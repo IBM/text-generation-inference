@@ -288,7 +288,7 @@ impl GenerationServicer {
         inputs: Vec<String>,
         start_time: Instant,
     ) -> Result<Vec<(usize, GenerateRequest)>, Status> {
-        match convert_params(parameters) {
+        match convert_params(parameters, self.state.default_include_stop_seqs) {
             Ok(params) => self.state.validation.validate(
                 prefix_id, params, inputs
             ).await,
@@ -384,7 +384,9 @@ fn truncate(string: &str, len: usize) -> Cow<str> {
     }
 }
 
-fn convert_params(params: Option<Parameters>) -> Result<GenerateParameters, ValidationError> {
+fn convert_params(
+    params: Option<Parameters>, default_include_stop_seqs: bool
+) -> Result<GenerateParameters, ValidationError> {
     match params {
         Some(p) => {
             let mut gp = default_parameters();
@@ -412,6 +414,8 @@ fn convert_params(params: Option<Parameters>) -> Result<GenerateParameters, Vali
                 if s.max_new_tokens != 0 { gp.max_new_tokens = s.max_new_tokens }
                 gp.min_new_tokens = s.min_new_tokens;
                 gp.stop_seqs = s.stop_sequences;
+                gp.include_stop_seq = s.include_stop_sequence
+                    .unwrap_or(default_include_stop_seqs);
                 if s.time_limit_millis > 0 {
                     gp.deadline = Some(Instant::now()
                         .add(Duration::from_millis(s.time_limit_millis as u64)));
@@ -451,6 +455,7 @@ impl From<InferResponse> for GenerationResponse {
             text: resp.output_text,
             generated_token_count: resp.gen_token_count,
             stop_reason: resp.reason as i32,
+            stop_sequence: resp.stop_sequence.unwrap_or_default(),
             tokens: resp.tokens.to_final_vec(),
             input_tokens: resp.in_tokens.to_final_vec(),
             seed: resp.seed,

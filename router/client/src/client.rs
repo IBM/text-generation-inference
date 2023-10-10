@@ -83,9 +83,9 @@ impl Client {
             .instrument(info_span!("model_info"))
             .await?
             .into_inner();
-        ModelType::from_i32(response.model_type)
+        ModelType::try_from(response.model_type)
             .map(|mt| (mt, response.eos_token, response.batch_padding))
-            .ok_or(ClientError::Generation("Unrecognized model type".to_string()))
+            .map_err(|_| ClientError::Generation("Unrecognized model type".to_string()))
     }
 
     /// Get model health
@@ -99,9 +99,9 @@ impl Client {
     /// Get shard model info
     #[instrument(skip(self))]
     pub async fn prefix_lookup(&mut self, prefix_id: String) -> Result<u32> {
-        let mut request = tonic::Request::new(PrefixLookupRequest {
-            prefix_id
-        });
+        let mut request = tonic::Request::new(
+            PrefixLookupRequest { prefix_id }
+        );
         request.set_timeout(PREFIX_LOOKUP_TIMEOUT);
         let response = self.stub
             .prefix_lookup(request)

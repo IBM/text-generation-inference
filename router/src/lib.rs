@@ -58,6 +58,8 @@ pub(crate) struct GenerateParameters {
 
     #[serde(default)]
     pub stop_seqs: Vec<String>,
+    #[serde(default)]
+    pub include_stop_seq: bool,
 }
 
 fn default_temperature() -> f32 {
