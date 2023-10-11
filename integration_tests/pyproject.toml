@@ -20,6 +20,7 @@ markers = [
     "model",
     "extensions",
     "shards",
+    "output_special_tokens",
     "test_case_file",
 ]
 

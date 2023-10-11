@@ -35,7 +35,10 @@ impl Decoder {
         }
     }
 
-    fn decode_full(&self, ids: &[u32]) -> Result<String, InferError> {
+    fn decode_full(&self, mut ids: &[u32]) -> Result<String, InferError> {
+        if !self.skip_special_toks && ids.last() == Some(&self.eos_token_id) {
+            ids = &ids[..(ids.len()-1)];
+        }
         self.tokenizer.decode(ids, self.skip_special_toks).map_err(Error::into)
     }
 
