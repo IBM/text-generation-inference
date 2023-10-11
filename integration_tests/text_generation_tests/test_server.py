@@ -353,6 +353,14 @@ async def test_mt0(server_fixture, test_cases):
 async def test_gptbigcode(server_fixture, test_cases):
     await run_test_cases_async(test_cases)
 
+# test with Llama model which has tokenizer.add_bos_token == true
+@pytest.mark.model("Maykeye/TinyLLama-v0")
+@pytest.mark.extensions(".bin,.json,.model")
+@pytest.mark.shards(1)
+@pytest.mark.test_case_file("test_cases_tinyllama.yaml")
+@pytest.mark.asyncio
+async def test_llama(server_fixture, test_cases):
+    await run_test_cases_async(test_cases)
 
 # Test distributed inference - two shards
 @pytest.mark.model("bigscience/bloom-560m")
