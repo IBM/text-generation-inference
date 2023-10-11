@@ -11,6 +11,7 @@ use std::thread;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 use std::{fs, io};
+use std::env::VarError;
 use std::ffi::OsString;
 use subprocess::{Popen, PopenConfig, PopenError, Redirection};
 use tracing::info;
@@ -364,6 +365,9 @@ enum ShardStatus {
     Failed((usize, String)),
 }
 
+const DEFAULT_SPLIT_SIZE: &'static str = "512";
+
+
 #[allow(clippy::too_many_arguments)]
 fn shard_manager(
     model_name: String,
@@ -443,6 +447,17 @@ fn shard_manager(
             "TRANSFORMERS_CACHE and HUGGINGFACE_HUB_CACHE env vars can't be set to different values"
         ),
         _ => (),
+    }
+
+    // Set max_split_size to default value if PYTORCH_CUDA_ALLOC_CONF is not set
+    match env::var("PYTORCH_CUDA_ALLOC_CONF") {
+        Err(VarError::NotPresent) => {
+            let alloc_conf = format!("max_split_size_mb:{}", DEFAULT_SPLIT_SIZE);
+            info!("Setting PYTORCH_CUDA_ALLOC_CONF to default value {alloc_conf}");
+            env.push(("PYTORCH_CUDA_ALLOC_CONF".into(), alloc_conf.into()));
+        },
+        Err(VarError::NotUnicode(_)) => panic!("PYTORCH_CUDA_ALLOC_CONF set to non-unicode value"),
+        Ok(alloc_conf) => info!("PYTORCH_CUDA_ALLOC_CONF is set to {alloc_conf}"),
     }
 
     // Torch Distributed / DeepSpeed Env vars
