@@ -577,6 +577,7 @@ impl<'a> TokenProcessor<'a> {
             Ok(
                 Some((generated_tokens, input_tokens, errors, next_batch_id, forward_duration))
             ) => {
+                let pre_token_process_time = Instant::now();
                 self.process_input_tokens(input_tokens);
                 let completed_request_ids = self.process_next_tokens(
                     generated_tokens, errors,
@@ -592,6 +593,12 @@ impl<'a> TokenProcessor<'a> {
                 metrics::histogram!(
                     "tgi_batch_inference_forward_duration",
                     forward_duration,
+                    "method" => method,
+                    "makeup" => "single_only", // later will possibly be beam_only or mixed
+                );
+                metrics::histogram!(
+                    "tgi_batch_inference_tokproc_duration",
+                    pre_token_process_time.elapsed().as_secs_f64(),
                     "method" => method,
                     "makeup" => "single_only", // later will possibly be beam_only or mixed
                 );
