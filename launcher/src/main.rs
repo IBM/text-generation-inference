@@ -16,6 +16,9 @@ use std::ffi::OsString;
 use subprocess::{Popen, PopenConfig, PopenError, Redirection};
 use tracing::info;
 
+// For now this will be disabled by default, more testing is needed
+const DEFAULT_MAX_SPLIT_SIZE_MB: &'static str = "none";
+
 /// App Configuration
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
@@ -106,9 +109,9 @@ fn main() -> ExitCode {
     // Set max_split_size to default value if PYTORCH_CUDA_ALLOC_CONF is not set,
     // or unset it if PYTORCH_CUDA_ALLOC_CONF is set but empty
     let cuda_alloc_conf = match env::var("PYTORCH_CUDA_ALLOC_CONF") {
-        Err(VarError::NotPresent) if DEFAULT_SPLIT_SIZE == "none" => None,
+        Err(VarError::NotPresent) if DEFAULT_MAX_SPLIT_SIZE_MB == "none" => None,
         Err(VarError::NotPresent) => {
-            let alloc_conf = format!("max_split_size_mb:{}", DEFAULT_SPLIT_SIZE);
+            let alloc_conf = format!("max_split_size_mb:{}", DEFAULT_MAX_SPLIT_SIZE_MB);
             info!("Setting PYTORCH_CUDA_ALLOC_CONF to default value: {alloc_conf}");
             Some(alloc_conf)
         },
@@ -386,9 +389,6 @@ enum ShardStatus {
     Ready,
     Failed((usize, String)),
 }
-
-const DEFAULT_SPLIT_SIZE: &'static str = "512";
-
 
 #[allow(clippy::too_many_arguments)]
 fn shard_manager(
