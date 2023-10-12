@@ -103,6 +103,26 @@ fn main() -> ExitCode {
         &args.model_name, args.revision.as_deref()
     ).expect("Could not find tokenizer for model");
 
+    // Set max_split_size to default value if PYTORCH_CUDA_ALLOC_CONF is not set,
+    // or unset it if PYTORCH_CUDA_ALLOC_CONF is set but empty
+    let cuda_alloc_conf = match env::var("PYTORCH_CUDA_ALLOC_CONF") {
+        Err(VarError::NotPresent) if DEFAULT_SPLIT_SIZE == "none" => None,
+        Err(VarError::NotPresent) => {
+            let alloc_conf = format!("max_split_size_mb:{}", DEFAULT_SPLIT_SIZE);
+            info!("Setting PYTORCH_CUDA_ALLOC_CONF to default value: {alloc_conf}");
+            Some(alloc_conf)
+        },
+        Ok(alloc_conf) if alloc_conf.trim().is_empty() => {
+            info!("PYTORCH_CUDA_ALLOC_CONF is unset");
+            Some(String::new()) // This means remove it from the env
+        },
+        Ok(alloc_conf) => {
+            info!("PYTORCH_CUDA_ALLOC_CONF is set to: {alloc_conf}");
+            None
+        },
+        Err(VarError::NotUnicode(_)) => panic!("PYTORCH_CUDA_ALLOC_CONF set to non-unicode value"),
+    };
+
     // Signal handler
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
@@ -126,6 +146,7 @@ fn main() -> ExitCode {
         let status_sender = status_sender.clone();
         let shutdown = shutdown.clone();
         let shutdown_sender = shutdown_sender.clone();
+        let cuda_alloc_conf = cuda_alloc_conf.clone();
         thread::spawn(move || {
             shard_manager(
                 args.model_name,
@@ -138,6 +159,7 @@ fn main() -> ExitCode {
                 args.max_batch_weight,
                 args.shard_uds_path,
                 args.cuda_process_memory_fraction,
+                cuda_alloc_conf,
                 rank,
                 num_shard,
                 args.master_addr,
@@ -380,6 +402,7 @@ fn shard_manager(
     max_batch_weight: Option<usize>,
     uds_path: String,
     cuda_process_memory_fraction: f32,
+    cuda_alloc_conf: Option<String>,
     rank: usize,
     world_size: usize,
     master_addr: String,
@@ -449,15 +472,13 @@ fn shard_manager(
         _ => (),
     }
 
-    // Set max_split_size to default value if PYTORCH_CUDA_ALLOC_CONF is not set
-    match env::var("PYTORCH_CUDA_ALLOC_CONF") {
-        Err(VarError::NotPresent) => {
-            let alloc_conf = format!("max_split_size_mb:{}", DEFAULT_SPLIT_SIZE);
-            info!("Setting PYTORCH_CUDA_ALLOC_CONF to default value {alloc_conf}");
+    if let Some(alloc_conf) = cuda_alloc_conf {
+        if alloc_conf.is_empty() {
+            // Remove it from env
+            env.retain(|(k, v)| k != "PYTORCH_CUDA_ALLOC_CONF");
+        } else {
             env.push(("PYTORCH_CUDA_ALLOC_CONF".into(), alloc_conf.into()));
-        },
-        Err(VarError::NotUnicode(_)) => panic!("PYTORCH_CUDA_ALLOC_CONF set to non-unicode value"),
-        Ok(alloc_conf) => info!("PYTORCH_CUDA_ALLOC_CONF is set to {alloc_conf}"),
+        }
     }
 
     // Torch Distributed / DeepSpeed Env vars
