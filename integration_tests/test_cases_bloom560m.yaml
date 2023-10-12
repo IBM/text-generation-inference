@@ -58,6 +58,24 @@
         stopReason: EOS_TOKEN
         text: ' positive'
 
+- name: Greedy with tuned prompt prefix and truncation
+  # Prompt prefixes with multi-shard not yet supported
+  singleShardOnly: true
+  request:
+    prefixId: bloom_sentiment_1
+    params:
+      truncateInputTokens: 10
+      method: GREEDY
+      stopping: {"maxNewTokens": 20}
+    requests:
+      - {"text": "[This will be truncated] What a wonderful day!:\nSentiment:"}
+  response:
+    responses:
+      - generatedTokenCount: 2
+        inputTokenCount: 10
+        stopReason: EOS_TOKEN
+        text: ' positive'
+
 
 # Prompt prefix with nested path
 - name: Greedy with tuned prompt prefix with nested path (id)

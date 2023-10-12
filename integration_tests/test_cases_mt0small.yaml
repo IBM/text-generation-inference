@@ -90,6 +90,22 @@
         stopReason: EOS_TOKEN
         text: They are a wonderful day.
 
+# Prompt prefix - decoder only with truncation
+- name: Greedy with tuned prompt prefix and truncation for decoder only
+  request:
+    prefixId: mt0_sentiment_decoder_only
+    params:
+      method: GREEDY
+      truncateInputTokens: 12
+      stopping: {"maxNewTokens": 20}
+    requests:
+      - {"text": "[This will be truncated] What a wonderful day!:\nSentiment:"}
+  response:
+    responses:
+      - generatedTokenCount: 10
+        inputTokenCount: 12
+        stopReason: EOS_TOKEN
+        text: They are a wonderful day.
 
 # Prompt prefix returning input and generated tokens
 - name: Greedy with tuned prompt prefix and returned tokens
