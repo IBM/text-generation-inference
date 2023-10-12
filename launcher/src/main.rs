@@ -1,6 +1,6 @@
 use clap::Parser;
 use std::env;
-use std::io::{BufRead, BufReader, ErrorKind};
+use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -311,7 +311,7 @@ fn main() -> ExitCode {
 
     while running.load(Ordering::SeqCst) {
         if let Ok(ShardStatus::Failed((rank, err))) = status_receiver.try_recv() {
-            tracing::error!("Shard {rank} failed:\n{err}");
+            tracing::error!("Shard {rank} failed: {err}");
             exit_code = ExitCode::FAILURE;
             break;
         };
@@ -475,7 +475,7 @@ fn shard_manager(
     if let Some(alloc_conf) = cuda_alloc_conf {
         if alloc_conf.is_empty() {
             // Remove it from env
-            env.retain(|(k, v)| k != "PYTORCH_CUDA_ALLOC_CONF");
+            env.retain(|(k, _)| k != "PYTORCH_CUDA_ALLOC_CONF");
         } else {
             env.push(("PYTORCH_CUDA_ALLOC_CONF".into(), alloc_conf.into()));
         }
@@ -532,27 +532,31 @@ fn shard_manager(
 
     // Redirect STDOUT and STDERR to the console
     let shard_stdout = p.stdout.take().unwrap();
-    thread::spawn(move || BufReader::new(shard_stdout).lines().for_each(|line|
-        println!("Shard {}: {}", rank, line.unwrap())
-    ));
+    let stdout_thread = thread::spawn(
+        move || BufReader::new(shard_stdout).lines().for_each(
+            |line| println!("Shard {rank}: {}", line.unwrap())
+        )
+    );
     let shard_stderr = p.stderr.take().unwrap();
-    thread::spawn(move || BufReader::new(shard_stderr).lines().for_each(|line|
-        eprintln!("Shard {}: {}", rank, line.unwrap())
-    ));
+    let stderr_thread = thread::spawn(
+        move || BufReader::new(shard_stderr).lines().for_each(
+            |line| eprintln!("Shard {rank}: {}", line.unwrap())
+        )
+    );
 
     let mut ready = false;
     let start_time = Instant::now();
     let mut wait_time = Instant::now();
     loop {
         // Process exited
-        if p.poll().is_some() {
-            let mut err = String::new();
-            //We don't need to do this now that we're logging
-            //p.stderr.take().unwrap().read_to_string(&mut err).unwrap();
-            status_sender
-                .send(ShardStatus::Failed((rank, err)))
-                .unwrap();
-            return;
+        if let Some(status) = p.poll() {
+            // Ensure we finish propagating any final stdout/stderr from the shard
+            stdout_thread.join().unwrap_or_default();
+            io::stdout().flush().unwrap_or_default();
+            stderr_thread.join().unwrap_or_default();
+            io::stderr().flush().unwrap_or_default();
+            status_sender.send(ShardStatus::Failed((rank, format!("{status:?}")))).unwrap();
+            return
         }
 
         // We received a shutdown signal
@@ -560,17 +564,19 @@ fn shard_manager(
             p.terminate().unwrap();
             let _ = p.wait_timeout(Duration::from_secs(90));
             info!("Shard {rank} terminated");
-            return;
+            return
         }
 
         // Shard is ready
-        if uds.exists() && !ready {
-            info!("Shard {rank} ready in {:?}", start_time.elapsed());
-            status_sender.send(ShardStatus::Ready).unwrap();
-            ready = true;
-        } else if !ready && wait_time.elapsed() > Duration::from_secs(10) {
-            tracing::info!("Waiting for shard {rank} to be ready...");
-            wait_time = Instant::now();
+        if !ready {
+            if uds.exists() {
+                info!("Shard {rank} ready in {:?}", start_time.elapsed());
+                status_sender.send(ShardStatus::Ready).unwrap();
+                ready = true;
+            } else if wait_time.elapsed() > Duration::from_secs(10) {
+                info!("Waiting for shard {rank} to be ready...");
+                wait_time = Instant::now();
+            }
         }
         sleep(Duration::from_millis(100));
     }
