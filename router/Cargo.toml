@@ -14,16 +14,16 @@ name = "text-generation-router"
 path = "src/main.rs"
 
 [dependencies]
-axum = { version = "0.6.17", features = ["json"] }
+axum = { version = "0.6.20", features = ["json"] }
 text-generation-client = { path = "client" }
-clap = { version = "^4.3.17", features = ["derive", "env"] }
+clap = { version = "^4.4.6", features = ["derive", "env"] }
 futures = "^0.3.28"
 metrics = "0.21.1"
 metrics-exporter-prometheus = { version = "0.12.1", features = [] }
-moka = { version = "0.11.2", features = ["future"] }
+moka = { version = "0.11.3", features = ["future"] }
 nohash-hasher = "^0.2.0"
-num = "^0.4.0"
-hyper = "^0.14.26" # Override to address CVE-2023-26964
+num = "^0.4.1"
+hyper = "^0.14.27" # Override to address CVE-2023-26964
 openssl = "^0.10.55" # Override to address WS-2023-0082, WS-2023-0083, WS-2023-0195
 openssl-sys = "^0.9.90" # Override to address WS-2023-0082, WS-2023-0083, WS-2023-0195
 rustls-webpki = "^0.100.2" # Override to address WS-2023-0305, CVE-2018-16875
@@ -34,19 +34,19 @@ serde_json = "^1.0.103"
 # Attempt to address WS-2023-0094
 # spin comes in via tonic->tokio-rustls->rustls->ring but this pins a specific old version 0.5.2 :(
 #spin = "=0.9.8"
-thiserror = "^1.0.43"
-tokenizers = "0.14.0"
-tokio = { version = "^1.32.0", features = ["rt", "rt-multi-thread", "parking_lot", "signal", "sync", "fs"] }
+thiserror = "^1.0.49"
+tokenizers = "0.14.1"
+tokio = { version = "1.33.0", features = ["rt", "rt-multi-thread", "parking_lot", "signal", "sync", "fs"] }
 tokio-rustls = "^0.24.1"
 rustls = "0.21.5"
 tracing = "^0.1.37"
 tracing-subscriber = { version = "0.3.16", features = ["json"] }
-prost = "^0.12.0"
-tonic = { version = "^0.10.0", features = ["tls"] }
+prost = "^0.12.1"
+tonic = { version = "^0.10.2", features = ["tls"] }
 tokio-stream ="^0.1.14"
 unicode-segmentation = "^1.10.1"
 unicode-truncate = "^0.2.0"
 
 [build-dependencies]
-tonic-build = "^0.10.0"
+tonic-build = "^0.10.2"
 tempfile = "^3.7.0" # Override 0.3.3 version from tonic-build/prost-build, due to RUSTSEC-2023-0018
