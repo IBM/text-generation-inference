@@ -9,13 +9,17 @@ on:
       - "**.md"
       - "proto/**"
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build:
     runs-on: ubuntu-latest
     env:
       CI: true
       DOCKER_BUILDKIT: 1
-      BUILDKIT_PROGRESS: plain
+#      BUILDKIT_PROGRESS: plain
       BUILDKIT_INLINE_CACHE: 1
 
     steps:
@@ -32,4 +36,4 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: "Build server release"
-        run: make build
+        run: docker build --target=server-release .
