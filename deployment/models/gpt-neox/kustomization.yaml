@@ -33,7 +33,7 @@ patchesStrategicMerge:
              - name: MAX_CONCURRENT_REQUESTS
                value: "320"
              - name: MAX_BATCH_WEIGHT
-               value: "9900"
+               value: "9200"
              - name: MAX_SEQUENCE_LENGTH
                value: "8192"
              - name: MAX_PREFILL_WEIGHT
