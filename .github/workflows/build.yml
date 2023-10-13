@@ -23,17 +23,26 @@ jobs:
       BUILDKIT_INLINE_CACHE: 1
 
     steps:
-      - name: "Checkout"
-        uses: actions/checkout@v3
+    - name: "Checkout"
+      uses: actions/checkout@v3
 
-      - name: "Free up disk space"
-        uses: ./.github/actions/free-up-disk-space
+    - name: "Free up disk space"
+      uses: ./.github/actions/free-up-disk-space
 
-      - name: "Set up QEMU"
-        uses: docker/setup-qemu-action@v3
-      -
-        name: "Set up Docker Buildx"
-        uses: docker/setup-buildx-action@v3
+    - name: "Set up QEMU"
+      uses: docker/setup-qemu-action@v3
 
-      - name: "Build server release"
-        run: docker build --target=server-release .
+    - name: "Set up Docker Buildx"
+      uses: docker/setup-buildx-action@v3
+
+    - name: "Build stages sequentially (FOR DEBUGGING)"
+      continue-on-error: true
+      run: |
+        build_targets=$(grep -iE "^FROM .+ as .*$" Dockerfile | grep -E -o "[^ ]+$")
+        for t in $build_targets; do
+          echo "===== Build stage: ${t} ====="
+          DOCKER_BUILDKIT=1 docker build --target=$t -t ${t}:internal . || :
+        done
+
+    - name: "List docker images"
+      run: docker images

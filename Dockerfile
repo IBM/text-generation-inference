@@ -197,7 +197,7 @@ FROM python-builder as flash-att-v2-builder
 WORKDIR /usr/src
 
 COPY server/Makefile-flash-att-v2 Makefile
-RUN MAX_JOBS=4 make build-flash-attention-v2
+RUN MAX_JOBS=2 make build-flash-attention-v2
 
 ## Build flash attention  ######################################################
 FROM python-builder as flash-att-builder
@@ -213,7 +213,9 @@ FROM python-builder as build
 
 # Build custom kernels
 COPY server/custom_kernels/ /usr/src/.
-RUN cd /usr/src && python setup.py build_ext && python setup.py install
+RUN cd /usr/src \
+    && MAX_JOBS=2 python setup.py build_ext \
+    && MAX_JOBS=2 python setup.py install
 
 ## Flash attention cached build image ##########################################
 FROM base as flash-att-cache

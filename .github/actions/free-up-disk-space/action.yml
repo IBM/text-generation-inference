@@ -13,7 +13,7 @@ runs:
         echo "Removing non-essential tools and libraries ..."
         sudo rm -rf /opt/ghc
         sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /usr/local/share/boost
+#        sudo rm -rf /usr/local/share/boost
         echo "Deleting libraries for Android (12G), CodeQL (5.3G), PowerShell (1.3G), Swift (1.7G) ..."
         sudo rm -rf /usr/local/lib/android
         sudo rm -rf "${AGENT_TOOLSDIRECTORY}/CodeQL"
