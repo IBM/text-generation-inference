@@ -1,10 +1,18 @@
 SHELL := /bin/bash
 
-build:
-	DOCKER_BUILDKIT=1 docker build --progress=plain --target=server-release -t text-gen-server:0 .
+DOCKER_BUILDKIT := 1
+TEST_IMAGE_NAME ?= 'cpu-tests:0'
+SERVER_IMAGE_NAME ?= 'text-gen-server:0'
+
+build: ## Build server release image.
+	docker build --progress=plain --target=server-release -t  $(SERVER_IMAGE_NAME) .
 	docker images
 
 all: help
+
+.PHONY: help
+help: ## Display this help.
+	@awk 'BEGIN{FS=":.*##"; printf("\nUsage:\n  make \033[36m<target>\033[0m\n\nTargets:\n")} /^[-a-zA-Z_0-9\\.]+:.*?##/ {t=$$1; if(!(t in p)){p[t]; printf("  \033[36m%-20s\033[0m %s\n", t, $$2)}}' $(MAKEFILE_LIST)
 
 install-server:
 	cd server && make install
@@ -18,7 +26,7 @@ install-router:
 install-launcher:
 	cd launcher && cargo install --path .
 
-install: install-server install-router install-launcher install-custom-kernels
+install: install-server install-router install-launcher install-custom-kernels ## Install server, router, launcher, and custom kernels.
 
 server-dev:
 	cd server && make run-dev
@@ -41,20 +49,23 @@ run-bloom:
 run-bloom-quantize:
 	text-generation-launcher --model-name bigscience/bloom --num-shard 8 --dtype-str int8
 
-build-test-image:
-	DOCKER_BUILDKIT=1 docker build --progress=plain --target=cpu-tests -t cpu-tests:0 .
+build-test-image: ## Build the test image.
+	docker build --progress=plain --target=cpu-tests -t $(TEST_IMAGE_NAME) .
 
-integration-tests: build-test-image
+integration-tests: build-test-image  ## Run integration tests.
 	mkdir -p /tmp/transformers_cache
 	docker run --rm -v /tmp/transformers_cache:/transformers_cache \
 		-e HUGGINGFACE_HUB_CACHE=/transformers_cache \
-		-e TRANSFORMERS_CACHE=/transformers_cache -w /usr/src/integration_tests cpu-tests:0 make test
+		-e TRANSFORMERS_CACHE=/transformers_cache \
+		-w /usr/src/integration_tests \
+		$(TEST_IMAGE_NAME) make test
 
-python-tests: build-test-image
+python-tests: build-test-image  ## Run Python tests.
 	mkdir -p /tmp/transformers_cache
 	docker run --rm -v /tmp/transformers_cache:/transformers_cache \
 		-e HUGGINGFACE_HUB_CACHE=/transformers_cache \
-		-e TRANSFORMERS_CACHE=/transformers_cache cpu-tests:0 pytest -sv --ignore=server/tests/test_utils.py server/tests
+		-e TRANSFORMERS_CACHE=/transformers_cache \
+		$(TEST_IMAGE_NAME) pytest -sv --ignore=server/tests/test_utils.py server/tests
 
 
 .PHONY: build build-test-image integration-tests python-tests

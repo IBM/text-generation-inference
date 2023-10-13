@@ -13,12 +13,15 @@ defaults:
   run:
     shell: bash
 
+env:
+  CI: true
+  DOCKER_BUILDKIT: 1
+  SERVER_IMAGE_NAME: "text-gen-server:0"
+
 jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      CI: true
-      DOCKER_BUILDKIT: 1
       # BUILDKIT_PROGRESS: plain
       BUILDKIT_INLINE_CACHE: 1
 
@@ -35,14 +38,62 @@ jobs:
     - name: "Set up Docker Buildx"
       uses: docker/setup-buildx-action@v3
 
-    - name: "Build stages sequentially (FOR DEBUGGING)"
-      continue-on-error: true
+    - name: "Generate job steps to build stages sequentially"
       run: |
         build_targets=$(grep -iE "^FROM .+ as .*$" Dockerfile | grep -E -o "[^ ]+$")
         for t in $build_targets; do
-          echo "===== Build stage: ${t} ====="
-          DOCKER_BUILDKIT=1 docker build --target=$t -t ${t}:internal . || :
+          echo
+          echo "    - name: \"Docker build ${t}\""
+          echo "      run: docker build --target=$t -t $t ."
         done
+
+    - name: "Docker build base"
+      run: docker build --target=base -t base .
+
+    - name: "Docker build cuda-base"
+      run: docker build --target=cuda-base -t cuda-base .
+
+    - name: "Docker build cuda-runtime"
+      run: docker build --target=cuda-runtime -t cuda-runtime .
+
+    - name: "Docker build cuda-devel"
+      run: docker build --target=cuda-devel -t cuda-devel .
+
+    - name: "Docker build rust-builder"
+      run: docker build --target=rust-builder -t rust-builder .
+
+    - name: "Docker build router-builder"
+      run: docker build --target=router-builder -t router-builder .
+
+    - name: "Docker build launcher-builder"
+      run: docker build --target=launcher-builder -t launcher-builder .
+
+    - name: "Docker build test-base"
+      run: docker build --target=test-base -t test-base .
+
+    - name: "Docker build cpu-tests"
+      run: docker build --target=cpu-tests -t cpu-tests .
+
+    - name: "Docker build python-builder"
+      run: docker build --target=python-builder -t python-builder .
+
+    - name: "Docker build flash-att-v2-builder"
+      run: docker build --target=flash-att-v2-builder -t flash-att-v2-builder .
+
+    - name: "Docker build flash-att-builder"
+      run: docker build --target=flash-att-builder -t flash-att-builder .
+
+    - name: "Docker build build"
+      run: docker build --target=build -t build .
+
+    - name: "Docker build flash-att-cache"
+      run: docker build --target=flash-att-cache -t flash-att-cache .
+
+    - name: "Docker build flash-att-v2-cache"
+      run: docker build --target=flash-att-v2-cache -t flash-att-v2-cache .
+
+    - name: "Docker build server-release"
+      run: docker build --target=server-release -t server-release .
 
     - name: "List docker images"
       run: docker images
