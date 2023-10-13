@@ -52,7 +52,10 @@ run-bloom-quantize:
 build-test-image: ## Build the test image.
 	docker build --progress=plain --target=cpu-tests -t $(TEST_IMAGE_NAME) .
 
-integration-tests: build-test-image  ## Run integration tests.
+check-test-image:
+	@docker image inspect $(TEST_IMAGE_NAME) >/dev/null 2>&1 || $(MAKE) build-test-image
+
+integration-tests: check-test-image ## Run integration tests.
 	mkdir -p /tmp/transformers_cache
 	docker run --rm -v /tmp/transformers_cache:/transformers_cache \
 		-e HUGGINGFACE_HUB_CACHE=/transformers_cache \
@@ -60,7 +63,7 @@ integration-tests: build-test-image  ## Run integration tests.
 		-w /usr/src/integration_tests \
 		$(TEST_IMAGE_NAME) make test
 
-python-tests: build-test-image  ## Run Python tests.
+python-tests: check-test-image ## Run Python tests.
 	mkdir -p /tmp/transformers_cache
 	docker run --rm -v /tmp/transformers_cache:/transformers_cache \
 		-e HUGGINGFACE_HUB_CACHE=/transformers_cache \

@@ -28,7 +28,7 @@ def start_server(
     num_shard: int,
     port: int,
     master_port: int,
-    timeout=20,
+    timeout=30,
     model_path=None,
     include_cache_env_vars=True,
 ):
