@@ -19,7 +19,7 @@ jobs:
     env:
       CI: true
       DOCKER_BUILDKIT: 1
-#      BUILDKIT_PROGRESS: plain
+      # BUILDKIT_PROGRESS: plain
       BUILDKIT_INLINE_CACHE: 1
 
     steps:
