@@ -78,12 +78,15 @@ jobs:
       run: docker build --target=python-builder -t python-builder .
 
     - name: "Docker build flash-att-v2-builder"
+      timeout-minutes: 20
       run: docker build --target=flash-att-v2-builder -t flash-att-v2-builder .
 
     - name: "Docker build flash-att-builder"
+      timeout-minutes: 20
       run: docker build --target=flash-att-builder -t flash-att-builder .
 
     - name: "Docker build build"
+      timeout-minutes: 20
       run: docker build --target=build -t build .
 
     - name: "Docker build flash-att-cache"

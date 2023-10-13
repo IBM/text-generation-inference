@@ -205,7 +205,7 @@ FROM python-builder as flash-att-builder
 WORKDIR /usr/src
 
 COPY server/Makefile-flash-att Makefile
-RUN make build-flash-attention
+RUN MAX_JOBS=2 make build-flash-attention
 
 
 ## Build libraries #############################################################
