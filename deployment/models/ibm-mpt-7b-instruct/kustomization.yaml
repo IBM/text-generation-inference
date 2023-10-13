@@ -40,11 +40,3 @@ patchesStrategicMerge:
                value: "2000000"
              - name: MAX_BATCH_WEIGHT
                value: "200000000"
-
-             startupProbe:
-               httpGet:
-                 port: http
-                 path: /health
-               # MPT-7B currently takes more than 15 mins to load :-(
-               failureThreshold: 52
-               periodSeconds: 30
