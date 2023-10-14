@@ -223,14 +223,16 @@ RUN cd /usr/src \
 
 ## Flash attention cached build image ##########################################
 FROM base as flash-att-cache
-COPY --from=flash-att-builder /usr/src/flash-attention/build /usr/src/flash-attention/build
-COPY --from=flash-att-builder /usr/src/flash-attention/csrc/layer_norm/build /usr/src/flash-attention/csrc/layer_norm/build
-COPY --from=flash-att-builder /usr/src/flash-attention/csrc/rotary/build /usr/src/flash-attention/csrc/rotary/build
+#COPY --from=flash-att-builder /usr/src/flash-attention/build /usr/src/flash-attention/build
+#COPY --from=flash-att-builder /usr/src/flash-attention/csrc/layer_norm/build /usr/src/flash-attention/csrc/layer_norm/build
+#COPY --from=flash-att-builder /usr/src/flash-attention/csrc/rotary/build /usr/src/flash-attention/csrc/rotary/build
+COPY --from=flash-att-builder /opt/miniconda/lib/python3.9/site-packages/flash_attn* /opt/miniconda/lib/python3.9/site-packages/
 
 
 ## Flash attention v2 cached build image #######################################
 FROM base as flash-att-v2-cache
-COPY --from=flash-att-v2-builder /usr/src/flash-attention-v2/build /usr/src/flash-attention-v2/build
+#COPY --from=flash-att-v2-builder /usr/src/flash-attention-v2/build /usr/src/flash-attention-v2/build
+COPY --from=flash-att-v2-builder /opt/miniconda/lib/python3.9/site-packages/flash_attn* /opt/miniconda/lib/python3.9/site-packages/
 
 
 ## Final Inference Server image ################################################
