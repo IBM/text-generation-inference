@@ -48,6 +48,7 @@ jobs:
       with:
         name: "test-image"
         path: /tmp/test_image.tar
+        retention-days: 1
 
 
   test-python:

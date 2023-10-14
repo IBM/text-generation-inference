@@ -196,16 +196,20 @@ FROM python-builder as flash-att-v2-builder
 
 WORKDIR /usr/src
 
-COPY server/Makefile-flash-att-v2 Makefile
-RUN MAX_JOBS=2 make build-flash-attention-v2
+#COPY server/Makefile-flash-att-v2 Makefile
+#RUN MAX_JOBS=2 make build-flash-attention-v2
+#RUN MAX_JOBS=2 pip install flash-attn==2.0.4 --no-build-isolation
+RUN MAX_JOBS=2 pip install flash-attn --no-build-isolation
+
 
 ## Build flash attention  ######################################################
 FROM python-builder as flash-att-builder
 
 WORKDIR /usr/src
 
-COPY server/Makefile-flash-att Makefile
-RUN MAX_JOBS=2 make build-flash-attention
+#COPY server/Makefile-flash-att Makefile
+#RUN MAX_JOBS=2 make build-flash-attention
+RUN MAX_JOBS=2 pip install flash-attn==1.0.9
 
 
 ## Build libraries #############################################################
