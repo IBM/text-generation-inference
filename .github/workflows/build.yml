@@ -83,6 +83,12 @@ jobs:
     - name: "Docker build flash-att-builder"
       run: docker build --target=flash-att-builder -t flash-att-builder .
 
+    - name: "Docker build flash-att-dropout"
+      run: docker build --target=flash-att-dropout -t flash-att-dropout .
+
+    - name: "Docker build flash-att-rotary"
+      run: docker build --target=flash-att-rotary -t flash-att-rotary .
+
     - name: "Docker build build"
       run: docker build --target=build -t build .
 

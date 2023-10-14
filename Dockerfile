@@ -1,5 +1,7 @@
 ## Global Args #################################################################
 ARG BASE_UBI_IMAGE_TAG=9.2-755
+ARG FLASH_ATTN_VERSION=1.0.9
+ARG FLASH_ATTN_V2_VERSION=2.0.4
 ARG PROTOC_VERSION=24.3
 #ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
 ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
@@ -194,22 +196,41 @@ RUN pip install torch==$PYTORCH_VERSION+cu118 --index-url "${PYTORCH_INDEX}/cu11
 ## Build flash attention v2 ####################################################
 FROM python-builder as flash-att-v2-builder
 
+ARG FLASH_ATTN_V2_VERSION
+
 WORKDIR /usr/src
 
-#COPY server/Makefile-flash-att-v2 Makefile
-#RUN MAX_JOBS=2 make build-flash-attention-v2
-#RUN MAX_JOBS=2 pip install flash-attn==2.0.4 --no-build-isolation
-RUN MAX_JOBS=2 pip install flash-attn --no-build-isolation
+RUN MAX_JOBS=2 pip install flash-attn==${FLASH_ATTN_V2_VERSION} --no-build-isolation
 
 
 ## Build flash attention  ######################################################
 FROM python-builder as flash-att-builder
 
+ARG FLASH_ATTN_VERSION
+
 WORKDIR /usr/src
 
-#COPY server/Makefile-flash-att Makefile
-#RUN MAX_JOBS=2 make build-flash-attention
-RUN MAX_JOBS=2 pip install flash-attn==1.0.9
+RUN MAX_JOBS=2 pip install flash-attn==${FLASH_ATTN_VERSION}
+
+
+## Build flash-attention dropout-layer-norm  ###################################
+FROM flash-att-builder as flash-att-dropout
+
+ARG FLASH_ATTN_VERSION
+
+WORKDIR /usr/src
+
+RUN MAX_JOBS=2 pip install "git+https://github.com/Dao-AILab/flash-attention.git@v${FLASH_ATTN_VERSION}#subdirectory=csrc/layer_norm"
+
+
+## Build flash-attention rotary-emb ############################################
+FROM flash-att-builder as flash-att-rotary
+
+ARG FLASH_ATTN_VERSION
+
+WORKDIR /usr/src
+
+RUN MAX_JOBS=2 pip install "git+https://github.com/Dao-AILab/flash-attention.git@v${FLASH_ATTN_VERSION}#subdirectory=csrc/rotary"
 
 
 ## Build libraries #############################################################
@@ -223,15 +244,15 @@ RUN cd /usr/src \
 
 ## Flash attention cached build image ##########################################
 FROM base as flash-att-cache
-#COPY --from=flash-att-builder /usr/src/flash-attention/build /usr/src/flash-attention/build
-#COPY --from=flash-att-builder /usr/src/flash-attention/csrc/layer_norm/build /usr/src/flash-attention/csrc/layer_norm/build
-#COPY --from=flash-att-builder /usr/src/flash-attention/csrc/rotary/build /usr/src/flash-attention/csrc/rotary/build
+
 COPY --from=flash-att-builder /opt/miniconda/lib/python3.9/site-packages/flash_attn* /opt/miniconda/lib/python3.9/site-packages/
+COPY --from=flash-att-dropout /opt/miniconda/lib/python3.9/site-packages/dropout* /opt/miniconda/lib/python3.9/site-packages/
+COPY --from=flash-att-rotary /opt/miniconda/lib/python3.9/site-packages/rotary* /opt/miniconda/lib/python3.9/site-packages/
+
 
 
 ## Flash attention v2 cached build image #######################################
 FROM base as flash-att-v2-cache
-#COPY --from=flash-att-v2-builder /usr/src/flash-attention-v2/build /usr/src/flash-attention-v2/build
 COPY --from=flash-att-v2-builder /opt/miniconda/lib/python3.9/site-packages/flash_attn* /opt/miniconda/lib/python3.9/site-packages/
 
 
@@ -251,13 +272,11 @@ ENV PATH=/opt/miniconda/bin:$PATH
 # These could instead come from explicitly cached images
 
 # Copy build artifacts from flash attention builder
-#COPY --from=flash-att-cache /usr/src/flash-attention/build/lib.linux-x86_64-cpython-39 /opt/miniconda/lib/python3.9/site-packages
-#COPY --from=flash-att-cache /usr/src/flash-attention/csrc/layer_norm/build/lib.linux-x86_64-cpython-39 /opt/miniconda/lib/python3.9/site-packages
-#COPY --from=flash-att-cache /usr/src/flash-attention/csrc/rotary/build/lib.linux-x86_64-cpython-39 /opt/miniconda/lib/python3.9/site-packages
 COPY --from=flash-att-cache /opt/miniconda/lib/python3.9/site-packages/flash_attn* /opt/miniconda/lib/python3.9/site-packages/
+COPY --from=flash-att-cache /opt/miniconda/lib/python3.9/site-packages/dropout* /opt/miniconda/lib/python3.9/site-packages/
+COPY --from=flash-att-cache /opt/miniconda/lib/python3.9/site-packages/rotary* /opt/miniconda/lib/python3.9/site-packages/
 
 # Copy build artifacts from flash attention v2 builder
-#COPY --from=flash-att-v2-cache /usr/src/flash-attention-v2/build/lib.linux-x86_64-cpython-39 /opt/miniconda/lib/python3.9/site-packages
 COPY --from=flash-att-v2-cache /opt/miniconda/lib/python3.9/site-packages/flash_attn* /opt/miniconda/lib/python3.9/site-packages/
 
 # Install server
