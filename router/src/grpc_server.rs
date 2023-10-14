@@ -90,6 +90,7 @@ impl GenerationService for GenerationServicer {
         skip_all,
         fields(
             input=?request.get_ref().requests.iter().map(|r| truncate(&r.text, 32)).collect::<Vec<Cow<'_,str>>>(),
+            prefix_id=?request.get_ref().prefix_id,
             correlation_id=?request.metadata().get("x-correlation-id").map(|mv| mv.to_str().unwrap_or("<non-ascii>")).unwrap_or("<none>"),
             input_bytes=?request.get_ref().requests.iter().map(|r| r.text.len()).collect::<Vec<usize>>(),
             params=?request.get_ref().params,
@@ -171,6 +172,7 @@ impl GenerationService for GenerationServicer {
         skip_all,
         fields(
             input=?truncate(&request.get_ref().request.as_ref().map(|r| &*r.text).unwrap_or(""), 32),
+            prefix_id=?request.get_ref().prefix_id,
             correlation_id=?request.metadata().get("x-correlation-id").map(|mv| mv.to_str().unwrap_or("<non-ascii>")).unwrap_or("<none>"),
             input_bytes=?request.get_ref().request.as_ref().map(|r| r.text.len()).unwrap_or(0),
             params=?request.get_ref().params,
@@ -286,7 +288,7 @@ impl GenerationServicer {
         inputs: Vec<String>,
         start_time: Instant,
     ) -> Result<Vec<(usize, GenerateRequest)>, Status> {
-        match convert_params(parameters) {
+        match convert_params(parameters, self.state.default_include_stop_seqs) {
             Ok(params) => self.state.validation.validate(
                 prefix_id, params, inputs
             ).await,
@@ -382,7 +384,9 @@ fn truncate(string: &str, len: usize) -> Cow<str> {
     }
 }
 
-fn convert_params(params: Option<Parameters>) -> Result<GenerateParameters, ValidationError> {
+fn convert_params(
+    params: Option<Parameters>, default_include_stop_seqs: bool
+) -> Result<GenerateParameters, ValidationError> {
     match params {
         Some(p) => {
             let mut gp = default_parameters();
@@ -410,6 +414,8 @@ fn convert_params(params: Option<Parameters>) -> Result<GenerateParameters, Vali
                 if s.max_new_tokens != 0 { gp.max_new_tokens = s.max_new_tokens }
                 gp.min_new_tokens = s.min_new_tokens;
                 gp.stop_seqs = s.stop_sequences;
+                gp.include_stop_seq = s.include_stop_sequence
+                    .unwrap_or(default_include_stop_seqs);
                 if s.time_limit_millis > 0 {
                     gp.deadline = Some(Instant::now()
                         .add(Duration::from_millis(s.time_limit_millis as u64)));
@@ -421,7 +427,7 @@ fn convert_params(params: Option<Parameters>) -> Result<GenerateParameters, Vali
                     gp.temperature = s.temperature;
                     gp.top_k = s.top_k as i32;
                     if s.top_p != 0.0 { gp.top_p = s.top_p }
-                    gp.typical_p = s.typical_p;
+                    if s.typical_p != 0.0 { gp.typical_p = s.typical_p }
                     gp.seed = s.seed;
                 }
                 if gp.temperature == 0.0 {
@@ -429,7 +435,8 @@ fn convert_params(params: Option<Parameters>) -> Result<GenerateParameters, Vali
                 }
             } else if STRICT_PARAMETER_VALIDATION {
                 if let Some(s) = p.sampling {
-                    if s.temperature != 0.0 || s.top_p != 0.0 || s.top_k != 0 || s.seed.is_some() {
+                    if s.temperature != 0.0 || s.top_p != 0.0 || s.typical_p != 0.0
+                        || s.top_k != 0 || s.seed.is_some() {
                         return Err(ValidationError::SampleParametersGreedy)
                     }
                 }
@@ -448,6 +455,7 @@ impl From<InferResponse> for GenerationResponse {
             text: resp.output_text,
             generated_token_count: resp.gen_token_count,
             stop_reason: resp.reason as i32,
+            stop_sequence: resp.stop_sequence.unwrap_or_default(),
             tokens: resp.tokens.to_final_vec(),
             input_tokens: resp.in_tokens.to_final_vec(),
             seed: resp.seed,

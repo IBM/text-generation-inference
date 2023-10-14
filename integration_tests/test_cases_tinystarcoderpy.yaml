@@ -33,7 +33,7 @@
         text: "\nclass Shape(object):\n    '''Shape class'''\n\n    def __init__(self, x,"
 
 # Basic Greedy (explicit)
-- name: Basic Greedy, max new tokens (implicit)
+- name: Basic Greedy, max new tokens (explicit)
   request:
     params:
       method: GREEDY
@@ -133,6 +133,24 @@
       method: GREEDY
     requests:
       - {"text": "\tprint"}
+  response:
+    responses:
+      - generatedTokenCount: 12
+        inputTokenCount: 2
+        stopReason: EOS_TOKEN
+        text: "(\"Hello World!\")\n\nhello_world()\n"
+
+- name: Greedy with tuned prompt prefix and truncation
+  # Prompt prefixes with multi-shard not yet supported
+  singleShardOnly: true
+  request:
+    # Prefix is "def hello_world():\n"
+    prefixId: tiny_starcoder
+    params:
+      method: GREEDY
+      truncateInputTokens: 2
+    requests:
+      - {"text": "[this will be truncated]\tprint"}
   response:
     responses:
       - generatedTokenCount: 12

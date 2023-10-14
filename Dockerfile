@@ -1,11 +1,11 @@
 ## Global Args #################################################################
-ARG BASE_UBI_IMAGE_TAG=9.2-755
+ARG BASE_UBI_IMAGE_TAG=9.2-755.1696515532
 ARG FLASH_ATTN_VERSION=1.0.9
 ARG FLASH_ATTN_V2_VERSION=2.0.4
-ARG PROTOC_VERSION=24.3
-#ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
-ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
-ARG PYTORCH_VERSION=2.1.0.dev20230904
+ARG PROTOC_VERSION=24.4
+ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
+#ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
+ARG PYTORCH_VERSION=2.1.0
 
 ## Base Layer ##################################################################
 FROM registry.access.redhat.com/ubi9/ubi:${BASE_UBI_IMAGE_TAG} as base
@@ -90,7 +90,7 @@ ENV LIBRARY_PATH="$CUDA_HOME/lib64/stubs"
 
 ## Rust builder ################################################################
 # Specific debian version so that compatible glibc version is used
-FROM rust:1.72-bullseye as rust-builder
+FROM rust:1.73-bullseye as rust-builder
 ARG PROTOC_VERSION
 
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
@@ -158,7 +158,7 @@ RUN cd server && \
     make gen-server && \
     pip install ".[accelerate]" --no-cache-dir
 
-# Patch codegen model changes into transformers 4.31
+# Patch codegen model changes into transformers 4.34
 RUN cp server/transformers_patch/modeling_codegen.py \
        /usr/local/lib/python3.*/site-packages/transformers/models/codegen/modeling_codegen.py
 
@@ -284,7 +284,7 @@ COPY proto proto
 COPY server server
 RUN cd server && make gen-server && pip install ".[accelerate, onnx-gpu]" --no-cache-dir
 
-# Patch codegen model changes into transformers 4.31
+# Patch codegen model changes into transformers 4.34
 RUN cp server/transformers_patch/modeling_codegen.py \
        /opt/miniconda/lib/python3.*/site-packages/transformers/models/codegen/modeling_codegen.py
 

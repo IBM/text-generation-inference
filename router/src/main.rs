@@ -45,6 +45,8 @@ struct Args {
     tls_client_ca_cert_path: Option<String>,
     #[clap(long, env)]
     output_special_tokens: bool,
+    #[clap(long, env)]
+    default_include_stop_seqs: bool,
 }
 
 fn main() -> Result<(), std::io::Error> {
@@ -83,6 +85,8 @@ fn main() -> Result<(), std::io::Error> {
         }
     }
     tokenizer.with_truncation(None).unwrap().with_padding(None);
+
+    tracing::info!("Token decoder: {:?}", tokenizer.get_decoder());
 
     // Launch Tokio runtime
     tokio::runtime::Builder::new_multi_thread()
@@ -127,6 +131,7 @@ fn main() -> Result<(), std::io::Error> {
                 tls_key_pair: args.tls_cert_path.map(|cp| (cp, args.tls_key_path.unwrap())),
                 tls_client_ca_cert: args.tls_client_ca_cert_path,
                 output_special_tokens: args.output_special_tokens,
+                default_include_stop_seqs: args.default_include_stop_seqs,
             })
             .await;
             Ok(())

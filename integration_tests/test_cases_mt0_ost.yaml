@@ -1,0 +1,15 @@
+
+# EOS token
+- name: EOS
+  request:
+    params:
+      stopping:
+        maxNewTokens: 10
+    requests:
+      - {"text": "In one word, the capital of France is"}
+  response:
+    responses:
+      - generatedTokenCount: 2
+        inputTokenCount: 10
+        stopReason: EOS_TOKEN
+        text: France

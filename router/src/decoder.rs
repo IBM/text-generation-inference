@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::mem::take;
 use std::slice::from_ref;
 use tokenizers::DecoderWrapper::{BPE, ByteLevel, Metaspace, WordPiece, CTC, Sequence};
@@ -34,7 +35,10 @@ impl Decoder {
         }
     }
 
-    fn decode_full(&self, ids: &[u32]) -> Result<String, InferError> {
+    fn decode_full(&self, mut ids: &[u32]) -> Result<String, InferError> {
+        if !self.skip_special_toks && ids.last() == Some(&self.eos_token_id) {
+            ids = &ids[..(ids.len()-1)];
+        }
         self.tokenizer.decode(ids, self.skip_special_toks).map_err(Error::into)
     }
 
@@ -134,13 +138,20 @@ pub(crate) enum IncrementalDecoderWrapper {
     FirstDiff(IncrementalFirstDiffDecoder), // For Metaspace, WordPiece, None
     LastDiff(IncrementalLastDiffDecoder), // For BPE
     DeDup(IncrementalDeDupDecoder), // For CTE
+    Buffered(Box<BufferedIncrementalDecoder>),
 }
 
 impl IncrementalDecoderWrapper {
-    pub(crate) fn for_decoder(decoder: &Decoder, is_start: bool) -> Self {
-        match decoder.tokenizer.get_decoder() {
-            Some(ByteLevel(_)) => Self::ByteLevel(IncrementalBLDecoder::new(false, false)),
-            Some(Sequence(_)) => Self::ByteLevel(IncrementalBLDecoder::new(true, is_start)),
+    /// If hold_back_bytes is > 0, at least that number of bytes will be buffered
+    /// in addition to the last token
+    pub(crate) fn for_decoder(decoder: &Decoder, is_start: bool, hold_back_bytes: usize) -> Self {
+        let idecoder = match decoder.tokenizer.get_decoder() {
+            Some(ByteLevel(_)) => Self::ByteLevel(
+                IncrementalBLDecoder::new(false, false, hold_back_bytes)
+            ),
+            Some(Sequence(_)) => Self::ByteLevel(
+                IncrementalBLDecoder::new(true, is_start, hold_back_bytes)
+            ),
             Some(BPE(_)) => Self::LastDiff(IncrementalLastDiffDecoder {
                 output: String::new(), next_id: None,
             }),
@@ -152,26 +163,42 @@ impl IncrementalDecoderWrapper {
                     output: String::new(), first: is_start,
                 }
             ),
+        };
+
+        match idecoder {
+            // These incremental decoder types require extra buffering to hold back bytes
+            Self::FirstDiff(_) | Self::LastDiff(_) | Self::DeDup(_) if hold_back_bytes != 0 => {
+                Self::Buffered(Box::new(BufferedIncrementalDecoder {
+                    delegate: idecoder,
+                    hold_back_bytes,
+                    offset_buffer: VecDeque::new(),
+                    sent_up_to: 0,
+                }))
+            },
+            // IncrementalBLDecoder handles the hold_back_bytes buffering itself
+            _ => idecoder,
         }
     }
 }
 
 impl IncrementalDecoder for IncrementalDecoderWrapper {
-    fn next(&mut self, token: u32, decoder: &Decoder) -> Result<String, InferError> {
+    fn next(&mut self, token: u32, decoder: &Decoder) -> Result<(String,usize), InferError> {
         match self {
             Self::ByteLevel(d) => d.next(token, decoder),
             Self::FirstDiff(d) => d.next(token, decoder),
             Self::LastDiff(d) => d.next(token, decoder),
             Self::DeDup(d) => d.next(token, decoder),
+            Self::Buffered(d) => d.next(token, decoder),
         }
     }
 
-    fn flush(&mut self, decoder: &Decoder) -> Result<String, InferError> {
+    fn flush(&mut self, max_total_len: Option<usize>, decoder: &Decoder) -> Result<String, InferError> {
         match self {
-            Self::ByteLevel(d) => d.flush(decoder),
-            Self::FirstDiff(d) => d.flush(decoder),
-            Self::LastDiff(d) => d.flush(decoder),
-            Self::DeDup(d) => d.flush(decoder),
+            Self::ByteLevel(d) => d.flush(max_total_len, decoder),
+            Self::FirstDiff(d) => d.flush(max_total_len, decoder),
+            Self::LastDiff(d) => d.flush(max_total_len, decoder),
+            Self::DeDup(d) => d.flush(max_total_len, decoder),
+            Self::Buffered(d) => d.flush(max_total_len, decoder),
         }
     }
 
@@ -181,6 +208,7 @@ impl IncrementalDecoder for IncrementalDecoderWrapper {
             Self::FirstDiff(d) => d.output(),
             Self::LastDiff(d) => d.output(),
             Self::DeDup(d) => d.output(),
+            Self::Buffered(d) => d.output(),
         }
     }
 
@@ -190,6 +218,7 @@ impl IncrementalDecoder for IncrementalDecoderWrapper {
             Self::FirstDiff(d) => d.into_string(),
             Self::LastDiff(d) => d.into_string(),
             Self::DeDup(d) => d.into_string(),
+            Self::Buffered(d) => d.into_string(),
         }
     }
 }
@@ -201,11 +230,21 @@ pub(crate) struct IncrementalFirstDiffDecoder {
 }
 
 impl IncrementalDecoder for IncrementalFirstDiffDecoder {
-    fn next(&mut self, token: u32, decoder: &Decoder) -> Result<String, InferError> {
+    fn next(&mut self, token: u32, decoder: &Decoder) -> Result<(String, usize), InferError> {
         let text = decoder.decode_ref(from_ref(&token), self.first, false)?;
         self.first = false;
         self.output += &text;
-        Ok(text)
+        let bytes_added = text.len();
+        Ok((text, bytes_added))
+    }
+
+    fn flush(
+        &mut self, max_total_len: Option<usize>, _decoder: &Decoder
+    ) -> Result<String, InferError> {
+        if let Some(max_len) = max_total_len {
+            self.output.truncate(max_len);
+        }
+        Ok(String::new())
     }
 
     fn output(&self) -> &str {
@@ -223,23 +262,33 @@ pub(crate) struct IncrementalLastDiffDecoder {
 }
 
 impl IncrementalDecoder for IncrementalLastDiffDecoder {
-    fn next(&mut self, token: u32, decoder: &Decoder) -> Result<String, InferError> {
+    fn next(&mut self, token: u32, decoder: &Decoder) -> Result<(String, usize), InferError> {
         let text = self.next_id.map_or_else(
             || Ok(String::new()),
             |ref id| decoder.decode_ref(from_ref(id), true, false)
         )?;
         self.next_id = Some(token);
         self.output += &text;
-        Ok(text)
+        let bytes_added = text.len();
+        Ok((text, bytes_added))
     }
 
-    fn flush(&mut self, decoder: &Decoder) -> Result<String, InferError> {
-        let text = self.next_id.map_or_else(
+    fn flush(
+        &mut self, max_total_len: Option<usize>, decoder: &Decoder
+    ) -> Result<String, InferError> {
+        let mut text = self.next_id.map_or_else(
             || Ok(String::new()),
-            |ref id| decoder.decode_full(from_ref(id))
+            |ref id| decoder.decode_full(from_ref(id)),
         )?;
         self.next_id = None;
         self.output += &text;
+        if let Some(max_len) = max_total_len {
+            let diff = self.output.len().saturating_sub(max_len);
+            if diff != 0 {
+                text.truncate(text.len().saturating_sub(diff));
+            }
+            self.output.truncate(max_len);
+        }
         Ok(text)
     }
 
@@ -258,14 +307,24 @@ pub(crate) struct IncrementalDeDupDecoder {
 }
 
 impl IncrementalDecoder for IncrementalDeDupDecoder {
-    fn next(&mut self, token: u32, decoder: &Decoder) -> Result<String, InferError> {
+    fn next(&mut self, token: u32, decoder: &Decoder) -> Result<(String, usize), InferError> {
         if self.last_id.map(|id| id == token).unwrap_or(false) {
-            return Ok(String::new())
+            return Ok((String::new(), 0))
         }
         self.last_id = Some(token);
         let text = decoder.decode_full(from_ref(&token))?;
         self.output += &text;
-        Ok(text)
+        let bytes_added = text.len();
+        Ok((text, bytes_added))
+    }
+
+    fn flush(
+        &mut self, max_total_len: Option<usize>, _decoder: &Decoder
+    ) -> Result<String, InferError> {
+        if let Some(max_len) = max_total_len {
+            self.output.truncate(max_len);
+        }
+        Ok(String::new())
     }
 
     fn output(&self) -> &str {
@@ -278,28 +337,82 @@ impl IncrementalDecoder for IncrementalDeDupDecoder {
 
 
 #[derive(Debug)]
+pub(crate) struct BufferedIncrementalDecoder {
+    delegate: IncrementalDecoderWrapper,
+    hold_back_bytes: usize,
+    offset_buffer: VecDeque<usize>,
+    sent_up_to: usize,
+}
+
+impl IncrementalDecoder for BufferedIncrementalDecoder {
+    fn next(&mut self, token: u32, decoder: &Decoder) -> Result<(String, usize), InferError> {
+        let (text, added_bytes) = self.delegate.next(token, decoder)?;
+        if text.is_empty() {
+            return Ok((text, added_bytes))
+        }
+        let len = self.delegate.output().len();
+        self.offset_buffer.push_back(len);
+
+        let cutoff = len.saturating_sub(self.hold_back_bytes);
+        if cutoff != 0 {
+            let mut next_index = None;
+            while self.offset_buffer.front().unwrap() <= &cutoff {
+                next_index = Some(self.offset_buffer.pop_front().unwrap());
+            }
+
+            if let Some(next_index) = next_index {
+                let from = self.sent_up_to;
+                self.sent_up_to = next_index;
+                return Ok((self.output()[from..next_index].to_string(), added_bytes))
+            }
+        }
+        Ok((String::new(), added_bytes))
+    }
+
+    fn flush(&mut self, max_total_len: Option<usize>, decoder: &Decoder) -> Result<String, InferError> {
+        self.delegate.flush(max_total_len, decoder)?;
+        if self.sent_up_to < self.output().len() {
+            Ok(self.output()[self.sent_up_to..].to_string())
+        } else {
+            Ok(String::new())
+        }
+    }
+
+    fn output(&self) -> &str {
+        self.delegate.output()
+    }
+
+    fn into_string(self) -> String {
+        self.delegate.into_string()
+    }
+}
+
+
+#[derive(Debug)]
 pub(crate) struct IncrementalBLDecoder {
     id_buffer: Vec<u32>,
     str_buffer: String,
     output: String,
     first_diff: bool,
     first: bool,
+    hold_back_bytes: usize,
 }
 
 impl IncrementalBLDecoder {
-    fn new(first_diff: bool, first: bool) -> Self{
+    fn new(first_diff: bool, first: bool, hold_back_bytes: usize) -> Self {
         Self {
             id_buffer: vec![],
             str_buffer: String::new(),
             output: String::new(),
             first_diff,
             first,
+            hold_back_bytes,
         }
     }
 }
 
 impl IncrementalDecoder for IncrementalBLDecoder {
-    fn next(&mut self, token: u32, decoder: &Decoder) -> Result<String, InferError> {
+    fn next(&mut self, token: u32, decoder: &Decoder) -> Result<(String, usize), InferError> {
         self.id_buffer.push(token);
         let buffer = &*self.id_buffer;
         let text = if self.first_diff && !self.first {
@@ -314,8 +427,10 @@ impl IncrementalDecoder for IncrementalBLDecoder {
             decoder.decode_full(buffer)?
         };
         // Defer decoding until we have enough bytes for complete UTF-8
+        let mut added_bytes = 0;
         if !text.ends_with('�') {
             self.output.push_str(&*text);
+            added_bytes = text.len();
             if self.str_buffer.is_empty() {
                 self.str_buffer = text;
             } else {
@@ -323,23 +438,38 @@ impl IncrementalDecoder for IncrementalBLDecoder {
             }
             self.id_buffer.clear();
 
-            // Ensure that we return full grapheme clusters
-            if let Some((idx, _)) = self.str_buffer
-                .grapheme_indices(true).next_back() {
-                if idx > 0 {
-                    return Ok(self.str_buffer.drain(..idx).collect());
+            // Keep at least hold_back_bytes in the str_buffer
+            let cutoff = match self.hold_back_bytes {
+                0 => self.str_buffer.len(),
+                n => self.str_buffer.len().saturating_sub(n + added_bytes),
+            };
+            if cutoff != 0 {
+                // Ensure that we return full grapheme clusters
+                for (idx, _) in self.str_buffer.grapheme_indices(true).rev() {
+                    if idx <= cutoff && idx > 0 {
+                        return Ok((self.str_buffer.drain(..idx).collect(), added_bytes));
+                    }
                 }
             }
         }
-        Ok(String::new())
+        Ok((String::new(), added_bytes))
     }
-    fn flush(&mut self, decoder: &Decoder) -> Result<String, InferError> {
+    fn flush(
+        &mut self, max_total_len: Option<usize>, decoder: &Decoder
+    ) -> Result<String, InferError> {
         if !self.id_buffer.is_empty() {
             let last = decoder.decode_full(&*self.id_buffer)?;
             let last = last.trim_end_matches('�');
             self.output += last;
             self.str_buffer.push_str(last);
             self.id_buffer.clear();
+        }
+        if let Some(max_len) = max_total_len {
+            let diff = self.output.len().saturating_sub(max_len);
+            if diff != 0 {
+                self.output.truncate(max_len);
+                self.str_buffer.truncate(self.str_buffer.len().saturating_sub(diff));
+            }
         }
         Ok(take(&mut self.str_buffer))
     }
@@ -353,11 +483,18 @@ impl IncrementalDecoder for IncrementalBLDecoder {
 }
 
 pub(crate) trait IncrementalDecoder {
-    fn next(&mut self, token: u32, decoder: &Decoder) -> Result<String, InferError>;
-    fn flush(&mut self, _decoder: &Decoder) -> Result<String, InferError> {
-        Ok(String::new())
-    }
+    /// Consume next token id and return tuple of ready-to-be-returned text and number of bytes
+    /// by which the length of output() has increased by (which is not necessarily text.len())
+    fn next(&mut self, token: u32, decoder: &Decoder) -> Result<(String, usize), InferError>;
+    /// Flush any remaining buffered tokens/text to the output() string, and return string of any
+    /// not-yet-returned text suffix.
+    /// The output will be truncated to max_total_len if specified, and this will also be reflected
+    /// in the returned text. If text past max_total_len has already been returned by next(), an
+    /// empty string will be returned.
+    fn flush(&mut self, max_total_len: Option<usize>, decoder: &Decoder) -> Result<String, InferError>;
+    /// A ref to the current accumulated output string
     fn output(&self) -> &str;
+    /// Return the current accumulated output string, consuming this incremental decoder
     fn into_string(self) -> String;
 }
 

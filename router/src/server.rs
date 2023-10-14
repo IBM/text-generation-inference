@@ -30,6 +30,7 @@ pub(crate) struct ServerState {
     pub(crate) validation: Validation,
     pub(crate) batcher: Batcher,
     pub(crate) limit_concurrent_requests: Arc<Semaphore>,
+    pub(crate) default_include_stop_seqs: bool,
     // metadata exposed by the ModelInfo endpoint
     pub(crate) max_sequence_length: usize,
     pub(crate) max_new_tokens: usize,
@@ -252,6 +253,7 @@ pub struct ServerRunArgs {
     pub tls_key_pair: Option<(String, String)>,
     pub tls_client_ca_cert: Option<String>,
     pub output_special_tokens: bool,
+    pub default_include_stop_seqs: bool,
 }
 
 async fn metrics(prom_handle: Extension<PrometheusHandle>) -> String {
@@ -326,6 +328,7 @@ async fn do_run<B: BatchType>(
         max_sequence_length: args.max_sequence_length,
         max_new_tokens: args.max_new_tokens,
         seq2seq,
+        default_include_stop_seqs: args.default_include_stop_seqs,
     };
 
 

@@ -182,7 +182,7 @@ impl Batcher {
                 Accumulator::String(String::new())
             } else {
                 Accumulator::Decoder(IncrementalDecoderWrapper::for_decoder(
-                    &self.decoder, self.decoder.seq2seq,
+                    &self.decoder, self.decoder.seq2seq, 0,
                 ))
             },
             times: None,
@@ -284,13 +284,13 @@ impl<T, C> Stream for ResponseStream<T, C> {
                                                 tok.token_id,
                                                 decoder.as_ref().unwrap(),
                                             ) {
-                                                Ok(text) => ir.output_text = text,
+                                                Ok((text, _)) => ir.output_text = text,
                                                 Err(err) => decode_err = Some(err),
                                             }
                                         }
                                         // Add remainder if this is the last one
                                         if decode_err.is_none() && ir.reason != NotFinished {
-                                            match id.flush(decoder.as_ref().unwrap()) {
+                                            match id.flush(None, decoder.as_ref().unwrap()) {
                                                 Ok(text) => ir.output_text += &text,
                                                 Err(err) => decode_err = Some(err),
                                             }
@@ -577,6 +577,7 @@ impl<'a> TokenProcessor<'a> {
             Ok(
                 Some((generated_tokens, input_tokens, errors, next_batch_id, forward_duration))
             ) => {
+                let pre_token_process_time = Instant::now();
                 self.process_input_tokens(input_tokens);
                 let completed_request_ids = self.process_next_tokens(
                     generated_tokens, errors,
@@ -592,6 +593,12 @@ impl<'a> TokenProcessor<'a> {
                 metrics::histogram!(
                     "tgi_batch_inference_forward_duration",
                     forward_duration,
+                    "method" => method,
+                    "makeup" => "single_only", // later will possibly be beam_only or mixed
+                );
+                metrics::histogram!(
+                    "tgi_batch_inference_tokproc_duration",
+                    pre_token_process_time.elapsed().as_secs_f64(),
                     "method" => method,
                     "makeup" => "single_only", // later will possibly be beam_only or mixed
                 );
@@ -629,34 +636,40 @@ impl<'a> TokenProcessor<'a> {
         });
     }
 
+    /// If stop reason is StopSequence, second element of returned tuple will be
+    /// Some((index into stop seq array, index of first byte of stop seq in entry.output))
     fn check_stopping_criteria(
-        e: &Entry, last_token_id: u32, eos_token_id: u32, last_text: Option<&String>,
-    ) -> StopReason {
-        let params = &e.request.parameters;
+        entry: &Entry, last_token_id: u32, eos_token_id: u32, new_bytes: Option<usize>,
+    ) -> (StopReason, Option<(usize, usize)>) {
+        let params = &entry.request.parameters;
         match params.deadline {
-            Some(deadline) if Instant::now() > deadline => TimeLimit,
-            _ if e.generated_tokens < params.min_new_tokens => NotFinished,
-            _ if last_token_id == eos_token_id => EosToken,
-            _ if e.generated_tokens >= params.max_new_tokens =>
-                if params.max_is_token_limit { TokenLimit } else { MaxTokens }
-            _ if TokenProcessor::matches_stop_sequence(e, last_text) => StopSequence,
-            _ => NotFinished,
+            Some(deadline) if Instant::now() > deadline => (TimeLimit, None),
+            _ if entry.generated_tokens < params.min_new_tokens => (NotFinished, None),
+            _ if last_token_id == eos_token_id => (EosToken, None),
+            _ if entry.generated_tokens >= params.max_new_tokens =>
+                (if params.max_is_token_limit { TokenLimit } else { MaxTokens }, None),
+            _ => if let Some(ss_match) = TokenProcessor::matches_stop_sequence(entry, new_bytes) {
+                (StopSequence, Some(ss_match))
+            } else {
+                (NotFinished, None)
+            }
         }
     }
 
-    fn matches_stop_sequence(e: &Entry, last_text: Option<&String>) -> bool {
-        match last_text {
-            Some(text) => {
-                // We compare byte subslices to avoid utf8 boundary problem
-                let output = e.output.as_ref().unwrap().output().as_bytes();
-                let next_off = (output.len() + 1) - text.len();
-                e.request.parameters.stop_seqs.iter().map(|ss| (ss.as_bytes(), ss.len())).any(
-                    |(ss, len)| output[next_off.checked_sub(len).unwrap_or(0)..]
-                        .windows(len).rev().any(|w| w == ss)
+    /// If stop sequence matches, returns tuple
+    /// (index into stop seq array, index of first byte of stop seq in entry.output)
+    fn matches_stop_sequence(entry: &Entry, new_bytes: Option<usize>) -> Option<(usize, usize)> {
+        new_bytes.map(|new_bytes_count| {
+            // We compare byte subslices to avoid utf8 boundary problem
+            let output = entry.output.as_ref().unwrap().output().as_bytes();
+            let next_off = (output.len() + 1) - new_bytes_count;
+            entry.request.parameters.stop_seqs.iter()
+                .map(|ss| (ss.as_bytes(), ss.len(), next_off.saturating_sub(ss.len()))).enumerate()
+                .find_map(|(ss_idx, (ss, len, start_off))| output[start_off..]
+                    .windows(len).rposition(|w| w == ss)
+                    .map(|pos| (ss_idx, start_off + pos))
                 )
-            },
-            None => false,
-        }
+        }).flatten()
     }
 
     /// Add returned input tokens to their corresponding entries
@@ -694,14 +707,25 @@ impl<'a> TokenProcessor<'a> {
             let e = self.entries.get_mut(&request_id)
                 .expect("ID not found. This is a bug.");
 
-            if e.generated_tokens == 0 && !e.request.parameters.stop_seqs.is_empty() {
+            let is_stream = e.stream_tx.is_some();
+            let stop_seqs = &e.request.parameters.stop_seqs;
+
+            if e.generated_tokens == 0 && !stop_seqs.is_empty() {
+                let hold_back_bytes = match is_stream {
+                    // No need to hold back bytes if we aren't streaming
+                    false => 0,
+                    // Ensure at least one token is held back so that its text can be trimmed
+                    _ if e.request.parameters.include_stop_seq => 1,
+                    // If stop sequences aren't to be output then we need to hold back at least
+                    // the number of bytes that comprise the longest one
+                    _ => stop_seqs.iter().map(|ss| ss.len()).max().unwrap(),
+                };
                 e.output = Some(IncrementalDecoderWrapper::for_decoder(
-                    &self.decoder, self.decoder.seq2seq,
+                    &self.decoder, self.decoder.seq2seq, hold_back_bytes,
                 ));
             }
 
             e.generated_tokens += 1;
-            let is_stream = e.stream_tx.is_some();
             let token = match is_stream {
                 true => Some(output),
                 false => {
@@ -716,13 +740,15 @@ impl<'a> TokenProcessor<'a> {
             };
 
             let mut text = None;
+            let mut bytes_added = None;
             if let Some(idecoder) = &mut e.output {
                 // We only do the token decoding at this stage if stop_sequence(s) are provided,
                 // otherwise it can be deferred to run in per-response tasks rather than
                 // the main batching loop
                 match idecoder.next(next_token_id, self.decoder) {
-                    Ok(decoded) => {
+                    Ok((decoded, added)) => {
                         text = Some(decoded);
+                        bytes_added = Some(added);
                     },
                     Err(err) => {
                         // Decoding error, abort the request
@@ -737,28 +763,42 @@ impl<'a> TokenProcessor<'a> {
             }
 
             // Evaluate stopping criteria
-            let mut stop_reason = TokenProcessor::check_stopping_criteria(
-                e, next_token_id, self.decoder.eos_token_id, text.as_ref()
+            let (mut stop_reason, stop_seq_match) = TokenProcessor::check_stopping_criteria(
+                e, next_token_id, self.decoder.eos_token_id, bytes_added
             );
 
             if stop_reason != NotFinished {
                 // Stop criteria met, send final response for both streaming and unary cases
                 let mut e = self.entries.remove(&request_id).unwrap();
+
+                // Handle stop sequence if we are stopping due to one
+                let mut stop_sequence = None;
+                let mut truncate_to = None;
+                if let Some((ss_index, ss_byte_offset)) = stop_seq_match {
+                    // assert stop_reason == StopSequence
+                    let stop_seq = e.request.parameters.stop_seqs.get(ss_index).unwrap();
+                    stop_sequence = Some(stop_seq.clone());
+                    truncate_to = match e.request.parameters.include_stop_seq {
+                        true => Some(ss_byte_offset + stop_seq.len()),
+                        false => Some(ss_byte_offset),
+                    };
+                }
+
                 // Flush the output if we are doing incremental decoding
                 let mut decode_err = None;
                 if let Some(t) = text.as_mut() {
                     if let Err(err) = e.output.as_mut().unwrap()
-                        .flush(self.decoder).map(|s| t.push_str(&s)) {
+                        .flush(truncate_to, self.decoder).map(|s| t.push_str(&s)) {
                         decode_err = Some(err);
                     }
                 }
                 let response = match decode_err {
                     Some(err) => Err(ClientError::Generation(err.to_string())),
                     _ if is_stream => Ok(InferResponse::stream_final(
-                        token.unwrap(), text, &e, request_id, stop_reason
+                        token.unwrap(), text, &e, request_id, stop_reason, stop_sequence
                     )),
                     _ => Ok(InferResponse::unary(
-                        &mut e, request_id, self.decoder.seq2seq, stop_reason
+                        &mut e, request_id, self.decoder.seq2seq, stop_reason, stop_sequence
                     )),
                 };
                 // unwrap_or is valid here as we don't care if the receiver is gone.
@@ -774,7 +814,7 @@ impl<'a> TokenProcessor<'a> {
                     let e = self.entries.remove(&request_id).unwrap();
                     stop_reason = Cancelled;
                     metrics::increment_counter!("tgi_request_failure", "err" => "cancelled");
-                    //TODO include request context
+                    //TODO include request context in log message
                     warn!("Aborted streaming request {request_id} cancelled by client \
                         after generating {} token(s)", e.generated_tokens);
                 }
@@ -786,7 +826,7 @@ impl<'a> TokenProcessor<'a> {
                 let e = self.entries.remove(&request_id).unwrap();
                 stop_reason = Cancelled;
                 metrics::increment_counter!("tgi_request_failure", "err" => "cancelled");
-                //TODO include request context
+                //TODO include request context in log message
                 warn!("Aborted request {request_id} cancelled by client \
                     after generating {} token(s)", e.generated_tokens);
             }
@@ -910,6 +950,8 @@ pub(crate) struct InferResponse {
     pub(crate) tokens: TokenInfos,
     pub(crate) in_tokens: TokenInfos,
     pub(crate) reason: StopReason,
+    // Stop sequence encountered iff reason == StopSequence
+    pub(crate) stop_sequence: Option<String>,
     pub(crate) in_token_count: u32,
     pub(crate) times: Option<Times>,
     pub(crate) request_id: Option<u64>,
@@ -941,7 +983,12 @@ impl InferResponse {
     }
     /// Final stream response message
     fn stream_final(
-        token: Token, text: Option<String>, entry: &Entry, request_id: u64, stop_reason: StopReason
+        token: Token,
+        text: Option<String>,
+        entry: &Entry,
+        request_id: u64,
+        stop_reason: StopReason,
+        stop_sequence: Option<String>,
     ) -> Self {
         Self {
             is_decoded: text.is_some(),
@@ -949,6 +996,7 @@ impl InferResponse {
             gen_token_count: entry.generated_tokens,
             tokens: WithIds(vec![token]),
             reason: stop_reason,
+            stop_sequence,
             times: Some(entry.into()),
             request_id: Some(request_id),
             seed: entry.request.parameters.seed.unwrap_or_default(),
@@ -957,7 +1005,11 @@ impl InferResponse {
     }
     /// Unary response message
     fn unary(
-        entry: &mut Entry, request_id: u64, seq2seq: bool, stop_reason: StopReason
+        entry: &mut Entry,
+        request_id: u64,
+        seq2seq: bool,
+        stop_reason: StopReason,
+        stop_sequence: Option<String>,
     ) -> Self {
         let mut text = String::new();
         if entry.request.parameters.include_input_text {
@@ -985,6 +1037,7 @@ impl InferResponse {
             tokens: WithIds(take(&mut entry.tokens)),
             in_tokens: WithIds(take(&mut entry.input_tokens)),
             reason: stop_reason,
+            stop_sequence,
             times: Some((&*entry).into()),
             request_id: Some(request_id),
             in_token_count: entry.input_length as u32,

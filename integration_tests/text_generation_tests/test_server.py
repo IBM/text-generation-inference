@@ -31,6 +31,7 @@ def start_server(
     timeout=30,
     model_path=None,
     include_cache_env_vars=True,
+    output_special_tokens=False,
 ):
     # Download weights to the cache first
     print(f"Downloading files for model {model_name}...")
@@ -63,6 +64,9 @@ def start_server(
         "--max-new-tokens", "169",
         "--max-batch-weight", "80000",
     ]
+
+    if output_special_tokens:
+        args.append("--output-special-tokens")
 
     env = os.environ.copy()
     env["RUST_BACKTRACE"] = "full"
@@ -115,7 +119,11 @@ def server_fixture(request):
     model_name = request.node.get_closest_marker("model").args[0]
     shards = int(request.node.get_closest_marker("shards").args[0])
     extensions = request.node.get_closest_marker("extensions").args[0]
-    p = start_server(model_name, extensions, shards, 3000, 29502)
+    ost = request.node.get_closest_marker("output_special_tokens")
+    ost = ost is not None and ost.args[0]
+    p = start_server(
+        model_name, extensions, shards, 3000, 29502, output_special_tokens=ost
+    )
     yield p
     p.terminate()
     assert p.wait(8.0) == 0
@@ -345,6 +353,14 @@ async def test_mt0(server_fixture, test_cases):
 async def test_gptbigcode(server_fixture, test_cases):
     await run_test_cases_async(test_cases)
 
+# test with Llama model which has tokenizer.add_bos_token == true
+@pytest.mark.model("Maykeye/TinyLLama-v0")
+@pytest.mark.extensions(".bin,.json,.model")
+@pytest.mark.shards(1)
+@pytest.mark.test_case_file("test_cases_tinyllama.yaml")
+@pytest.mark.asyncio
+async def test_llama(server_fixture, test_cases):
+    await run_test_cases_async(test_cases)
 
 # Test distributed inference - two shards
 @pytest.mark.model("bigscience/bloom-560m")
@@ -354,6 +370,16 @@ async def test_gptbigcode(server_fixture, test_cases):
 @pytest.mark.asyncio
 async def test_bloom(server_fixture, test_cases):
     await run_test_cases_async(test_cases, sharded=True)
+
+
+@pytest.mark.model("bigscience/mt0-small")
+@pytest.mark.extensions(".bin,.json")
+@pytest.mark.shards(1)
+@pytest.mark.output_special_tokens(True)
+@pytest.mark.test_case_file("test_cases_mt0_ost.yaml")
+@pytest.mark.asyncio
+async def test_mt0_output_special_tokens(server_fixture, test_cases):
+    await run_test_cases_async(test_cases)
 
 
 # Test loading when an explicit local path is provided

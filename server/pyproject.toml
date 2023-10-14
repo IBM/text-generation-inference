@@ -9,22 +9,22 @@ text-generation-server = 'text_generation_server.cli:app'
 
 [tool.poetry.dependencies]
 python = ">=3.9.0,<3.13"
-protobuf = "^4.24.3"
-grpcio = "^1.58.0"
-grpcio-reflection = "^1.58.0"
-loguru = "^0.7.0"
+protobuf = "^4.24.4"
+grpcio = "^1.59.0"
+grpcio-reflection = "^1.59.0"
+loguru = "^0.7.2"
 typer = "^0.9.0"
 accelerate = { version = "0.23.0", optional = true }
-bitsandbytes = { version = "^0.41.0", optional = true }
+bitsandbytes = { version = "^0.41.1", optional = true }
 scipy = { version = "^1.11.2", optional = true }
-safetensors = "^0.3.3"
+safetensors = "^0.4.0"
 sentencepiece = "^0.1.99"
-transformers = "4.33.1"
-optimum = { version = "1.11.0", extras = ["onnxruntime-gpu"], optional = true }
-onnxruntime = { version = "1.15.1", optional = true }
-onnxruntime-gpu = { version = "1.15.1", optional = true }
-onnx = { version = "1.14.0", optional = true }
-einops = "^0.7.0rc2"
+transformers = "4.34.0"
+optimum = { version = "1.13.2", extras = ["onnxruntime-gpu"], optional = true }
+onnxruntime = { version = "1.16.0", optional = true }
+onnxruntime-gpu = { version = "1.16.0", optional = true }
+onnx = { version = "1.14.1", optional = true }
+einops = "^0.7.0"
 
 # Explicitly install some transitive dependencies to avoid CVEs
 mpmath = ">=1.3.0"
@@ -39,8 +39,8 @@ onnx = ["optimum", "onnxruntime", "onnx"]
 onnx-gpu = ["optimum", "onnxruntime-gpu", "onnx"]
 
 [tool.poetry.group.dev.dependencies]
-grpcio-tools = "^1.58.0"
-pytest = "^7.4.0"
+grpcio-tools = "^1.59.0"
+pytest = "^7.4.2"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

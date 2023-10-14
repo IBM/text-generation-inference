@@ -58,6 +58,24 @@
         stopReason: EOS_TOKEN
         text: ' positive'
 
+- name: Greedy with tuned prompt prefix and truncation
+  # Prompt prefixes with multi-shard not yet supported
+  singleShardOnly: true
+  request:
+    prefixId: bloom_sentiment_1
+    params:
+      truncateInputTokens: 10
+      method: GREEDY
+      stopping: {"maxNewTokens": 20}
+    requests:
+      - {"text": "[This will be truncated] What a wonderful day!:\nSentiment:"}
+  response:
+    responses:
+      - generatedTokenCount: 2
+        inputTokenCount: 10
+        stopReason: EOS_TOKEN
+        text: ' positive'
+
 
 # Prompt prefix with nested path
 - name: Greedy with tuned prompt prefix with nested path (id)
@@ -844,8 +862,9 @@
       - generatedTokenCount: 17
         inputTokenCount: 45
         stopReason: STOP_SEQUENCE
+        stopSequence: "🤖 \nTran"
         text: "Convert movie titles into emoji.\n\nBack to the Future:
-        👨👴🚗🕒 \nBatman: 🤵🦇 \nTransformers: 🚗🤖 \nStar Wars: 🤗🤖 \nBatman: 🤗🤖 \nTransform"
+        👨👴🚗🕒 \nBatman: 🤵🦇 \nTransformers: 🚗🤖 \nStar Wars: 🤗🤖 \nBatman: 🤗🤖 \nTran"
 
 
 # Single token input
@@ -1087,6 +1106,7 @@
       - generatedTokenCount: 14
         inputTokenCount: 6
         stopReason: STOP_SEQUENCE
+        stopSequence: confused
         text: The first time I saw the movie, I was a little bit confused
 
 # Stop sequence
@@ -1104,7 +1124,88 @@
       - generatedTokenCount: 10
         inputTokenCount: 6
         stopReason: STOP_SEQUENCE
+        stopSequence: I was
         text: The first time I saw the movie, I was
+
+
+# Stop sequence, omitted
+- name: Stop sequence omitted
+  request:
+    params:
+      stopping:
+        maxNewTokens: 20
+        includeStopSequence: false
+        stopSequences:
+          - " movie"
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 7
+        inputTokenCount: 6
+        stopReason: STOP_SEQUENCE
+        stopSequence: " movie"
+        text: 'The first time I saw the'
+
+# Stop sequence partial token
+- name: Stop sequence partial token
+  request:
+    params:
+      stopping:
+        maxNewTokens: 20
+        includeStopSequence: true
+        stopSequences:
+          - "confu"
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 14
+        inputTokenCount: 6
+        stopReason: STOP_SEQUENCE
+        stopSequence: "confu"
+        text: "The first time I saw the movie, I was a little bit confu"
+
+
+# Long stop sequence, omitted
+- name: Long stop sequence omitted
+  request:
+    params:
+      stopping:
+        maxNewTokens: 80
+        includeStopSequence: false
+        stopSequences:
+          - "w the movie, I was a little bit confused. I "
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 17
+        inputTokenCount: 6
+        stopReason: STOP_SEQUENCE
+        stopSequence: 'w the movie, I was a little bit confused. I '
+        text: The first time I sa
+
+
+# Long stop sequence partial token
+- name: Long stop sequence partial token
+  request:
+    params:
+      stopping:
+        maxNewTokens: 80
+        includeStopSequence: true
+        stopSequences:
+          - "to exp"
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 22
+        inputTokenCount: 6
+        stopReason: STOP_SEQUENCE
+        stopSequence: to exp
+        text: "The first time I saw the movie, I was a little bit confused. I wasn\u2019\
+        t sure what to exp"
 
 
  # Repetition penalty

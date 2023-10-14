@@ -1,0 +1,308 @@
+# Test empty requests
+- name: Empty 1
+  request: {}
+  response: {}
+- name: Empty 2
+  request:
+    params: {}
+    requests: []
+  response: {}
+
+# Basic Greedy (implicit)
+- name: Basic Greedy, max new tokens (implicit)
+  request:
+    requests:
+    - {"text": "Once upon a time,"}
+  response:
+    responses:
+    - generatedTokenCount: 20
+      inputTokenCount: 6
+      stopReason: MAX_TOKENS
+      text: ' there was a little girl named Lily. She loved to play with her toy car.
+        One day,'
+
+# Basic Greedy (explicit)
+- name: Basic Greedy, max new tokens (explicit)
+  request:
+    params:
+      method: GREEDY
+      stopping: {"maxNewTokens": 17}
+    requests:
+      - {"text":  "Once upon a time,"}
+  response:
+    responses:
+    - generatedTokenCount: 17
+      inputTokenCount: 6
+      stopReason: MAX_TOKENS
+      text: ' there was a little girl named Lily. She loved to play with her toy car.'
+
+- name: Long input with tokens truncated
+  request:
+    params:
+      truncateInputTokens: 25
+      stopping:
+        maxNewTokens: 14
+      response:
+        inputText: true
+    requests:
+    - text: >
+        The hallway smelt of boiled cabbage and old rag mats. At one end of it a coloured poster, too large for
+        indoor display, had been tacked to the wall. It depicted simply an enormous face, more than a metre wide:
+        the face of a man of about forty-five, with a heavy black moustache and ruggedly handsome features.
+        Winston made for the stairs. It was no use trying the lift. Even at the best of times it was seldom working,
+        and at present the electric current was cut off during daylight hours. It was part of the economy drive in
+        preparation for Hate Week. The flat was seven flights up, and Winston, who was thirty-nine and had a
+        varicose ulcer above his right ankle, went slowly, resting several times on the way. On each landing,
+        opposite the lift-shaft, the poster with the enormous face gazed from the wall.
+        The hallway smelt of boiled cabbage and old rag mats. At one end of it a coloured poster, too large for
+        indoor display, had been tacked to the wall. It depicted simply an enormous face, more than a metre wide:
+        the face of a man of about forty-five, with a heavy black moustache and ruggedly handsome features.
+        Winston made for the stairs. It was no use trying the lift. Even at the best of times it was seldom working,
+        and at present the electric current was cut off during daylight hours. It was part of the economy drive in
+        preparation for Hate Week. The flat was seven flights up, and Winston, who was thirty-nine and had a
+        varicose ulcer above his right ankle, went slowly, resting several times on the way. On each landing,
+        opposite the lift-shaft, the poster with the enormous face gazed from the wall.
+  response:
+    responses:
+    - generatedTokenCount: 14
+      inputTokenCount: 25
+      stopReason: MAX_TOKENS
+      text: 'The hallway smelt of boiled cabbage and old rag mats. At one end of it a
+        coloured poster, too large for indoor display, had been tacked to the wall. It
+        depicted simply an enormous face, more than a metre wide: the face of a man of
+        about forty-five, with a heavy black moustache and ruggedly handsome features.
+        Winston made for the stairs. It was no use trying the lift. Even at the best of
+        times it was seldom working, and at present the electric current was cut off during
+        daylight hours. It was part of the economy drive in preparation for Hate Week.
+        The flat was seven flights up, and Winston, who was thirty-nine and had a varicose
+        ulcer above his right ankle, went slowly, resting several times on the way. On
+        each landing, opposite the lift-shaft, the poster with the enormous face gazed
+        from the wall. The hallway smelt of boiled cabbage and old rag mats. At one end
+        of it a coloured poster, too large for indoor display, had been tacked to the
+        wall. It depicted simply an enormous face, more than a metre wide: the face of
+        a man of about forty-five, with a heavy black moustache and ruggedly handsome
+        features. Winston made for the stairs. It was no use trying the lift. Even at
+        the best of times it was seldom working, and at present the electric current was
+        cut off during daylight hours. It was part of the economy drive in preparation
+        for Hate Week. The flat was seven flights up, and Winston, who was thirty-nine
+        and had a varicose ulcer above his right ankle, went slowly, resting several times
+        on the way. On each landing, opposite the lift-shaft, the poster with the enormous
+        face gazed from the wall.
+
+        The mailman was so excited to see what was inside the door.'
+
+- name: Sampling with multiple requests
+  request:
+    params:
+      method: SAMPLE
+      sampling:
+        seed: 99
+        top_k: 3
+        top_p: 0.7
+        typical_p: 0.6
+        temperature: 0.99
+      stopping: {"maxNewTokens": 2}
+      response:
+        generatedTokens: true
+        tokenLogprobs: true
+        topNTokens: 2
+    requests:
+    - {"text": ""}
+    - {"text": "A boy"}
+    - {"text": "A girl"}
+  response:
+    responses:
+    - generatedTokenCount: 2
+      inputTokenCount: 1
+      seed: '99'
+      stopReason: MAX_TOKENS
+      text: ' Once upon'
+      tokens:
+      - text: "\u2581Once"
+        topTokens:
+        - text: "\u2581Once"
+      - text: "\u2581upon"
+        topTokens:
+        - text: "\u2581upon"
+    - generatedTokenCount: 2
+      inputTokenCount: 3
+      seed: '99'
+      stopReason: MAX_TOKENS
+      text: ' named Tim'
+      tokens:
+      - logprob: -0.5503204
+        text: "\u2581named"
+        topTokens:
+        - logprob: -0.5503204
+          text: "\u2581named"
+        - logprob: -0.85982776
+          text: "\u2581was"
+      - text: "\u2581Tim"
+        topTokens:
+        - text: "\u2581Tim"
+    - generatedTokenCount: 2
+      inputTokenCount: 3
+      seed: '99'
+      stopReason: MAX_TOKENS
+      text: ' was walking'
+      tokens:
+      - text: "\u2581was"
+        topTokens:
+        - text: "\u2581was"
+      - logprob: -0.5918741
+        text: "\u2581walking"
+        topTokens:
+        - logprob: -0.5918741
+          text: "\u2581walking"
+        - logprob: -0.8058443
+          text: "\u2581a"
+
+
+# Prompt prefix
+- name: Greedy with tuned prompt prefix
+  # Prompt prefixes with multi-shard not yet supported
+  singleShardOnly: true
+  request:
+    prefixId: tinyllama
+    params:
+      method: GREEDY
+      stopping:
+        maxNewTokens: 13
+    requests:
+    - {"text": ""}
+  response:
+    responses:
+    - generatedTokenCount: 13
+      inputTokenCount: 1
+      stopReason: MAX_TOKENS
+      text: ' Once he can go to the park and play with his friends.'
+
+# Prompt prefix with truncation
+- name: Greedy with tuned prompt prefix with truncation
+  # Prompt prefixes with multi-shard not yet supported
+  singleShardOnly: true
+  request:
+    prefixId: tinyllama
+    params:
+      method: GREEDY
+      # this truncate will only leave the BOS token
+      truncateInputTokens: 1
+      stopping:
+        maxNewTokens: 13
+    requests:
+    - {"text": "this will all be truncated"}
+  response:
+    responses:
+    - generatedTokenCount: 13
+      inputTokenCount: 1
+      stopReason: MAX_TOKENS
+      text: ' Once he can go to the park and play with his friends.'
+
+
+# Prompt prefix returning input and generated tokens
+- name: Greedy with tuned prompt prefix and returned tokens
+  # Prompt prefixes with multi-shard not yet supported
+  singleShardOnly: true
+  request:
+    prefixId: tinyllama
+    params:
+      method: GREEDY
+      stopping: {"maxNewTokens": 2}
+      response:
+        inputTokens: true
+        generatedTokens: true
+        tokenLogprobs: true
+        tokenRanks: true
+        topNTokens: 2
+    requests:
+    - {"text": "Luke"}
+  response:
+    responses:
+    - generatedTokenCount: 2
+      inputTokenCount: 2
+      inputTokens:
+      - logprob: NaN
+        text: <unk>
+      - logprob: -15.049328
+        rank: 22217
+        text: <unk>
+        topTokens:
+        - logprob: -1.1141717
+          text: ''''
+        - logprob: -4.02287
+          text: "\u2581the"
+      - logprob: -13.876278
+        rank: 21532
+        text: <unk>
+        topTokens:
+        - logprob: -3.9175758
+          text: "\u2581beautiful"
+        - logprob: -4.1629815
+          text: "\u2581big"
+      - logprob: -14.279059
+        rank: 20730
+        text: <unk>
+        topTokens:
+        - logprob: -1.2582091
+          text: '!'
+        - logprob: -3.2666798
+          text: ','
+      - logprob: -14.407384
+        rank: 21752
+        text: <unk>
+        topTokens:
+        - logprob: -0.74738955
+          text: "\u2581away"
+        - logprob: -3.7206948
+          text: "\u2581home"
+      - logprob: -14.740826
+        rank: 21652
+        text: <unk>
+        topTokens:
+        - logprob: -2.3787293
+          text: "\u2581away"
+        - logprob: -2.5638995
+          text: "\u2581and"
+      - logprob: -15.371115
+        rank: 20720
+        text: <unk>
+        topTokens:
+        - logprob: -1.3795971
+          text: .
+        - logprob: -2.144157
+          text: "\u2581in"
+      - logprob: -12.507558
+        rank: 6857
+        text: <s>
+        topTokens:
+        - logprob: -0.8159742
+          text: "\u2581"
+        - logprob: -1.5868378
+          text: <0x0A>
+      - logprob: -9.704017
+        rank: 194
+        text: "\u2581Luke"
+        topTokens:
+        - logprob: -0.48339355
+          text: "\u2581Once"
+        - logprob: -1.4185036
+          text: "\u2581One"
+      stopReason: MAX_TOKENS
+      text: ' was so'
+      tokens:
+      - logprob: -0.815401
+        rank: 1
+        text: "\u2581was"
+        topTokens:
+        - logprob: -0.815401
+          text: "\u2581was"
+        - logprob: -1.8202467
+          text: "\u2581had"
+      - logprob: -1.3788807
+        rank: 1
+        text: "\u2581so"
+        topTokens:
+        - logprob: -1.3788807
+          text: "\u2581so"
+        - logprob: -1.7917235
+          text: "\u2581very"

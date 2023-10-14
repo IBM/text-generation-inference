@@ -13,6 +13,7 @@ patchesStrategicMerge:
   - ../../base/patches/gpus/2-gpu.yaml
   - ../../base/patches/gpus/a100-80g.yaml
   - ../../base/patches/limits/t5-xxl.yaml
+  - ../../base/patches/shm.yaml
   - |-
    apiVersion: apps/v1
    kind: Deployment

@@ -14,7 +14,7 @@ from text_generation_server.inference_engine import BaseInferenceEngine
 from text_generation_server.utils.dist import initialize_torch_distributed
 from text_generation_server.utils.hub import local_weight_files
 
-NONTP_FLASH_TYPES = ["RefinedWeb", "RefinedWebModel", "gpt_neox", "gpt_bigcode", "llama"]
+NONTP_FLASH_TYPES = ["RefinedWeb", "RefinedWebModel", "gpt_neox", "gpt_bigcode", "llama", "falcon"]
 TP_NONFLASH_TYPES = ["bloom", "t5", "gpt_neox"]
 TP_FLASH_TYPES = NONTP_FLASH_TYPES  # All flash types currently support TP
 NONTP_NONFLASH_TYPES = ["bloom", "t5"]

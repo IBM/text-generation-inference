@@ -1,6 +1,6 @@
 use clap::Parser;
 use std::env;
-use std::io::{BufRead, BufReader, ErrorKind};
+use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,9 +11,13 @@ use std::thread;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 use std::{fs, io};
+use std::env::VarError;
 use std::ffi::OsString;
 use subprocess::{Popen, PopenConfig, PopenError, Redirection};
 use tracing::info;
+
+// For now this will be disabled by default, more testing is needed
+const DEFAULT_MAX_SPLIT_SIZE_MB: &'static str = "none";
 
 /// App Configuration
 #[derive(Parser, Debug, Clone)]
@@ -67,6 +71,9 @@ struct Args {
     output_special_tokens: bool,
     #[clap(default_value = "1.0", long, short, env)]
     cuda_process_memory_fraction: f32,
+    // Default for default_include_stop_seqs is true for now, for backwards compatibility
+    #[clap(default_value = "true", long, env, action = clap::ArgAction::Set)]
+    default_include_stop_seqs: bool,
 }
 
 fn main() -> ExitCode {
@@ -99,6 +106,26 @@ fn main() -> ExitCode {
         &args.model_name, args.revision.as_deref()
     ).expect("Could not find tokenizer for model");
 
+    // Set max_split_size to default value if PYTORCH_CUDA_ALLOC_CONF is not set,
+    // or unset it if PYTORCH_CUDA_ALLOC_CONF is set but empty
+    let cuda_alloc_conf = match env::var("PYTORCH_CUDA_ALLOC_CONF") {
+        Err(VarError::NotPresent) if DEFAULT_MAX_SPLIT_SIZE_MB == "none" => None,
+        Err(VarError::NotPresent) => {
+            let alloc_conf = format!("max_split_size_mb:{}", DEFAULT_MAX_SPLIT_SIZE_MB);
+            info!("Setting PYTORCH_CUDA_ALLOC_CONF to default value: {alloc_conf}");
+            Some(alloc_conf)
+        },
+        Ok(alloc_conf) if alloc_conf.trim().is_empty() => {
+            info!("PYTORCH_CUDA_ALLOC_CONF is unset");
+            Some(String::new()) // This means remove it from the env
+        },
+        Ok(alloc_conf) => {
+            info!("PYTORCH_CUDA_ALLOC_CONF is set to: {alloc_conf}");
+            None
+        },
+        Err(VarError::NotUnicode(_)) => panic!("PYTORCH_CUDA_ALLOC_CONF set to non-unicode value"),
+    };
+
     // Signal handler
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
@@ -122,6 +149,7 @@ fn main() -> ExitCode {
         let status_sender = status_sender.clone();
         let shutdown = shutdown.clone();
         let shutdown_sender = shutdown_sender.clone();
+        let cuda_alloc_conf = cuda_alloc_conf.clone();
         thread::spawn(move || {
             shard_manager(
                 args.model_name,
@@ -134,6 +162,7 @@ fn main() -> ExitCode {
                 args.max_batch_weight,
                 args.shard_uds_path,
                 args.cuda_process_memory_fraction,
+                cuda_alloc_conf,
                 rank,
                 num_shard,
                 args.master_addr,
@@ -233,6 +262,10 @@ fn main() -> ExitCode {
         argv.push("--output-special-tokens".into());
     }
 
+    if args.default_include_stop_seqs {
+        argv.push("--default-include-stop-seqs".into());
+    }
+
     let mut webserver = match Popen::create(
         &argv,
         PopenConfig {
@@ -281,7 +314,7 @@ fn main() -> ExitCode {
 
     while running.load(Ordering::SeqCst) {
         if let Ok(ShardStatus::Failed((rank, err))) = status_receiver.try_recv() {
-            tracing::error!("Shard {rank} failed:\n{err}");
+            tracing::error!("Shard {rank} failed: {err}");
             exit_code = ExitCode::FAILURE;
             break;
         };
@@ -369,6 +402,7 @@ fn shard_manager(
     max_batch_weight: Option<usize>,
     uds_path: String,
     cuda_process_memory_fraction: f32,
+    cuda_alloc_conf: Option<String>,
     rank: usize,
     world_size: usize,
     master_addr: String,
@@ -438,6 +472,15 @@ fn shard_manager(
         _ => (),
     }
 
+    if let Some(alloc_conf) = cuda_alloc_conf {
+        if alloc_conf.is_empty() {
+            // Remove it from env
+            env.retain(|(k, _)| k != "PYTORCH_CUDA_ALLOC_CONF");
+        } else {
+            env.push(("PYTORCH_CUDA_ALLOC_CONF".into(), alloc_conf.into()));
+        }
+    }
+
     // Torch Distributed / DeepSpeed Env vars
     env.push(("RANK".into(), rank.to_string().into()));
     env.push(("LOCAL_RANK".into(), rank.to_string().into()));
@@ -489,27 +532,31 @@ fn shard_manager(
 
     // Redirect STDOUT and STDERR to the console
     let shard_stdout = p.stdout.take().unwrap();
-    thread::spawn(move || BufReader::new(shard_stdout).lines().for_each(|line|
-        println!("Shard {}: {}", rank, line.unwrap())
-    ));
+    let stdout_thread = thread::spawn(
+        move || BufReader::new(shard_stdout).lines().for_each(
+            |line| println!("Shard {rank}: {}", line.unwrap())
+        )
+    );
     let shard_stderr = p.stderr.take().unwrap();
-    thread::spawn(move || BufReader::new(shard_stderr).lines().for_each(|line|
-        eprintln!("Shard {}: {}", rank, line.unwrap())
-    ));
+    let stderr_thread = thread::spawn(
+        move || BufReader::new(shard_stderr).lines().for_each(
+            |line| eprintln!("Shard {rank}: {}", line.unwrap())
+        )
+    );
 
     let mut ready = false;
     let start_time = Instant::now();
     let mut wait_time = Instant::now();
     loop {
         // Process exited
-        if p.poll().is_some() {
-            let mut err = String::new();
-            //We don't need to do this now that we're logging
-            //p.stderr.take().unwrap().read_to_string(&mut err).unwrap();
-            status_sender
-                .send(ShardStatus::Failed((rank, err)))
-                .unwrap();
-            return;
+        if let Some(status) = p.poll() {
+            // Ensure we finish propagating any final stdout/stderr from the shard
+            stdout_thread.join().unwrap_or_default();
+            io::stdout().flush().unwrap_or_default();
+            stderr_thread.join().unwrap_or_default();
+            io::stderr().flush().unwrap_or_default();
+            status_sender.send(ShardStatus::Failed((rank, format!("{status:?}")))).unwrap();
+            return
         }
 
         // We received a shutdown signal
@@ -517,17 +564,19 @@ fn shard_manager(
             p.terminate().unwrap();
             let _ = p.wait_timeout(Duration::from_secs(90));
             info!("Shard {rank} terminated");
-            return;
+            return
         }
 
         // Shard is ready
-        if uds.exists() && !ready {
-            info!("Shard {rank} ready in {:?}", start_time.elapsed());
-            status_sender.send(ShardStatus::Ready).unwrap();
-            ready = true;
-        } else if !ready && wait_time.elapsed() > Duration::from_secs(10) {
-            tracing::info!("Waiting for shard {rank} to be ready...");
-            wait_time = Instant::now();
+        if !ready {
+            if uds.exists() {
+                info!("Shard {rank} ready in {:?}", start_time.elapsed());
+                status_sender.send(ShardStatus::Ready).unwrap();
+                ready = true;
+            } else if wait_time.elapsed() > Duration::from_secs(10) {
+                info!("Waiting for shard {rank} to be ready...");
+                wait_time = Instant::now();
+            }
         }
         sleep(Duration::from_millis(100));
     }

@@ -143,6 +143,7 @@ They are all prefixed with `tgi_`. Descriptions will be added to the table below
 | `tgi_batch_inference_batch_size`           | `histogram` | method = "prefill" or "next_token"                  |              |
 | `tgi_batch_inference_duration`             | `histogram` | method = "prefill" or "next_token", makeup          |              |
 | `tgi_batch_inference_forward_duration`     | `histogram` | method = "prefill" or "next_token", makeup          |              |
+| `tgi_batch_inference_tokproc_duration`     | `histogram` | method = "prefill" or "next_token", makeup          |              |
 | `tgi_batch_next_tokens`                    | `histogram` |                                                     | Prefill only |
 | `tgi_batch_current_size`                   | `gauge`     |                                                     |              |
 | `tgi_batch_input_tokens`                   | `gauge`     |                                                     |              |

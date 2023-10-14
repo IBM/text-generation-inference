@@ -90,6 +90,22 @@
         stopReason: EOS_TOKEN
         text: They are a wonderful day.
 
+# Prompt prefix - decoder only with truncation
+- name: Greedy with tuned prompt prefix and truncation for decoder only
+  request:
+    prefixId: mt0_sentiment_decoder_only
+    params:
+      method: GREEDY
+      truncateInputTokens: 12
+      stopping: {"maxNewTokens": 20}
+    requests:
+      - {"text": "[This will be truncated] What a wonderful day!:\nSentiment:"}
+  response:
+    responses:
+      - generatedTokenCount: 10
+        inputTokenCount: 12
+        stopReason: EOS_TOKEN
+        text: They are a wonderful day.
 
 # Prompt prefix returning input and generated tokens
 - name: Greedy with tuned prompt prefix and returned tokens
@@ -681,6 +697,7 @@
       - generatedTokenCount: 6
         inputTokenCount: 33
         stopReason: STOP_SEQUENCE
+        stopSequence: "🎭"
         text: "Convert movie titles into emoji.\n\nBack to the Future:
         👨👴🚗🕒 \nBatman: 🤵🦇 \nTransformers: 🚗🤖 \nStar Wars:\n\nTransformers: 🎬🎭"
 
@@ -897,7 +914,8 @@
       - generatedTokenCount: 8
         inputTokenCount: 8
         stopReason: STOP_SEQUENCE
-        text: 'The very long story is written'
+        stopSequence: written
+        text: The very long story is written
 
 - name: Stop sequence 2
   request:
@@ -914,7 +932,87 @@
       - generatedTokenCount: 16
         inputTokenCount: 8
         stopReason: STOP_SEQUENCE
+        stopSequence: '.'
         text: 'The very long story is written by a very long story.'
+
+# Stop sequence, omitted
+- name: Stop sequence omitted
+  request:
+    params:
+      stopping:
+        maxNewTokens: 20
+        includeStopSequence: false
+        stopSequences:
+          - "written"
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 8
+        inputTokenCount: 8
+        stopReason: STOP_SEQUENCE
+        stopSequence: written
+        text: 'The very long story is '
+
+# Stop sequence partial token
+- name: Stop sequence partial token
+  request:
+    params:
+      stopping:
+        maxNewTokens: 20
+        includeStopSequence: true
+        stopSequences:
+          - "tte"
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 8
+        inputTokenCount: 8
+        stopReason: STOP_SEQUENCE
+        stopSequence: tte
+        text: 'The very long story is writte'
+
+
+# Long stop sequence, omitted
+- name: Long stop sequence omitted
+  request:
+    params:
+      stopping:
+        maxNewTokens: 80
+        includeStopSequence: false
+        stopSequences:
+          - "story. The story is written by a very lon"
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 27
+        inputTokenCount: 8
+        stopReason: STOP_SEQUENCE
+        stopSequence: "story. The story is written by a very lon"
+        text: 'The very long story is written by a very long '
+
+# Long stop sequence partial token
+- name: Long stop sequence partial token
+  request:
+    params:
+      stopping:
+        maxNewTokens: 80
+        includeStopSequence: true
+        stopSequences:
+          - "story. The story is written by a very lon"
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 27
+        inputTokenCount: 8
+        stopReason: STOP_SEQUENCE
+        stopSequence: "story. The story is written by a very lon"
+        text: The very long story is written by a very long story. The story is written
+          by a very lon
+
 
 # Repetition penalty
 - name: Repetition penalty
@@ -1004,26 +1102,28 @@
       - {"text": "Somewhere,\nover the rainbow,\nthere is"}
   response:
     responses:
-    - generatedTokenCount: 7
-      inputTokenCount: 8
-      seed: '22'
-      stopReason: STOP_SEQUENCE
-      text: 'The very long story is '
-    - generatedTokenCount: 3
-      inputTokenCount: 2
-      seed: '22'
-      stopReason: STOP_SEQUENCE
-      text: The Giant
-    - generatedTokenCount: 10
-      inputTokenCount: 5
-      seed: '22'
-      stopReason: MAX_TOKENS
-      text: One of the largest cities in the world
-    - generatedTokenCount: 4
-      inputTokenCount: 11
-      seed: '22'
-      stopReason: EOS_TOKEN
-      text: The rainbow
+      - generatedTokenCount: 7
+        inputTokenCount: 8
+        seed: '22'
+        stopReason: STOP_SEQUENCE
+        stopSequence: 'is '
+        text: 'The very long story is '
+      - generatedTokenCount: 3
+        inputTokenCount: 2
+        seed: '22'
+        stopReason: STOP_SEQUENCE
+        stopSequence: ant
+        text: The Giant
+      - generatedTokenCount: 10
+        inputTokenCount: 5
+        seed: '22'
+        stopReason: MAX_TOKENS
+        text: One of the largest cities in the world
+      - generatedTokenCount: 4
+        inputTokenCount: 11
+        seed: '22'
+        stopReason: EOS_TOKEN
+        text: The rainbow
 
 ## TODO move to separate test
 

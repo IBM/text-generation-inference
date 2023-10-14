@@ -184,7 +184,7 @@ fn validate(
     if params.top_p <= 0.0 || params.top_p > 1.0 {
         return Err(ValidationError::TopP);
     }
-    if params.typical_p >= 1.0 {
+    if params.typical_p > 1.0 {
         return Err(ValidationError::TypicalP);
     }
     if params.top_k < 0 {
@@ -320,7 +320,7 @@ pub enum ValidationError {
     TopP,
     #[error("top_k must be strictly positive")]
     TopK,
-    #[error("typical_p must be < 1.0")]
+    #[error("typical_p must be <= 1.0")]
     TypicalP,
     #[error("repetition_penalty must be > 0.0")]
     RepetitionPenalty,
