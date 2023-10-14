@@ -249,12 +249,14 @@ ENV PATH=/opt/miniconda/bin:$PATH
 # These could instead come from explicitly cached images
 
 # Copy build artifacts from flash attention builder
-COPY --from=flash-att-cache /usr/src/flash-attention/build/lib.linux-x86_64-cpython-39 /opt/miniconda/lib/python3.9/site-packages
-COPY --from=flash-att-cache /usr/src/flash-attention/csrc/layer_norm/build/lib.linux-x86_64-cpython-39 /opt/miniconda/lib/python3.9/site-packages
-COPY --from=flash-att-cache /usr/src/flash-attention/csrc/rotary/build/lib.linux-x86_64-cpython-39 /opt/miniconda/lib/python3.9/site-packages
+#COPY --from=flash-att-cache /usr/src/flash-attention/build/lib.linux-x86_64-cpython-39 /opt/miniconda/lib/python3.9/site-packages
+#COPY --from=flash-att-cache /usr/src/flash-attention/csrc/layer_norm/build/lib.linux-x86_64-cpython-39 /opt/miniconda/lib/python3.9/site-packages
+#COPY --from=flash-att-cache /usr/src/flash-attention/csrc/rotary/build/lib.linux-x86_64-cpython-39 /opt/miniconda/lib/python3.9/site-packages
+COPY --from=flash-att-cache /opt/miniconda/lib/python3.9/site-packages/flash_attn* /opt/miniconda/lib/python3.9/site-packages/
 
 # Copy build artifacts from flash attention v2 builder
-COPY --from=flash-att-v2-cache /usr/src/flash-attention-v2/build/lib.linux-x86_64-cpython-39 /opt/miniconda/lib/python3.9/site-packages
+#COPY --from=flash-att-v2-cache /usr/src/flash-attention-v2/build/lib.linux-x86_64-cpython-39 /opt/miniconda/lib/python3.9/site-packages
+COPY --from=flash-att-v2-cache /opt/miniconda/lib/python3.9/site-packages/flash_attn* /opt/miniconda/lib/python3.9/site-packages/
 
 # Install server
 COPY proto proto
