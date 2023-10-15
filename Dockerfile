@@ -1,8 +1,8 @@
 ## Global Args #################################################################
 ARG BASE_UBI_IMAGE_TAG=9.2-755.1696515532
 ARG FLASH_ATTN_VERSION=1.0.9
-ARG FLASH_ATTN_V2_VERSION=2.0.4
-#ARG FLASH_ATTN_V2_VERSION=2.3.2
+#ARG FLASH_ATTN_V2_VERSION=2.0.4
+ARG FLASH_ATTN_V2_VERSION=2.3.2
 ARG PROTOC_VERSION=24.4
 ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
 #ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
