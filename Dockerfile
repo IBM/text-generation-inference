@@ -200,7 +200,8 @@ ARG FLASH_ATTN_V2_VERSION
 
 WORKDIR /usr/src
 
-RUN MAX_JOBS=2 pip install flash-attn==${FLASH_ATTN_V2_VERSION} --no-build-isolation
+#RUN MAX_JOBS=2 pip install flash-attn==${FLASH_ATTN_V2_VERSION} --no-build-isolation
+RUN MAX_JOBS=2 pip install flash-attn --no-build-isolation
 
 
 ## Build flash attention  ######################################################
