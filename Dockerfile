@@ -8,6 +8,7 @@ ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
 #ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
 ARG PYTORCH_VERSION=2.1.0
 
+
 ## Base Layer ##################################################################
 FROM registry.access.redhat.com/ubi9/ubi:${BASE_UBI_IMAGE_TAG} as base
 WORKDIR /app
@@ -23,6 +24,7 @@ RUN dnf remove -y --disableplugin=subscription-manager \
 
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
+
 
 ## CUDA Base ###################################################################
 FROM base as cuda-base
@@ -47,6 +49,7 @@ ENV CUDA_HOME="/usr/local/cuda" \
     PATH="/usr/local/nvidia/bin:${CUDA_HOME}/bin:${PATH}" \
     LD_LIBRARY_PATH="/usr/local/nvidia/lib:/usr/local/nvidia/lib64:$CUDA_HOME/lib64:$CUDA_HOME/extras/CUPTI/lib64:${LD_LIBRARY_PATH}"
 
+
 ## CUDA Runtime ################################################################
 FROM cuda-base as cuda-runtime
 
@@ -64,6 +67,7 @@ RUN dnf config-manager \
         libcublas-11-8-${NV_LIBCUBLAS_VERSION} \
         libnccl-${NV_LIBNCCL_PACKAGE_VERSION} \
     && dnf clean all
+
 
 ## CUDA Development ############################################################
 FROM cuda-base as cuda-devel
@@ -89,6 +93,7 @@ RUN dnf config-manager \
 
 ENV LIBRARY_PATH="$CUDA_HOME/lib64/stubs"
 
+
 ## Rust builder ################################################################
 # Specific debian version so that compatible glibc version is used
 FROM rust:1.73-bullseye as rust-builder
@@ -107,6 +112,7 @@ COPY rust-toolchain.toml rust-toolchain.toml
 
 RUN rustup component add rustfmt
 
+
 ## Internal router builder #####################################################
 FROM rust-builder as router-builder
 
@@ -118,6 +124,7 @@ WORKDIR /usr/src/router
 #RUN --mount=type=cache,target=/root/.cargo --mount=type=cache,target=/usr/src/router/target cargo install --path .
 RUN cargo install --path .
 
+
 ## Launcher builder ############################################################
 FROM rust-builder as launcher-builder
 
@@ -127,6 +134,7 @@ WORKDIR /usr/src/launcher
 
 #RUN --mount=type=cache,target=/root/.cargo --mount=type=cache,target=/usr/src/launcher/target cargo install --path .
 RUN cargo install --path .
+
 
 ## Tests base ##################################################################
 FROM base as test-base
@@ -139,6 +147,7 @@ RUN pip install --upgrade pip && pip install pytest && pip install pytest-asynci
 
 # CPU only
 ENV CUDA_VISIBLE_DEVICES=""
+
 
 ## Tests #######################################################################
 FROM test-base as cpu-tests
@@ -171,6 +180,7 @@ COPY --from=launcher-builder /usr/local/cargo/bin/text-generation-launcher /usr/
 # Install integration tests
 COPY integration_tests integration_tests
 RUN cd integration_tests && make install
+
 
 ## Python builder #############################################################
 FROM cuda-devel as python-builder
@@ -227,7 +237,6 @@ ARG FLASH_ATTN_VERSION
 WORKDIR /usr/src
 
 RUN MAX_JOBS=2 pip install "git+https://github.com/Dao-AILab/flash-attention.git@v${FLASH_ATTN_VERSION}#subdirectory=csrc/layer_norm"
-#RUN MAX_JOBS=2 pip install "git+https://github.com/Dao-AILab/flash-attention.git#subdirectory=csrc/layer_norm"
 
 
 ## Build flash-attention rotary-emb ############################################
@@ -238,7 +247,6 @@ ARG FLASH_ATTN_VERSION
 WORKDIR /usr/src
 
 RUN MAX_JOBS=2 pip install "git+https://github.com/Dao-AILab/flash-attention.git@v${FLASH_ATTN_VERSION}#subdirectory=csrc/rotary"
-#RUN MAX_JOBS=2 pip install "git+https://github.com/Dao-AILab/flash-attention.git#subdirectory=csrc/rotary"
 
 
 ## Build libraries #############################################################
@@ -250,6 +258,7 @@ RUN cd /usr/src \
     && MAX_JOBS=2 python setup.py build_ext \
     && MAX_JOBS=2 python setup.py install
 
+
 ## Flash attention cached build image ##########################################
 FROM base as flash-att-cache
 
@@ -258,9 +267,9 @@ COPY --from=flash-att-dropout /opt/miniconda/lib/python3.9/site-packages/dropout
 COPY --from=flash-att-rotary /opt/miniconda/lib/python3.9/site-packages/rotary* /opt/miniconda/lib/python3.9/site-packages/
 
 
-
 ## Flash attention v2 cached build image #######################################
 FROM base as flash-att-v2-cache
+
 COPY --from=flash-att-v2-builder /opt/miniconda/lib/python3.9/site-packages/flash_attn* /opt/miniconda/lib/python3.9/site-packages/
 
 
