@@ -199,20 +199,14 @@ FROM python-builder as flash-att-v2-builder
 
 ARG FLASH_ATTN_V2_VERSION
 
+WORKDIR /usr/src
+
 # MAX_JOBS: For CI, limit number of parallel compilation threads otherwise the github runner goes OOM
 # FORCE_BUILD: Force a fresh build locally, instead of attempting to find prebuilt wheels
 # SKIP_CUDA_BUILD: Intended to allow CI to use a simple `python setup.py sdist` run to copy over raw files, without any cuda compilation
 # CXX11_ABI: For CI, we want the option to build with C++11 ABI since the nvcr images use C++11 ABI
 # FORCE_SINGLE_THREAD: For CI, we want the option to not add "--threads 4" to nvcc, since the runner can OOM
-
-WORKDIR /usr/src
-
-RUN MAX_JOBS=1 \
-    FLASH_ATTENTION_FORCE_SINGLE_THREAD=TRUE \
-    FLASH_ATTENTION_FORCE_BUILD=FALSE \
-    FLASH_ATTENTION_FORCE_CXX11_ABI=TRUE \
-    FLASH_ATTENTION_SKIP_CUDA_BUILD=TRUE \
-    pip install flash-attn==${FLASH_ATTN_V2_VERSION} --no-build-isolation
+RUN MAX_JOBS=1 pip install flash-attn==${FLASH_ATTN_V2_VERSION} --no-build-isolation
 
 
 ## Build flash attention  ######################################################
