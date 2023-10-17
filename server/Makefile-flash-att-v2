@@ -1,5 +1,5 @@
-#flash_att_v2_commit := 67ae6fd74b4bc99c36b2ce524cf139c35663793c
-flash_att_v2_commit := v2.0.6
+#flash_att_v2_commit := https://github.com/Dao-AILab/flash-attention/commit/7f31e7c16a58227e04e0a7aed9ca0066ec8126fe
+flash_att_v2_commit := v2.3.2
 
 flash-attention-v2:
     # Clone flash attention
