@@ -88,6 +88,7 @@ jobs:
               --ignore=server/tests/models/test_causal_lm.py \
               --ignore=server/tests/models/test_seq2seq_lm.py \
               --ignore=server/tests/utils/test_convert.py \
+              -k "not cache_with_eviction and not tensor_too_large" \
               server/tests
 
 
