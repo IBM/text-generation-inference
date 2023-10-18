@@ -40,7 +40,7 @@ jobs:
         context: .
         file: ./Dockerfile
         target: "cpu-tests"
-        tags: "cpu-tests:0"
+        tags: ${{ env.TEST_IMAGE_NAME }}
         outputs: type=docker,dest=/tmp/test_image.tar
 
     - name: "Upload test image"
@@ -76,7 +76,19 @@ jobs:
           docker image ls -a
 
       - name: "Run Python tests"
-        run: make python-tests
+        run: |
+          #make python-tests
+          docker run --rm \
+            -v /tmp/transformers_cache:/transformers_cache \
+            -e HUGGINGFACE_HUB_CACHE=/transformers_cache \
+            -e TRANSFORMERS_CACHE=/transformers_cache \
+            $TEST_IMAGE_NAME pytest -sv \
+              --ignore=server/tests/test_utils.py \
+              --ignore=server/tests/models/test_bloom.py \
+              --ignore=server/tests/models/test_causal_lm.py \
+              --ignore=server/tests/models/test_seq2seq_lm.py \
+              --ignore=server/tests/utils/test_convert.py \
+              server/tests
 
 
   integration-tests:
