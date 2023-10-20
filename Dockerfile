@@ -12,7 +12,7 @@ WORKDIR /app
 RUN dnf remove -y --disableplugin=subscription-manager \
         subscription-manager \
         # we install newer version of requests via pip
-        python3-requests \
+        python3.11-requests \
     && dnf install -y make \
         # to help with debugging
         procps \
@@ -128,9 +128,10 @@ RUN cargo install --path .
 ## Tests base ##################################################################
 FROM base as test-base
 
-RUN dnf install -y make unzip python39 python3-pip gcc openssl-devel gcc-c++ && \
+RUN dnf install -y make unzip python3.11 python3.11-pip gcc openssl-devel gcc-c++ && \
     dnf clean all && \
-    ln -s /usr/bin/python3 /usr/local/bin/python && ln -s /usr/bin/pip3 /usr/local/bin/pip
+    ln -fs /usr/bin/python3.11 /usr/bin/python3 && \
+    ln -s /usr/bin/python3.11 /usr/local/bin/python && ln -s /usr/bin/pip3.11 /usr/local/bin/pip
 
 RUN pip install --upgrade pip && pip install pytest && pip install pytest-asyncio
 
@@ -141,6 +142,7 @@ ENV CUDA_VISIBLE_DEVICES=""
 FROM test-base as cpu-tests
 ARG PYTORCH_INDEX
 ARG PYTORCH_VERSION
+ARG SITE_PACKAGES=/usr/local/lib/python3.11/site-packages
 
 WORKDIR /usr/src
 
@@ -157,8 +159,7 @@ RUN cd server && \
     pip install ".[accelerate]" --no-cache-dir
 
 # Patch codegen model changes into transformers 4.34
-RUN cp server/transformers_patch/modeling_codegen.py \
-       /usr/local/lib/python3.*/site-packages/transformers/models/codegen/modeling_codegen.py
+RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py
 
 # Install router
 COPY --from=router-builder /usr/local/cargo/bin/text-generation-router /usr/local/bin/text-generation-router
@@ -177,7 +178,7 @@ ARG PYTORCH_VERSION
 RUN dnf install -y unzip git ninja-build && dnf clean all
 
 RUN cd ~ && \
-    curl -L -O https://repo.anaconda.com/miniconda/Miniconda3-py39_23.5.2-0-Linux-x86_64.sh && \
+    curl -L -O https://repo.anaconda.com/miniconda/Miniconda3-py311_23.5.2-0-Linux-x86_64.sh && \
     chmod +x Miniconda3-*-Linux-x86_64.sh && \
     bash ./Miniconda3-*-Linux-x86_64.sh -bf -p /opt/miniconda
 
@@ -187,7 +188,7 @@ RUN rm -r /opt/miniconda/pkgs/conda-content-trust-*/info/test/tests
 ENV PATH=/opt/miniconda/bin:$PATH
 
 # Install specific version of torch
-RUN pip install ninja==1.11.1 --no-cache-dir
+RUN pip install ninja==1.11.1.1 --no-cache-dir
 RUN pip install torch==$PYTORCH_VERSION+cu118 --index-url "${PYTORCH_INDEX}/cu118" --no-cache-dir
 
 
@@ -229,6 +230,7 @@ COPY --from=flash-att-v2-builder /usr/src/flash-attention-v2/build /usr/src/flas
 
 ## Final Inference Server image ################################################
 FROM cuda-runtime as server-release
+ARG SITE_PACKAGES=/opt/miniconda/lib/python3.11/site-packages
 
 # Install C++ compiler (required at runtime when PT2_COMPILE is enabled)
 RUN dnf install -y gcc-c++ && dnf clean all \
@@ -243,21 +245,20 @@ ENV PATH=/opt/miniconda/bin:$PATH
 # These could instead come from explicitly cached images
 
 # Copy build artifacts from flash attention builder
-COPY --from=flash-att-cache /usr/src/flash-attention/build/lib.linux-x86_64-cpython-39 /opt/miniconda/lib/python3.9/site-packages
-COPY --from=flash-att-cache /usr/src/flash-attention/csrc/layer_norm/build/lib.linux-x86_64-cpython-39 /opt/miniconda/lib/python3.9/site-packages
-COPY --from=flash-att-cache /usr/src/flash-attention/csrc/rotary/build/lib.linux-x86_64-cpython-39 /opt/miniconda/lib/python3.9/site-packages
+COPY --from=flash-att-cache /usr/src/flash-attention/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
+COPY --from=flash-att-cache /usr/src/flash-attention/csrc/layer_norm/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
+COPY --from=flash-att-cache /usr/src/flash-attention/csrc/rotary/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
 
 # Copy build artifacts from flash attention v2 builder
-COPY --from=flash-att-v2-cache /usr/src/flash-attention-v2/build/lib.linux-x86_64-cpython-39 /opt/miniconda/lib/python3.9/site-packages
+COPY --from=flash-att-v2-cache /usr/src/flash-attention-v2/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
 
 # Install server
 COPY proto proto
 COPY server server
 RUN cd server && make gen-server && pip install ".[accelerate, onnx-gpu]" --no-cache-dir
 
-# Patch codegen model changes into transformers 4.34
-RUN cp server/transformers_patch/modeling_codegen.py \
-       /opt/miniconda/lib/python3.*/site-packages/transformers/models/codegen/modeling_codegen.py
+# Patch codegen model changes into transformers 4.34.0
+RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py
 
 # Install router
 COPY --from=router-builder /usr/local/cargo/bin/text-generation-router /usr/local/bin/text-generation-router
@@ -272,7 +273,7 @@ ENV PORT=3000 \
 RUN chmod -R g+rwx ${HOME}
 
 # Temporary for dev
-RUN chmod -R g+w /opt/miniconda/lib/python3.*/site-packages/text_generation_server /usr/src /usr/local/bin
+RUN chmod -R g+w ${SITE_PACKAGES}/text_generation_server /usr/src /usr/local/bin
 
 # Run as non-root user by default
 USER tgis

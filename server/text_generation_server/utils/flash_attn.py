@@ -70,6 +70,8 @@ def attention(
             softmax_scale,
             False,
             causal,
+            -1,
+            -1,
             False,
             None,
         )
