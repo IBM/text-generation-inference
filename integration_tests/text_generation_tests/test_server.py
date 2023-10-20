@@ -3,7 +3,6 @@ import glob
 import os
 import random
 import sys
-
 import yaml
 import subprocess
 import threading
@@ -319,6 +318,48 @@ async def _test_multi_input_seeds(stub):
             assert 0 <= seed <= 4294967295
 
 
+async def run_time_limit_test(stub, *, streaming=False, time_limit=200, min_generated_tokens=2):
+    generation_request = pb2.GenerationRequest(
+        text='def doit():\n'
+    )
+    generation_params = pb2.Parameters(
+        method=pb2.GREEDY,
+        stopping=pb2.StoppingCriteria(
+            max_new_tokens=169,
+            min_new_tokens=169,
+            time_limit_millis=time_limit,
+        )
+    )
+
+    start = time.time_ns()
+    if streaming:
+        response = pb2.GenerationResponse()
+        async for resp in stub.GenerateStream(
+            pb2.SingleGenerationRequest(
+                request=generation_request,
+                params=generation_params
+            )
+        ):
+            response.generated_token_count = resp.generated_token_count
+            response.stop_reason = resp.stop_reason
+    else:
+        response = await stub.Generate(
+            pb2.BatchedGenerationRequest(
+                requests=[generation_request],
+                params=generation_params,
+            )
+        )
+        # single req/resp in the batch
+        response = response.responses[0]
+    end = time.time_ns()
+
+    assert response.stop_reason == pb2.StopReason.TIME_LIMIT
+    # ensure that some tokens were actually generated
+    assert min_generated_tokens <= response.generated_token_count < 100
+    # generating all tokens takes a few seconds
+    assert time_limit < (end-start) / (10**6)  < time_limit+300
+
+
 @pytest.mark.model("gpt2")
 @pytest.mark.extensions(".safetensors,.json")
 @pytest.mark.shards(1)
@@ -381,6 +422,28 @@ async def test_bloom(server_fixture, test_cases):
 async def test_mt0_output_special_tokens(server_fixture, test_cases):
     await run_test_cases_async(test_cases)
 
+
+# Test that the time based stopping criteria works
+@pytest.mark.model("bigcode/tiny_starcoder_py")
+@pytest.mark.extensions(".safetensors,.json")
+@pytest.mark.shards(1)
+@pytest.mark.asyncio
+async def test_time_limit_stopping(server_fixture):
+    async with grpc.aio.insecure_channel('localhost:8033') as channel:
+        stub = gpb2.GenerationServiceStub(channel)
+        # verify server is up with metrics request
+        response = requests.get(f'http://localhost:{3000}/metrics')
+        assert response.status_code == 200
+
+        # batched
+        await run_time_limit_test(stub)
+        # one token should always be generated
+        await run_time_limit_test(stub, time_limit=1, min_generated_tokens=1)
+
+        # streaming
+        await run_time_limit_test(stub, streaming=True)
+        # one token should always be generated
+        await run_time_limit_test(stub, streaming=True, time_limit=1, min_generated_tokens=1)
 
 # Test loading when an explicit local path is provided
 def test_explicit_path():
