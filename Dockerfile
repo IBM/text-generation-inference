@@ -1,5 +1,5 @@
 ## Global Args #################################################################
-ARG BASE_UBI_IMAGE_TAG=9.2-755.1696515532
+ARG BASE_UBI_IMAGE_TAG=9.2-755.1697625012
 ARG PROTOC_VERSION=24.4
 ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
 #ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
@@ -178,7 +178,7 @@ ARG PYTORCH_VERSION
 RUN dnf install -y unzip git ninja-build && dnf clean all
 
 RUN cd ~ && \
-    curl -L -O https://repo.anaconda.com/miniconda/Miniconda3-py311_23.5.2-0-Linux-x86_64.sh && \
+    curl -L -O https://repo.anaconda.com/miniconda/Miniconda3-py311_23.9.0-0-Linux-x86_64.sh && \
     chmod +x Miniconda3-*-Linux-x86_64.sh && \
     bash ./Miniconda3-*-Linux-x86_64.sh -bf -p /opt/miniconda
 
