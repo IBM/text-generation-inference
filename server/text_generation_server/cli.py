@@ -66,7 +66,7 @@ def download_weights(
 ):
     from text_generation_server import utils
 
-    meta_exts = [".json", ".py", ".md"]
+    meta_exts = [".json", ".py", ".model", ".md"]
 
     extensions = extension.split(",")
 
