@@ -419,7 +419,8 @@ class HeterogeneousProcessorWrapper(LogitsProcessor):
         return None
 
 
-# This is a fixed version of the class in transformers. Can be moved once we contribute back the fix and upgrade.
+# This is a fixed version of the class in transformers, see https://github.com/huggingface/transformers/pull/26579.
+# Can be removed after upgrading to transformers v4.35+
 class TypicalLogitsWarper(LogitsWarper):
     r"""
     [`LogitsWarper`] that performs typical decoding. See [Typical Decoding for Natural Language
@@ -456,8 +457,8 @@ class TypicalLogitsWarper(LogitsWarper):
         cumulative_probs = sorted_logits.softmax(dim=-1).cumsum(dim=-1)
 
         # Remove tokens with cumulative mass above the threshold
-        last_ind = (cumulative_probs < self.mass).sum(dim=1)
-        last_ind.clamp_(0, sorted_scores.shape[-1] - 1)
+        last_ind = (cumulative_probs < self.mass).sum(dim=1) - 1
+        last_ind.clamp_(min=0)
         sorted_indices_to_remove = sorted_scores > sorted_scores.gather(1, last_ind.view(-1, 1))
         # Keep at least min_tokens_to_keep (set to min_tokens_to_keep-1 because we add the first one below)
         sorted_indices_to_remove[..., : self.min_tokens_to_keep] = 0

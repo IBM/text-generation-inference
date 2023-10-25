@@ -927,7 +927,7 @@ telegram = ["requests"]
 
 [[package]]
 name = "transformers"
-version = "4.34.0"
+version = "4.34.1"
 description = "State-of-the-art Machine Learning for JAX, PyTorch and TensorFlow"
 category = "main"
 optional = false
@@ -1081,7 +1081,7 @@ onnx-gpu = ["optimum", "onnxruntime-gpu", "onnx"]
 [metadata]
 lock-version = "1.1"
 python-versions = ">=3.11.0,<3.13"
-content-hash = "4c356b838ab37685a5bdfaf9baabbd67e52b85349fcbc125fb9e8814ca4f9a3f"
+content-hash = "ac28321bdc8e28a245670cb542e82e0c010665227bbdbb35f4610f92241deb70"
 
 [metadata.files]
 accelerate = [
@@ -2443,8 +2443,8 @@ tqdm = [
     {file = "tqdm-4.66.1.tar.gz", hash = "sha256:d88e651f9db8d8551a62556d3cff9e3034274ca5d66e93197cf2490e2dcb69c7"},
 ]
 transformers = [
-    {file = "transformers-4.34.0-py3-none-any.whl", hash = "sha256:3f0187183a7f22c51ecbbc9eac5145df666c5b86bec6feed10e11f0363f3a1f9"},
-    {file = "transformers-4.34.0.tar.gz", hash = "sha256:cc2ae61bfbfaa45337fd9017326669fc60e4f55125f589d50da47819e3d6f504"},
+    {file = "transformers-4.34.1-py3-none-any.whl", hash = "sha256:d06ac09151d7b845e4a4acd6b143a591d946031ee67b4cbb20693b241920ffc0"},
+    {file = "transformers-4.34.1.tar.gz", hash = "sha256:1d0258d5a18063b66005bbe1e3276ec5943d9ab4ab47f020db1fd485cc40ea22"},
 ]
 typer = [
     {file = "typer-0.9.0-py3-none-any.whl", hash = "sha256:5d96d986a21493606a358cae4461bd8cdf83cbf33a5aa950ae629ca3b51467ee"},
