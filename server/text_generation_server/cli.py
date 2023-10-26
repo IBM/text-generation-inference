@@ -1,4 +1,5 @@
 import os
+from enum import Enum
 from typing import Optional
 
 import typer
@@ -8,11 +9,17 @@ from pathlib import Path
 app = typer.Typer()
 
 
+class Quantization(str, Enum):
+    bitsandbytes = "bitsandbytes"
+    gptq = "gptq"
+
+
 @app.command()
 def serve(
     model_name: str,
     deployment_framework: str,
     dtype: Optional[str] = None,
+    quantize: Optional[Quantization] = None,
     # Max seq length, new tokens, batch size and weight
     # only used for PT2 compile warmup
     max_sequence_length: int = 2048,
@@ -40,12 +47,13 @@ def serve(
             os.getenv("MASTER_PORT", None) is not None
         ), "MASTER_PORT must be set when sharded is True"
 
-
     server.serve(
         model_name,
         revision,
         deployment_framework,
         dtype,
+        # Downgrade enum into str for easier management later on
+        None if quantize is None else quantize.value,
         max_sequence_length,
         max_new_tokens,
         max_batch_size,
@@ -155,6 +163,34 @@ def convert_to_safetensors(
 
     # Convert pytorch weights to safetensors
     utils.convert_files(local_pt_files, local_st_files, discard_names)
+
+
+@app.command()
+def quantize(
+    model_name: str,
+    output_dir: str,
+    revision: Optional[str] = None,
+    trust_remote_code: bool = False,
+    upload_to_model_id: Optional[str] = None,
+    percdamp: float = 0.01,
+    act_order: bool = False,
+):
+
+    if not os.path.exists(model_name):
+        download_weights(model_name=model_name, revision=revision)
+
+    from text_generation_server.utils.gptq.quantize import quantize
+
+    quantize(
+        model_name=model_name,
+        bits=4,
+        groupsize=128,
+        output_dir=output_dir,
+        trust_remote_code=trust_remote_code,
+        upload_to_model_id=upload_to_model_id,
+        percdamp=percdamp,
+        act_order=act_order,
+    )
 
 
 if __name__ == "__main__":

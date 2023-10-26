@@ -19,6 +19,79 @@ from text_generation_server.utils.layers import (
 def load_multi_mqa(
     config, prefix: str, weights, bias: bool, head_size, num_heads, hidden_size
 ):
+    return (_load_multi_mqa_gptq if config.quantize == "gptq" else _load_multi_mqa)(
+        config, prefix, weights, bias, head_size, num_heads, hidden_size
+    )
+
+
+def _load_multi_mqa_gptq(
+    config, prefix: str, weights, bias: bool, head_size, num_heads, hidden_size
+):
+    if any("c_attn" in k for k in weights.routing.keys()) and not config.transpose:
+        world_size = weights.process_group.size()
+        rank = weights.process_group.rank()
+
+        slice_ = weights._get_slice(f"{prefix}.c_attn.qweight")
+        shape = slice_.get_shape()
+        block_size = (shape[1] - 2 * head_size) // world_size
+        start = rank * block_size
+        stop = (rank + 1) * block_size
+        assert (shape[1] - 2 * head_size) % world_size == 0
+        q_tensor = slice_[:, start:stop]
+        kv_tensor = slice_[:, -2 * head_size :]
+        qweight = torch.cat([q_tensor, kv_tensor], dim=1)
+        qweight = qweight.to(device=weights.device)
+
+        slice_ = weights._get_slice(f"{prefix}.c_attn.scales")
+        shape = slice_.get_shape()
+        block_size = (shape[1] - 2 * head_size) // world_size
+        start = rank * block_size
+        stop = (rank + 1) * block_size
+        assert (shape[1] - 2 * head_size) % world_size == 0
+        q_tensor = slice_[:, start:stop]
+        kv_tensor = slice_[:, -2 * head_size :]
+        scales = torch.cat([q_tensor, kv_tensor], dim=1)
+        scales = scales.to(device=weights.device)
+
+        slice_ = weights._get_slice(f"{prefix}.c_attn.qzeros")
+        shape = slice_.get_shape()
+        block_size = (shape[1] - (2 * head_size) * 4 // 32) // world_size
+        start = rank * block_size
+        stop = (rank + 1) * block_size
+        assert 2 * head_size % (32 // 4) == 0
+        q_tensor = slice_[:, start:stop]
+        kv_tensor = slice_[:, -2 * head_size * 4 // 32 :]
+        qzeros = torch.cat([q_tensor, kv_tensor], dim=1)
+        qzeros = qzeros.to(device=weights.device)
+
+        g_idx = weights.get_tensor(f"{prefix}.c_attn.g_idx")
+        g_idx = g_idx.to(device=weights.device)
+        bits, groupsize = weights._get_gptq_params()
+
+        from text_generation_server.utils.layers import HAS_EXLLAMA
+        weight = (qweight, qzeros, scales, g_idx, bits, groupsize, HAS_EXLLAMA)
+
+        if bias:
+            slice_ = weights._get_slice(f"{prefix}.c_attn.bias")
+            shape = slice_.get_shape()
+            block_size = (shape[0] - 2 * head_size) // world_size
+            assert (shape[0] - 2 * head_size) % world_size == 0
+            #q_tensor = slice_[start:stop]
+            start = rank * block_size
+            stop = (rank + 1) * block_size
+            q_tensor = slice_[start:stop]
+            kv_tensor = slice_[-2 * head_size :]
+            bias = torch.cat([q_tensor, kv_tensor], dim=0)
+            bias = bias.to(device=weights.device)
+
+        return TensorParallelColumnLinear(get_linear(weight, bias, config.quantize))
+    else:
+        raise NotImplementedError("Gptq loading with santacoder is not implemented")
+
+
+def _load_multi_mqa(
+    config, prefix: str, weights, bias: bool, head_size, num_heads, hidden_size
+):
     if any("c_attn" in k for k in weights.routing.keys()):
         slice_ = weights._get_slice(f"{prefix}.c_attn.weight")
         shape = slice_.get_shape()
@@ -91,7 +164,9 @@ def load_col(config, prefix: str, weights, bias: bool):
     if config.transpose:
         weight = weights.get_sharded(f"{prefix}.weight", dim=1).T
     else:
-        weight = weights.get_sharded(f"{prefix}.weight", dim=0)
+        weight = weights.get_multi_weights_col(
+            [prefix], quantize=config.quantize, dim=0
+        )
 
     if bias:
         bias = weights.get_sharded(f"{prefix}.bias", dim=0)
@@ -104,7 +179,7 @@ def load_row(config, prefix: str, weights, bias: bool):
     if config.transpose:
         weight = weights.get_sharded(f"{prefix}.weight", dim=0).T
     else:
-        weight = weights.get_sharded(f"{prefix}.weight", dim=1)
+        weight = weights.get_multi_weights_row(prefix, quantize=config.quantize)
 
     if bias and weights.process_group.rank() == 0:
         # Rank is only on the first rank process
@@ -269,7 +344,6 @@ class Block(nn.Module):
         cu_seqlens_q,
     ):
         hidden_states, residual = self.ln_1(hidden_states, residual)
-
         hidden_states = self.attn(
             hidden_states,
             cu_seqlens,

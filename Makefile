@@ -56,5 +56,7 @@ python-tests: build-test-image
 		-e HUGGINGFACE_HUB_CACHE=/transformers_cache \
 		-e TRANSFORMERS_CACHE=/transformers_cache cpu-tests:0 pytest -sv --ignore=server/tests/test_utils.py server/tests
 
+clean:
+	rm -rf target
 
 .PHONY: build build-test-image integration-tests python-tests

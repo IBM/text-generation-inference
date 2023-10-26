@@ -213,6 +213,16 @@ FROM python-builder as build
 COPY server/custom_kernels/ /usr/src/.
 RUN cd /usr/src && python setup.py build_ext && python setup.py install
 
+
+## Build transformers exllama kernels ##########################################
+FROM python-builder as exllama-kernels-builder
+
+WORKDIR /usr/src
+
+COPY server/exllama_kernels/ .
+RUN TORCH_CUDA_ARCH_LIST="8.0;8.6+PTX" python setup.py build
+
+
 ## Flash attention cached build image ##########################################
 FROM base as flash-att-cache
 COPY --from=flash-att-builder /usr/src/flash-attention/build /usr/src/flash-attention/build
@@ -249,10 +259,13 @@ COPY --from=flash-att-cache /usr/src/flash-attention/csrc/rotary/build/lib.linux
 # Copy build artifacts from flash attention v2 builder
 COPY --from=flash-att-v2-cache /usr/src/flash-attention-v2/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
 
+# Copy build artifacts from exllama kernels builder
+COPY --from=exllama-kernels-builder /usr/src/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
+
 # Install server
 COPY proto proto
 COPY server server
-RUN cd server && make gen-server && pip install ".[accelerate, onnx-gpu]" --no-cache-dir
+RUN cd server && make gen-server && pip install ".[accelerate, onnx-gpu, quantize]" --no-cache-dir
 
 # Patch codegen model changes into transformers 4.34.0
 RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py

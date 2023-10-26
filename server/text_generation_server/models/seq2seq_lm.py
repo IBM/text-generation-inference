@@ -479,12 +479,18 @@ class Seq2SeqLMBatch(Batch):
 
 class Seq2SeqLM(Model):
     def __init__(
-        self, model_name: str, revision: str, deployment_framework: str, dtype: torch.dtype, model_config: Union[Any] = None,
+        self,
+        model_name: str,
+        revision: str,
+        deployment_framework: str,
+        dtype: torch.dtype,
+        quantize: Optional[str],
+        model_config: Union[Any] = None,
     ):
         model_path = get_model_path(model_name, revision)
 
         inference_engine = get_inference_engine_class(deployment_framework)(
-            model_path, AutoModelForSeq2SeqLM, dtype, model_config,
+            model_path, AutoModelForSeq2SeqLM, dtype, quantize, model_config,
         )
         super(Seq2SeqLM, self).__init__(inference_engine, dtype)
 

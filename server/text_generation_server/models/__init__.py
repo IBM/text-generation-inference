@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 
 import torch
 
@@ -26,7 +27,9 @@ torch.backends.cudnn.allow_tf32 = True
 torch.set_grad_enabled(False)
 
 
-def get_model(model_name: str, revision: str, deployment_framework: str, dtype_str: str) -> Model:
+def get_model(
+    model_name: str, revision: str, deployment_framework: str, dtype_str: str, quantize: Optional[str]
+) -> Model:
     dtype = get_torch_dtype(dtype_str)
     model_path = get_model_path(model_name, revision)
     model_config = AutoConfig.from_pretrained(model_path, trust_remote_code=TRUST_REMOTE_CODE)
@@ -56,7 +59,7 @@ def get_model(model_name: str, revision: str, deployment_framework: str, dtype_s
             model_config = LlamaConfig.from_pretrained(model_path)
 
         from text_generation_server.models.flash_causal_lm import FlashCausalLM
-        return FlashCausalLM(model_name, revision, deployment_framework, dtype, model_config)
+        return FlashCausalLM(model_name, revision, deployment_framework, dtype, quantize, model_config)
 
     elif deployment_framework == "hf_transformers" and int(os.getenv("WORLD_SIZE", "1")) > 1:
         print_rank_n(
@@ -86,9 +89,9 @@ def get_model(model_name: str, revision: str, deployment_framework: str, dtype_s
         )
 
     if supports_causal_lm:
-        return CausalLM(model_name, revision, deployment_framework, dtype, model_config)
+        return CausalLM(model_name, revision, deployment_framework, dtype, quantize, model_config)
 
     if supports_seq2seq_lm:
-        return Seq2SeqLM(model_name, revision, deployment_framework, dtype, model_config)
+        return Seq2SeqLM(model_name, revision, deployment_framework, dtype, quantize, model_config)
 
     raise NotImplementedError(f"Unsupported model type {model_type}")

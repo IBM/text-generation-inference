@@ -169,7 +169,7 @@ test-randomorder = ["pytest-randomly"]
 
 [[package]]
 name = "datasets"
-version = "2.14.4"
+version = "2.14.6"
 description = "HuggingFace community-driven open-source library of datasets"
 category = "main"
 optional = true
@@ -178,7 +178,7 @@ python-versions = ">=3.8.0"
 [package.dependencies]
 aiohttp = "*"
 dill = ">=0.3.0,<0.3.8"
-fsspec = {version = ">=2021.11.1", extras = ["http"]}
+fsspec = {version = ">=2023.1.0,<=2023.10.0", extras = ["http"]}
 huggingface-hub = ">=0.14.0,<1.0.0"
 multiprocess = "*"
 numpy = ">=1.17"
@@ -874,6 +874,14 @@ python-versions = ">=3.8"
 mpmath = ">=0.19"
 
 [[package]]
+name = "texttable"
+version = "1.7.0"
+description = "module to create simple ASCII tables"
+category = "main"
+optional = true
+python-versions = "*"
+
+[[package]]
 name = "tokenizers"
 version = "0.14.1"
 description = ""
@@ -1077,11 +1085,12 @@ accelerate = ["accelerate"]
 bnb = ["bitsandbytes", "scipy"]
 onnx = ["optimum", "onnxruntime", "onnx"]
 onnx-gpu = ["optimum", "onnxruntime-gpu", "onnx"]
+quantize = ["datasets", "texttable"]
 
 [metadata]
 lock-version = "1.1"
 python-versions = ">=3.11.0,<3.13"
-content-hash = "ac28321bdc8e28a245670cb542e82e0c010665227bbdbb35f4610f92241deb70"
+content-hash = "cb5b0079d4296d4e03697749bf775e24339b7aa3e2ffce25dd2eeaccc5b23905"
 
 [metadata.files]
 accelerate = [
@@ -1381,8 +1390,8 @@ cryptography = [
     {file = "cryptography-41.0.4.tar.gz", hash = "sha256:7febc3094125fc126a7f6fb1f420d0da639f3f32cb15c8ff0dc3997c4549f51a"},
 ]
 datasets = [
-    {file = "datasets-2.14.4-py3-none-any.whl", hash = "sha256:29336bd316a7d827ccd4da2236596279b20ca2ac78f64c04c9483da7cbc2459b"},
-    {file = "datasets-2.14.4.tar.gz", hash = "sha256:ef29c2b5841de488cd343cfc26ab979bff77efa4d2285af51f1ad7db5c46a83b"},
+    {file = "datasets-2.14.6-py3-none-any.whl", hash = "sha256:4de857ffce21cfc847236745c69f102e33cd1f0fa8398e7be9964525fd4cd5db"},
+    {file = "datasets-2.14.6.tar.gz", hash = "sha256:97ebbace8ec7af11434a87d1215379927f8fee2beab2c4a674003756ecfe920c"},
 ]
 dill = [
     {file = "dill-0.3.7-py3-none-any.whl", hash = "sha256:76b122c08ef4ce2eedcd4d1abd8e641114bfc6c2867f49f3c41facf65bf19f5e"},
@@ -2315,6 +2324,10 @@ six = [
 sympy = [
     {file = "sympy-1.12-py3-none-any.whl", hash = "sha256:c3588cd4295d0c0f603d0f2ae780587e64e2efeedb3521e46b9bb1d08d184fa5"},
     {file = "sympy-1.12.tar.gz", hash = "sha256:ebf595c8dac3e0fdc4152c51878b498396ec7f30e7a914d6071e674d49420fb8"},
+]
+texttable = [
+    {file = "texttable-1.7.0-py2.py3-none-any.whl", hash = "sha256:72227d592c82b3d7f672731ae73e4d1f88cd8e2ef5b075a7a7f01a23a3743917"},
+    {file = "texttable-1.7.0.tar.gz", hash = "sha256:2d2068fb55115807d3ac77a4ca68fa48803e84ebb0ee2340f858107a36522638"},
 ]
 tokenizers = [
     {file = "tokenizers-0.14.1-cp310-cp310-macosx_10_7_x86_64.whl", hash = "sha256:04ec1134a18ede355a05641cdc7700f17280e01f69f2f315769f02f7e295cf1e"},

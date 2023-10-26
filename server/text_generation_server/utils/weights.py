@@ -1,6 +1,14 @@
+import os
 from pathlib import Path
-from typing import List, Dict, Optional
-from safetensors import safe_open
+from typing import List, Dict, Optional, Tuple, Any
+
+import torch
+from safetensors import safe_open, SafetensorError
+from loguru import logger
+import json
+
+
+QUANTIZE_CONFIG_FILENAME = "quantize_config.json"
 
 
 class Weights:
@@ -61,7 +69,10 @@ class Weights:
         filename, tensor_name = self.get_filename(tensor_name)
         f = self._get_handle(filename)
         tensor = f.get_tensor(tensor_name)
-        tensor = tensor.to(dtype=self.dtype)
+        # Special case for gptq which shouldn't convert
+        # u4 which are disguised as int32
+        if tensor.dtype not in [torch.int32, torch.int64]:
+            tensor = tensor.to(dtype=self.dtype)
         tensor = tensor.to(device=self.device)
         return tensor
 
@@ -83,7 +94,10 @@ class Weights:
             tensor = slice_[:, start:stop]
         else:
             raise NotImplementedError("Let's make that generic when needed")
-        tensor = tensor.to(dtype=self.dtype)
+        # Special case for gptq which shouldn't convert
+        # u4 which are disguised as int32
+        if tensor.dtype != torch.int32:
+            tensor = tensor.to(dtype=self.dtype)
         tensor = tensor.to(device=self.device)
         return tensor
 
@@ -97,3 +111,119 @@ class Weights:
             size % world_size == 0
         ), f"The choosen size {size} is not compatible with sharding on {world_size} shards"
         return self.get_partial_sharded(tensor_name, dim)
+
+    def get_multi_weights_col(self, prefixes: List[str], quantize: str, dim: int):
+        if quantize == "gptq":
+            try:
+                qweight = torch.cat([self.get_sharded(f"{p}.qweight", dim=1) for p in prefixes], dim=1)
+            except RuntimeError:
+                raise RuntimeError("Cannot load `gptq` weight, make sure the model is already quantized, or quantize it with `text-generation-server quantize ORIGINAL_MODEL_ID NEW_MODEL_ID`")
+
+            qzeros = torch.cat([self.get_sharded(f"{p}.qzeros", dim=1) for p in prefixes], dim=1)
+            scales = torch.cat([self.get_sharded(f"{p}.scales", dim=1) for p in prefixes], dim=1)
+            w = [self.get_tensor(f"{p}.g_idx") for p in prefixes]
+            for w2 in w[1:]:
+                torch.testing.assert_close(w2, w[0])
+            g_idx = w[0]
+
+            bits, groupsize = self._get_gptq_params()
+            use_exllama = False
+            if bits == 4:
+                from text_generation_server.utils.layers import HAS_EXLLAMA
+
+                use_exllama = HAS_EXLLAMA
+                if use_exllama:
+                    logger.info(f"Using exllama kernels for col {prefixes}")
+
+            weight = (qweight, qzeros, scales, g_idx, bits, groupsize, use_exllama)
+        else:
+            w = [self.get_sharded(f"{p}.weight", dim=0) for p in prefixes]
+            weight = torch.cat(w, dim=dim)
+        return weight
+
+    def get_multi_weights_row(self, prefix: str, quantize: str):
+        if quantize == "gptq":
+            bits, groupsize = self._get_gptq_params()
+
+            use_exllama = bits == 4
+
+            if self.process_group.size() > 1:
+                g_idx = self.get_tensor(f"{prefix}.g_idx")
+                if g_idx is not None:
+                    if not torch.equal(g_idx.cpu(), torch.tensor([i // groupsize for i in range(g_idx.shape[0])], dtype=torch.int32)) and not (g_idx == 0).all():
+                        # Exllama implementation does not support row tensor parallelism with act-order, as
+                        # it would require to reorder input activations that are split unto several GPUs
+                        use_exllama = False
+
+            try:
+                qweight = self.get_sharded(f"{prefix}.qweight", dim=0)
+            except RuntimeError:
+                raise RuntimeError("Cannot load `gptq` weight, make sure the model is already quantized, or quantize it with `text-generation-server quantize ORIGINAL_MODEL_ID NEW_MODEL_ID`")
+
+            from text_generation_server.utils.layers import HAS_EXLLAMA
+            if use_exllama:
+                use_exllama = HAS_EXLLAMA
+                if self.process_group.rank == 0:
+                    if use_exllama:
+                        logger.info(f"Using exllama kernels for row {prefix}")
+                    else:
+                        logger.warning(
+                            "Exllama GPTQ cuda kernels (which are faster) could have been used, but are disabled via the DISABLE_EXLLAMA env var,"
+                            " or not currently installed, try using BUILD_EXTENSIONS=True"
+                        )
+
+            if use_exllama:
+                if groupsize >= 0:
+                    # Exllama reorders the weights in advance and the activations on the fly, thus
+                    # the scales and zero-points do not need to be reordered.
+                    qzeros = self.get_sharded(f"{prefix}.qzeros", dim=0)
+                    scales = self.get_sharded(f"{prefix}.scales", dim=0)
+                else:
+                    qzeros = self.get_tensor(f"{prefix}.qzeros")
+                    scales = self.get_tensor(f"{prefix}.scales")
+
+                # For tp > 1, at this point we know we do not use act-order
+                if self.process_group.size() == 1:
+                    g_idx = self.get_tensor(f"{prefix}.g_idx")
+                else:
+                    g_idx = None
+            else:
+                # The triton kernel reorders the scales/zero points instead of the weight/activation.
+                # Thus, each rank needs the full qzeros/scales.
+
+                qzeros = self.get_tensor(f"{prefix}.qzeros")
+                scales = self.get_tensor(f"{prefix}.scales")
+                g_idx = self.get_sharded(f"{prefix}.g_idx", dim=0)
+
+            weight = (qweight, qzeros, scales, g_idx, bits, groupsize, use_exllama)
+        else:
+            weight = self.get_sharded(f"{prefix}.weight", dim=1)
+        return weight
+
+    def _get_gptq_params(self) -> Tuple[int, int]:
+        try:
+            bits = self.get_tensor("gptq_bits").item()
+            groupsize = self.get_tensor("gptq_groupsize").item()
+        except (SafetensorError, RuntimeError) as e:
+            try:
+                bits = self.gptq_bits
+                groupsize = self.gptq_groupsize
+            except Exception:
+                raise e
+
+        return bits, groupsize
+
+    def _set_gptq_params(self, model_config: Any, model_path: str):
+        # Get quantization config from model's configuration
+        # or else look for quantize_config.json in the model dir
+        config = model_config.to_dict()
+        quantize_config = config.get("quantization_config")
+        if quantize_config is None:
+            filename = os.path.join(model_path, QUANTIZE_CONFIG_FILENAME)
+            if not os.path.exists(filename):
+                return
+            with open(filename, "r") as f:
+                quantize_config = json.load(f)
+
+        self.gptq_bits = quantize_config["bits"]
+        self.gptq_groupsize = quantize_config["group_size"]

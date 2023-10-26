@@ -316,6 +316,7 @@ class FlashCausalLM(Model):
         revision: str,
         deployment_framework: str,
         dtype: torch.dtype,
+        quantize: Optional[str],
         model_config: Union[Any] = None,
         auto_model_class=None,
     ):
@@ -327,7 +328,7 @@ class FlashCausalLM(Model):
         model_path = get_model_path(model_name, revision)
 
         inference_engine = get_inference_engine_class(deployment_framework)(
-            model_path, auto_model_class, dtype, model_config,
+            model_path, auto_model_class, dtype, quantize, model_config,
         )
 
         super(FlashCausalLM, self).__init__(inference_engine, dtype)

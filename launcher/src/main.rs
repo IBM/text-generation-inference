@@ -33,6 +33,8 @@ struct Args {
     dtype: Option<String>,
     #[clap(default_value = None, long, env)]
     dtype_str: Option<String>,
+    #[clap(default_value = None, long, env)]
+    quantize: Option<String>,
     #[clap(long, env)]
     num_shard: Option<usize>,
     #[clap(default_value = "96", long, env)]
@@ -156,6 +158,7 @@ fn main() -> ExitCode {
                 args.revision,
                 args.deployment_framework,
                 args.dtype.or(args.dtype_str),
+                args.quantize,
                 args.max_sequence_length,
                 args.max_new_tokens,
                 args.max_batch_size,
@@ -396,6 +399,7 @@ fn shard_manager(
     revision: Option<String>,
     deployment_framework: String,
     dtype: Option<String>,
+    quantize: Option<String>,
     max_sequence_length: usize,
     max_new_tokens: usize,
     max_batch_size: usize,
@@ -440,6 +444,11 @@ fn shard_manager(
     if let Some(dtype) = dtype {
         shard_argv.push("--dtype".to_string());
         shard_argv.push(dtype);
+    }
+
+    if let Some(quantize) = quantize {
+        shard_argv.push("--quantize".to_string());
+        shard_argv.push(quantize);
     }
 
     // Activate tensor parallelism

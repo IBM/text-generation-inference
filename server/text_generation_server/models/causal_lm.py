@@ -491,12 +491,18 @@ def update_layer(layer, batch_size, keep_indices, past_kv_length, hdl, three_dim
 
 class CausalLM(Model):
     def __init__(
-        self, model_name: str, revision: str, deployment_framework: str, dtype: torch.dtype, model_config: Union[Any] = None,
+        self,
+        model_name: str,
+        revision: str,
+        deployment_framework: str,
+        dtype: torch.dtype,
+        quantize: Optional[str],
+        model_config: Union[Any] = None,
     ):
         model_path = get_model_path(model_name, revision)
 
         inference_engine = get_inference_engine_class(deployment_framework)(
-            model_path, AutoModelForCausalLM, dtype, model_config,
+            model_path, AutoModelForCausalLM, dtype, quantize, model_config,
         )
 
         super(CausalLM, self).__init__(inference_engine, dtype)

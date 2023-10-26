@@ -20,7 +20,7 @@ from text_generation_server.models.flash_causal_lm import FlashCausalLM
 from text_generation_server.pb import generate_pb2_grpc, generate_pb2
 from text_generation_server.pb.generate_pb2 import ModelInfoResponse
 from text_generation_server.prompt_cache import PrefixNotFound
-from text_generation_server.utils import pt2_compile_warmup
+from text_generation_server.utils import pt2_compile_warmup, print_rank_n
 
 COMPACT_BEFORE_PREFILL = os.getenv("COMPACT_BEFORE_PREFILL", "true") != "false"
 
@@ -196,6 +196,7 @@ def serve(
     revision: Optional[str],
     deployment_framework: str,
     dtype_str: Optional[str],
+    quantize: Optional[str],
     max_sequence_length: int,
     max_new_tokens: int,
     max_batch_size: int,
@@ -209,6 +210,7 @@ def serve(
         revision: Optional[str],
         deployment_framework: str,
         dtype_str: Optional[str],
+        quantize: Optional[str],
         max_sequence_length: int,
         max_new_tokens: int,
         max_batch_size: int,
@@ -224,24 +226,49 @@ def serve(
         ]
         local_url = server_urls[local_rank]
 
-        # Set the fraction of cuda/gpu mem available to this process, then load the model
-        if torch.cuda.is_available() and cuda_process_memory_fraction < 1:
-            torch.cuda.set_per_process_memory_fraction(cuda_process_memory_fraction)
+        if quantize not in [None, "gptq", "bitsandbytes"]:
+            raise ValueError(f"Unrecognized quantization method specified: {quantize}")
 
         # Default dtype based on device if not provided
         if dtype_str is None:
             dtype_str = "float16" if torch.cuda.is_available() else "float32"
 
-        model = get_model(model_name, revision, deployment_framework, dtype_str)
+        if quantize is None and dtype_str == "int8":
+            print_rank_n("Inferring quantize = bitsandbytes because dtype == int8")
+            quantize = "bitsandbytes"
+
+        # Set the fraction of cuda/gpu mem available to this process, then load the model
+        if torch.cuda.is_available() and cuda_process_memory_fraction < 1:
+            torch.cuda.set_per_process_memory_fraction(cuda_process_memory_fraction)
+
+        model = get_model(model_name, revision, deployment_framework, dtype_str, quantize)
 
         if local_rank == 0:
             print(f"Loaded model as {type(model)}")
             print(f"With model class {type(model.model)}")
             print(f"Using engine {type(model.engine)}")
             device = model.engine.get_device()
-            print(f"Using device {device}, dtype {dtype_str}")
+            print(f"Using device {device}, dtype {dtype_str}, quantize {quantize}")
             print(model.config.__str__())
-            if device.type == "cuda":
+
+            if quantize == "gptq":
+                from text_generation_server.utils.layers import HAS_EXLLAMA
+                if HAS_EXLLAMA:
+                    try:
+                        # When using GPTQ, Exllama kernels need some global kernels
+                        # For which we have the final shapes only after the model has loaded
+                        # This will allocate those buffers.
+                        from text_generation_server.utils.gptq.exllama import (
+                            create_exllama_buffers,
+                            set_device,
+                        )
+
+                        set_device(device)
+                        create_exllama_buffers(max_sequence_length)
+                    except ImportError:
+                        print("WARN: Error setting up GPTQ exllama buffers")
+
+            if local_rank == 0 and device.type == "cuda":
                 # Log GPU memory stats at startup
                 device = model.engine.get_device()
                 print(f"Cuda process memory fraction: {cuda_process_memory_fraction}")
@@ -296,6 +323,7 @@ def serve(
             revision,
             deployment_framework,
             dtype_str,
+            quantize,
             max_sequence_length,
             max_new_tokens,
             max_batch_size,
