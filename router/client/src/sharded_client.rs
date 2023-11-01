@@ -38,7 +38,7 @@ impl ShardedClient {
         for mut client in clients.clone() {
             let mut receiver: broadcast::Receiver<(Request, _)> = sender.subscribe();
             tokio::spawn(async move {
-                while let Ok((request , response_chan)) = receiver.recv().await {
+                while let Ok((request, response_chan)) = receiver.recv().await {
                     let result = match request {
                         Prefill(batch, to_prune) =>
                             client.prefill(batch, to_prune).await.map(|r| Some(r)),

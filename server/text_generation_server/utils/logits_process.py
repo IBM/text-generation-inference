@@ -419,7 +419,8 @@ class HeterogeneousProcessorWrapper(LogitsProcessor):
         return None
 
 
-# This is a fixed version of the class in transformers, see https://github.com/huggingface/transformers/pull/26579.
+# This is a fixed version of the class in transformers,
+# See https://github.com/huggingface/transformers/pull/26579, https://github.com/huggingface/transformers/pull/27165
 # Can be removed after upgrading to transformers v4.35+
 class TypicalLogitsWarper(LogitsWarper):
     r"""
