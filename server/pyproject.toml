@@ -9,7 +9,7 @@ text-generation-server = 'text_generation_server.cli:app'
 
 [tool.poetry.dependencies]
 python = ">=3.11.0,<3.13"
-protobuf = "^4.24.4"
+protobuf = "^4.25.0"
 grpcio = "^1.59.2"
 grpcio-reflection = "^1.59.2"
 loguru = "^0.7.2"
@@ -23,8 +23,8 @@ datasets = { version = "^2.14.6", optional = true }
 texttable = { version = "^1.7.0", optional = true }
 transformers = "4.34.1"
 optimum = { version = "1.13.2", extras = ["onnxruntime-gpu"], optional = true }
-onnxruntime = { version = "1.16.0", optional = true }
-onnxruntime-gpu = { version = "1.16.0", optional = true }
+onnxruntime = { version = "1.16.1", optional = true }
+onnxruntime-gpu = { version = "1.16.1", optional = true }
 onnx = { version = "1.14.1", optional = true }
 einops = "^0.7.0"
 
