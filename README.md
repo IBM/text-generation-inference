@@ -154,3 +154,56 @@ They are all prefixed with `tgi_`. Descriptions will be added to the table below
 | `tgi_prefill_weight_limit_exceeded`        | `counter`   |                                                     |              |
 | `tgi_prompt_load_failure`                  | `counter`   |                                                     |              |
 | `tgi_prompt_load_duration`                 | `histogram` |                                                     |              |
+
+### Run Inference Locally with Intel(R) Extension for PyTorch*
+
+#### 0. Build the image 
+
+```
+make build
+```
+
+This command will print the Docker image id for `text-gen-server`. Set `IMAGE_ID` in the commands below to this.
+
+#### 1. Run the server
+
+```
+export IMAGE_ID=<IMAGE_ID>
+export MODEL=Salesforce/codegen-2B-multi
+export volume=$PWD/data
+mkdir $volume
+chmod 777 volume
+```
+
+It's possible to use `text-generation-server download-weights`, but in this example we use a model that we download locally with `transformers-cli`.
+
+```
+transformers-cli download $MODEL
+```
+
+Move model from `~/.cache/huggingface/hub/` to `$volume` You can then run the inference server with:
+
+```
+docker run -p 8033:8033 -p 3000:3000 -e TRANSFORMERS_CACHE=/data -e HUGGINGFACE_HUB_CACHE=/data -e DEPLOYMENT_FRAMEWORK=hf_transformers_ipex -e MODEL_NAME=$MODEL -v $volume:/data $IMAGE_ID text-generation-launcher --dtype-str float32
+```
+
+Change --dtype-str to bfloat16 for half-precision inference
+INT8/INT4 question WIP
+
+#### 2. Prepare the client
+
+Install GRPC in a Python environment: `pip install grpcio grpcio-tools`
+
+In the repository root, run:
+```
+python -m grpc_tools.protoc -Iproto --python_out=pb --pyi_out=pb --grpc_python_out=pb proto/generate.proto
+python -m grpc_tools.protoc -Iproto --python_out=pb --pyi_out=pb --grpc_python_out=pb proto/generation.proto
+```
+This generates the necessary files in the pb directory.
+
+Then to run inference:
+```
+python pb/client.py
+```
+
+Edit `pb/client.py` to change the prompts.

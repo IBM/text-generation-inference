@@ -28,11 +28,11 @@ class InferenceEngine(BaseInferenceEngine):
             model_config.init_device = str(self.device)
             kwargs["config"] = model_config
 
-        if dtype == torch.int8:
-            # using LLM.int8()
-            kwargs["load_in_8bit"] = True
-        else:
-            kwargs["torch_dtype"] = dtype
+        # if dtype == torch.int8:
+        #     # using LLM.int8()
+        #     kwargs["load_in_8bit"] = True
+        # else:
+        #     kwargs["torch_dtype"] = dtype
 
         slow_but_exact = os.getenv('BLOOM_SLOW_BUT_EXACT', 'false').lower() == 'true'
         if slow_but_exact:
@@ -40,6 +40,6 @@ class InferenceEngine(BaseInferenceEngine):
 
         with self.device:
             self.model = model_class.from_pretrained(**kwargs).requires_grad_(False).eval()
-            # This seems to be necessary even with with self.device
-            self.model = ipex.optimize_transformers(self.model)
+            self.model = ipex.optimize_transformers(self.model, dtype=dtype)
+            print('Intel(R) Extension for PyTorch* enabled')
             self.model.to(self.device)
