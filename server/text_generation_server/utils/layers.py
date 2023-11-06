@@ -6,24 +6,41 @@ from torch import nn
 from torch.nn import functional as F
 from typing import List
 
-HAS_BITS_AND_BYTES = True
-try:
-    import bitsandbytes as bnb
-    from bitsandbytes.nn import Int8Params
-
-except ImportError:
-    HAS_BITS_AND_BYTES = False
+from text_generation_server.utils import print_rank_n
 
 from accelerate import init_empty_weights
 
-from text_generation_server.utils.gptq.quant_linear import QuantLinear
-HAS_EXLLAMA = True
-if os.getenv("DISABLE_EXLLAMA", "False").lower() == "true":
-    HAS_EXLLAMA = False
-try:
-    from text_generation_server.utils.gptq.exllama import Ex4bitLinear
-except ImportError:
-    HAS_EXLLAMA = False
+HAS_BITS_AND_BYTES = False
+HAS_EXLLAMA = False
+EXLLAMA_VERSION = None
+
+if torch.cuda.is_available():
+    try:
+        import bitsandbytes as bnb
+        from bitsandbytes.nn import Int8Params
+        HAS_BITS_AND_BYTES = False
+    except ImportError:
+        pass
+
+    from text_generation_server.utils.gptq.quant_linear import QuantLinear
+
+    if os.getenv("DISABLE_EXLLAMA", "False").lower() != "true":
+        try:
+            EXLLAMA_VERSION = os.getenv("EXLLAMA_VERSION", "2") # Use v2 as default
+            if EXLLAMA_VERSION == "1":
+                from text_generation_server.utils.gptq.exllama import Ex4bitLinear as ExllamaQuantLinear
+            elif EXLLAMA_VERSION == "2":
+                from text_generation_server.utils.gptq.exllamav2 import Ex4bitLinearV2 as ExllamaQuantLinear
+            else:
+                raise ValueError(f"Unsupported value for EXLLAMA_VERSION: {EXLLAMA_VERSION}")
+            HAS_EXLLAMA = True
+        except ImportError as e:
+            print_rank_n(f"Error importing ExllamaV{EXLLAMA_VERSION} kernels: {e}")
+            EXLLAMA_VERSION = None
+
+    print_rank_n(
+        f"HAS_BITS_AND_BYTES={HAS_BITS_AND_BYTES}, HAS_EXLLAMA={HAS_EXLLAMA}, EXLLAMA_VERSION={EXLLAMA_VERSION}"
+    )
 
 
 # Monkey patching
@@ -158,7 +175,7 @@ def get_linear(weight, bias, quantize):
                 f"The passed weight is not `gptq` compatible, loader needs to be updated."
             )
 
-        linear = (Ex4bitLinear if use_exllama else QuantLinear)(
+        linear = (ExllamaQuantLinear if use_exllama else QuantLinear)(
             qweight,
             qzeros,
             scales,

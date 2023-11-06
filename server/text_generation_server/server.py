@@ -237,36 +237,59 @@ def serve(
             print_rank_n("Inferring quantize = bitsandbytes because dtype == int8")
             quantize = "bitsandbytes"
 
+        cuda_available = torch.cuda.is_available()
+
+        if quantize is not None and not cuda_available:
+            raise ValueError("Quantization requires CUDA")
+
         # Set the fraction of cuda/gpu mem available to this process, then load the model
-        if torch.cuda.is_available() and cuda_process_memory_fraction < 1:
+        if cuda_available and cuda_process_memory_fraction < 1:
             torch.cuda.set_per_process_memory_fraction(cuda_process_memory_fraction)
 
         model = get_model(model_name, revision, deployment_framework, dtype_str, quantize)
 
+        device = model.engine.get_device()
         if local_rank == 0:
             print(f"Loaded model as {type(model)}")
             print(f"With model class {type(model.model)}")
             print(f"Using engine {type(model.engine)}")
-            device = model.engine.get_device()
             print(f"Using device {device}, dtype {dtype_str}, quantize {quantize}")
             print(model.config.__str__())
 
-            if quantize == "gptq":
-                from text_generation_server.utils.layers import HAS_EXLLAMA
-                if HAS_EXLLAMA:
-                    try:
-                        # When using GPTQ, Exllama kernels need some global kernels
-                        # For which we have the final shapes only after the model has loaded
-                        # This will allocate those buffers.
+        if quantize == "gptq":
+            from text_generation_server.utils.layers import HAS_EXLLAMA, EXLLAMA_VERSION
+            if HAS_EXLLAMA:
+                try:
+                    # When using GPTQ, Exllama kernels need some global kernels
+                    # For which we have the final shapes only after the model has loaded
+                    # This will allocate those buffers.
+
+                    if EXLLAMA_VERSION == "1":
                         from text_generation_server.utils.gptq.exllama import (
                             create_exllama_buffers,
                             set_device,
                         )
+                    else:
+                        from text_generation_server.utils.gptq.exllamav2 import (
+                            create_exllama_buffers,
+                            set_device,
+                            Ex4bitLinearV2,
+                        )
 
-                        set_device(device)
+                    set_device(device)
+
+                    if EXLLAMA_VERSION == "1":
                         create_exllama_buffers(max_sequence_length)
-                    except ImportError:
-                        print("WARN: Error setting up GPTQ exllama buffers")
+                    elif EXLLAMA_VERSION == "2":
+                        # NOTE: We're assuming that in this case, max_batch_weight == max_batch_tokens
+                        # This will likely need to change soon when we rework the batching parameters
+                        create_exllama_buffers(max_batch_weight)
+                        for _, submodule in model.model.named_modules():
+                            if isinstance(submodule, Ex4bitLinearV2):
+                                submodule.post_init()  # make q matrix and set scratch space
+
+                except ImportError:
+                    print("WARN: Error setting up GPTQ exllama buffers")
 
             if local_rank == 0 and device.type == "cuda":
                 # Log GPU memory stats at startup
