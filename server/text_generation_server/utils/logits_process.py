@@ -353,7 +353,7 @@ class HeterogeneousTypicalLogitsWarper(LogitsWarper):
 
         # Remove tokens with cumulative mass above the threshold
         last_ind = (probs < self.mass_tensor).sum(dim=1)
-        last_ind[last_ind < 0] = 0
+        last_ind.clamp_(max=sorted_scores.shape[-1] - 1)
 
         if self.disabled_mask is not None:
             last_ind.masked_fill_(self.disabled_mask, scores.shape[-1] - 1)
@@ -388,6 +388,7 @@ class HeterogeneousTypicalLogitsWarper(LogitsWarper):
         return None
 
 
+# NB: This class is not currently used.
 class HeterogeneousProcessorWrapper(LogitsProcessor):
     r"""
     A wrapper for logit warpers or processors without heterogeneous parameter support.

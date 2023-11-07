@@ -110,6 +110,7 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
             batch, errors = self.model.batch_type.from_pb(
                 request.batch,
                 tokenizer=self.model.tokenizer,
+                dtype=self.model.dtype,
                 device=self.model.device,
                 embeddings_lookup=self.model.word_embeddings,
                 prefix_cache=self.model.prefix_cache,

@@ -36,6 +36,7 @@ class Model(ABC):
         self.engine = engine
         self.config, self.tokenizer, self.model = engine.get_components()
         self.device = engine.get_device()
+        self.dtype = dtype
 
         # The tokenizer config doesn't always contain the eos token id
         if self.config.eos_token_id is not None:

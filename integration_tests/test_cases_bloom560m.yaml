@@ -1209,21 +1209,59 @@
 
 
  # Repetition penalty
-- name: Repetition penalty
+- name: Repetition penalty - disabled and has repetition
+  request:
+    params:
+      stopping:
+        minNewTokens: 21
+        maxNewTokens: 21
+    requests:
+      - {"text": "I will be a good AI."}
+  response:
+    responses:
+      - generatedTokenCount: 21
+        inputTokenCount: 7
+        stopReason: MAX_TOKENS
+        text: ' I will be a good AI. I will be a good AI. I will be a good AI.'
+
+- name: Repetition penalty - enabled to remove repetition
   request:
     params:
       decoding:
         repetition_penalty: 2.5
       stopping:
+        minNewTokens: 20
         maxNewTokens: 20
     requests:
-      - {"text": "A very long story:\n"}
+      - {"text": "I will be a good AI."}
   response:
     responses:
       - generatedTokenCount: 20
-        inputTokenCount: 6
+        inputTokenCount: 7
         stopReason: MAX_TOKENS
-        text: The first time I saw the movie, it was in a theater. It had been on my mind
+        text: ' I have been working on this for the past few years and am now ready to start
+          my own company'
+
+- name: Repetition penalty with truncation
+  request:
+    params:
+      truncateInputTokens: 7
+      decoding:
+        repetition_penalty: 2.5
+      stopping:
+        minNewTokens: 20
+        maxNewTokens: 20
+    requests:
+      # Truncation removes "I have been working." which means it can be generated again
+      - {"text": "I have been working.I will be a good AI."}
+  response:
+    responses:
+      - generatedTokenCount: 20
+        inputTokenCount: 7
+        stopReason: MAX_TOKENS
+        text: ' I have been working on this for the past few years and am now ready to start
+          my own company'
+
 
 # Length penalty
 - name: Length penalty

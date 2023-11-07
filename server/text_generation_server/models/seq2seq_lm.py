@@ -69,6 +69,7 @@ class Seq2SeqLMBatch(Batch):
         cls,
         pb: generate_pb2.Batch,
         tokenizer: PreTrainedTokenizerBase,
+        dtype: torch.dtype,
         device: torch.device,
         embeddings_lookup: Optional,
         prefix_cache: Optional[PrefixCache],
