@@ -24,10 +24,9 @@ moka = { version = "0.11.3", features = ["future"] }
 nohash-hasher = "^0.2.0"
 num = "^0.4.1"
 hyper = "^0.14.27" # Override to address CVE-2023-26964
-openssl = "^0.10.55" # Override to address WS-2023-0082, WS-2023-0083, WS-2023-0195
-openssl-sys = "^0.9.90" # Override to address WS-2023-0082, WS-2023-0083, WS-2023-0195
-rustls-webpki = "^0.100.2" # Override to address WS-2023-0305, CVE-2018-16875
-parking_lot = "^0.12.1"
+openssl = "^0.10.59" # Override to address WS-2023-0082, WS-2023-0083, WS-2023-0195
+openssl-sys = "^0.9.95" # Override to address WS-2023-0082, WS-2023-0083, WS-2023-0195
+rustls-webpki = "^0.101.7" # Override to address WS-2023-0305, CVE-2018-16875
 rand = "^0.8.5"
 serde = "^1.0.173"
 serde_json = "^1.0.103"
@@ -38,7 +37,7 @@ thiserror = "^1.0.50"
 tokenizers = "0.14.1"
 tokio = { version = "1.33.0", features = ["rt", "rt-multi-thread", "parking_lot", "signal", "sync", "fs"] }
 tokio-rustls = "^0.24.1"
-rustls = "0.21.5"
+rustls = "0.21.8"
 tracing = "^0.1.40"
 tracing-subscriber = { version = "0.3.17", features = ["json"] }
 prost = "^0.12.1"

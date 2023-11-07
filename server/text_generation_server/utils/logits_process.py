@@ -12,7 +12,7 @@ from transformers import (
     TemperatureLogitsWarper,
     TopKLogitsWarper,
     TopPLogitsWarper,
-    #TypicalLogitsWarper,
+    TypicalLogitsWarper,
 )
 
 #TODO diagnose errors seen when using CUDA Graphs with NCCL - for now we'll disable in sharded case
@@ -418,53 +418,3 @@ class HeterogeneousProcessorWrapper(LogitsProcessor):
             self.processors = new_processors
             return self
         return None
-
-
-# This is a fixed version of the class in transformers,
-# See https://github.com/huggingface/transformers/pull/26579, https://github.com/huggingface/transformers/pull/27165
-# Can be removed after upgrading to transformers v4.35+
-class TypicalLogitsWarper(LogitsWarper):
-    r"""
-    [`LogitsWarper`] that performs typical decoding. See [Typical Decoding for Natural Language
-    Generation](https://arxiv.org/abs/2202.00666) for more information.
-
-    Args:
-        mass (`float`):
-            Value of typical_p between 0 and 1 inclusive, defaults to 0.9.
-        filter_value (`float`, *optional*, defaults to `-float("Inf")`):
-            All filtered values will be set to this float value.
-        min_tokens_to_keep (`int`, *optional*, defaults to 1):
-            Minimum number of tokens that cannot be filtered.
-    """
-
-    def __init__(self, mass: float = 0.9, filter_value: float = -float("Inf"), min_tokens_to_keep: int = 1):
-        mass = float(mass)
-        if not (0 < mass < 1):
-            raise ValueError(f"`typical_p` has to be a float > 0 and < 1, but is {mass}")
-
-        self.filter_value = filter_value
-        self.mass = mass
-        self.min_tokens_to_keep = min_tokens_to_keep
-
-    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
-        # calculate entropy
-        normalized = torch.nn.functional.log_softmax(scores, dim=-1)
-        p = torch.exp(normalized)
-        ent = -(normalized * p).nansum(-1, keepdim=True)
-
-        # shift and sort
-        shifted_scores = torch.abs((-normalized) - ent)
-        sorted_scores, sorted_indices = torch.sort(shifted_scores, descending=False)
-        sorted_logits = scores.gather(-1, sorted_indices)
-        cumulative_probs = sorted_logits.softmax(dim=-1).cumsum(dim=-1)
-
-        # Remove tokens with cumulative mass above the threshold
-        last_ind = (cumulative_probs < self.mass).sum(dim=1)
-        last_ind.clamp_(max=sorted_scores.shape[-1] - 1)
-        sorted_indices_to_remove = sorted_scores > sorted_scores.gather(1, last_ind.view(-1, 1))
-        # Keep at least min_tokens_to_keep (set to min_tokens_to_keep-1 because we add the first one below)
-        sorted_indices_to_remove[..., : self.min_tokens_to_keep] = 0
-        indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
-
-        scores = scores.masked_fill(indices_to_remove, self.filter_value)
-        return scores
