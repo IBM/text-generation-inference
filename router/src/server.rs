@@ -343,6 +343,9 @@ async fn do_run<B: BatchType>(
         value *= 1.5;
         duration_buckets.push(value);
     }
+    // Tokenization token count buckets
+    let tokenized_tokens_matcher = Matcher::Full(String::from("tgi_tokenize_request_tokens"));
+    let tokenized_tokens_buckets: Vec<f64> = (6..20).map(|x| (1 << x) as f64).collect();
     // Input Length buckets
     let input_length_matcher = Matcher::Full(String::from("tgi_request_input_length"));
     let max_sequence_length_buckets: Vec<f64> = (0..64)
@@ -364,20 +367,14 @@ async fn do_run<B: BatchType>(
 
     // Prometheus handler
     let builder = PrometheusBuilder::new()
-        .set_buckets_for_metric(duration_matcher, &duration_buckets)
-        .unwrap()
-        .set_buckets_for_metric(input_length_matcher, &max_sequence_length_buckets)
-        .unwrap()
-        .set_buckets_for_metric(generated_tokens_matcher, &max_new_tokens_buckets)
-        .unwrap()
-        .set_buckets_for_metric(max_new_tokens_matcher, &max_new_tokens_buckets)
-        .unwrap()
-        .set_buckets_for_metric(total_tokens_matcher, &max_sequence_length_buckets)
-        .unwrap()
-        .set_buckets_for_metric(batch_size_matcher, &batch_size_buckets)
-        .unwrap()
-        .set_buckets_for_metric(batch_inference_size_matcher, &batch_size_buckets)
-        .unwrap();
+        .set_buckets_for_metric(duration_matcher, &duration_buckets).unwrap()
+        .set_buckets_for_metric(tokenized_tokens_matcher, &tokenized_tokens_buckets).unwrap()
+        .set_buckets_for_metric(input_length_matcher, &max_sequence_length_buckets).unwrap()
+        .set_buckets_for_metric(generated_tokens_matcher, &max_new_tokens_buckets).unwrap()
+        .set_buckets_for_metric(max_new_tokens_matcher, &max_new_tokens_buckets).unwrap()
+        .set_buckets_for_metric(total_tokens_matcher, &max_sequence_length_buckets).unwrap()
+        .set_buckets_for_metric(batch_size_matcher, &batch_size_buckets).unwrap()
+        .set_buckets_for_metric(batch_inference_size_matcher, &batch_size_buckets).unwrap();
     let prom_handle = builder
         .install_recorder()
         .expect("failed to install metrics recorder");

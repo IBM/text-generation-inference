@@ -60,6 +60,7 @@ pub(crate) async fn start_grpc_server<F: Future<Output = ()> + Send +'static> (
         state: shared_state,
         tokenizer,
         input_counter: metrics::register_counter!("tgi_request_input_count"),
+        tokenize_input_counter: metrics::register_counter!("tgi_tokenize_request_input_count"),
     };
     let grpc_server = builder
         .add_service(GenerationServiceServer::new(grpc_service))
@@ -82,6 +83,7 @@ pub struct GenerationServicer {
     state: ServerState,
     tokenizer: Tokenizer,
     input_counter: metrics::Counter,
+    tokenize_input_counter: metrics::Counter,
 }
 
 #[tonic::async_trait]
@@ -245,15 +247,25 @@ impl GenerationService for GenerationServicer {
         &self, request: Request<BatchedTokenizeRequest>
     ) -> Result<Response<BatchedTokenizeResponse>, Status> {
         let br = request.into_inner();
+        metrics::increment_counter!("tgi_tokenize_request_count");
+        let start_time = Instant::now();
+        self.tokenize_input_counter.increment(br.requests.len() as u64);
 
+        let mut token_total = 0;
         let responses = self.tokenizer.encode_batch(
             br.requests.into_iter().map(|tr| tr.text).collect(), true
         )
-            .map_err(Status::from_error)?
-            .into_iter().map(|e| TokenizeResponse {
-                token_count: e.len() as u32,
-                tokens: if br.return_tokens { e.get_tokens().to_vec() } else { vec![] },
-        }).collect();
+            .map_err(Status::from_error)?.into_iter()
+            .map(|e| {
+                let token_count = e.len() as u32;
+                token_total += token_count;
+                TokenizeResponse {
+                    token_count,
+                    tokens: if br.return_tokens { e.get_tokens().to_vec() } else { vec![] },
+                }
+            }).collect();
+        metrics::histogram!("tgi_tokenize_request_tokens", token_total as f64);
+        metrics::histogram!("tgi_tokenize_request_duration", start_time.elapsed().as_secs_f64());
 
         Ok(Response::new(BatchedTokenizeResponse { responses }))
     }

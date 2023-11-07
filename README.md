@@ -154,3 +154,7 @@ They are all prefixed with `tgi_`. Descriptions will be added to the table below
 | `tgi_prefill_weight_limit_exceeded`        | `counter`   |                                                     |              |
 | `tgi_prompt_load_failure`                  | `counter`   |                                                     |              |
 | `tgi_prompt_load_duration`                 | `histogram` |                                                     |              |
+| `tgi_tokenize_request_count`               | `counter`   |                                                     |              |
+| `tgi_tokenize_request_input_count`         | `counter`   |                                                     |              |
+| `tgi_tokenize_request_tokens`              | `histogram` |                                                     |              |
+| `tgi_tokenize_request_duration`            | `histogram` |                                                     |              |
