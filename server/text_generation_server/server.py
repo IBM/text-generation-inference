@@ -292,19 +292,17 @@ def serve(
                 except ImportError:
                     print("WARN: Error setting up GPTQ exllama buffers")
 
-            if local_rank == 0 and device.type == "cuda":
-                # Log GPU memory stats at startup
-                device = model.engine.get_device()
-                print(f"Cuda process memory fraction: {cuda_process_memory_fraction}")
-                print(torch.cuda.memory_summary(device=device))
-                # Start a thread to log GPU usage if configured
-                interval = float(os.getenv("LOG_GPU_USAGE_INTERVAL", "0"))
-                if interval > 0.0:
-                    t = threading.Thread(target=partial(log_gpu_stats, device, interval))
-                    t.start()
+        if local_rank == 0 and device.type == "cuda":
+            # Log GPU memory stats at startup
+            print(f"Cuda process memory fraction: {cuda_process_memory_fraction}")
+            print(torch.cuda.memory_summary(device=device))
+            # Start a thread to log GPU usage if configured
+            interval = float(os.getenv("LOG_GPU_USAGE_INTERVAL", "0"))
+            if interval > 0.0:
+                t = threading.Thread(target=partial(log_gpu_stats, device, interval))
+                t.start()
 
         if model.compiled:
-
             # trigger pt2 compile for variety of tensor shapes
             print("Warming up PyTorch 2 compile...")
             warmup_t0 = time.time()
