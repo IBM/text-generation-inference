@@ -107,10 +107,8 @@ class RWConfig(PretrainedConfig):
 
         if new_decoder_architecture is not None:
             self.new_decoder_architecture = new_decoder_architecture
-        elif model_type == "RefinedWeb":
-            self.new_decoder_architecture = True
         else:
-            self.new_decoder_architecture = False
+            self.new_decoder_architecture = (model_type == "RefinedWeb")
 
         super().__init__(bos_token_id=bos_token_id, eos_token_id=eos_token_id, **kwargs)
 
@@ -205,7 +203,6 @@ class FlashRWAttention(torch.nn.Module):
                 query,
                 layer_past[:, 0],
                 layer_past[:, 1],
-                torch.select(kv, dim=1, index=1),
                 attn_output,
                 cu_seqlens,
                 max_s,
@@ -524,7 +521,7 @@ class FlashRWModel(FlashRWPreTrainedModel):
         self.word_embeddings = TensorParallelEmbedding(
             prefix="transformer.word_embeddings", weights=weights
         )
-        if config.new_decoder_architecture:
+        if config.new_decoder_architecture:  # "RefinedWeb"
             self.h = nn.ModuleList(
                 [
                     FlashRWLargeLayer(layer_id, config, weights)
@@ -536,14 +533,18 @@ class FlashRWModel(FlashRWPreTrainedModel):
                 2,
                 self.h[0].self_attention.head_size,
             )
-        else:
+        else:  # "RefinedWebModel"
             self.h = nn.ModuleList(
                 [
                     FlashRWLayer(layer_id, config, weights)
                     for layer_id in range(config.num_hidden_layers)
                 ]
             )
-            self.cache_size = self.h[0].self_attention.num_heads_kv
+            self.cache_size = (
+                2,
+                self.h[0].self_attention.num_heads_kv,
+                self.h[0].self_attention.head_size,
+            )
 
         self.ln_f = FastLayerNorm.load(
             prefix="transformer.ln_f",
