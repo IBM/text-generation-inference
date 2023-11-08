@@ -667,12 +667,12 @@ class CausalLM(Model):
             logprobs,
             all_input_ids,
         ) in enumerate(iterator):
-            # Ensure tok view is 1st order, everything else is second.
-            tok_view = next_token.view(-1)
-            scores_view = scores.view(-1, scores.shape[-1])
-            logprobs_view = logprobs.view(-1, logprobs.shape[-1]) if request.details.logprobs else None
-
             try:
+                # Ensure tok view is 1st order, everything else is second.
+                tok_view = next_token.view(-1)
+                scores_view = scores.view(-1, scores.shape[-1])
+                logprobs_view = logprobs.view(-1, logprobs.shape[-1]) if request.details.logprobs else None
+
                 # TODO would be best to vectorize this also
                 token_info = get_token_info(request, scores_view, tok_view, logprobs_view)
 
