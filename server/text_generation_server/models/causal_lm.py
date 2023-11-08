@@ -2,7 +2,6 @@ import logging
 import time
 from operator import itemgetter
 
-import numpy as np
 import torch
 
 from dataclasses import dataclass
@@ -163,15 +162,11 @@ class CausalLMBatch(Batch):
 
         # Padded all_input_ids_tensor; the maximum length of any sequence is the max
         # (padded) input sequence length + the max output length
-        all_input_ids_tensor = np.full(
+        all_input_ids_tensor = torch.full(
             (batch_size, tokenize_length + padding_right_offset),
             tokenizer.pad_token_id,
         )
         all_input_ids_tensor[:, :all_input_ids.shape[1]] = all_input_ids
-        # Create tensors on device
-        all_input_ids_tensor = all_input_ids.new_tensor(
-            all_input_ids_tensor,
-        )
 
         if prefix_ids:
             # Get input embeddings
