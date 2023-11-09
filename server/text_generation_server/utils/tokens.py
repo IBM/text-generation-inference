@@ -396,7 +396,7 @@ def get_token_info(
         top_n = min(return_top_n, flat_scores.size(-1))
         # Get nth highest value, ensure it's not -inf (for example if top_n > top_k)
         nth_highest = flat_scores.topk(top_n).values[-1]
-        torch.nan_to_num_(nth_highest, neginf=torch.finfo(torch.float).min)
+        torch.nan_to_num_(nth_highest, neginf=torch.finfo(flat_scores.dtype).min)
         # Get indices (token ids) of all scores >= nth highest value,
         # cap length at 4 * top_n as a precaution
         top_n_indices = (flat_scores >= nth_highest).nonzero().squeeze(-1)[:(top_n * 4)]
