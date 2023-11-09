@@ -202,12 +202,13 @@ class HeterogeneousNextTokenChooser:
                 warpers.append(HeterogeneousTopKLogitsWarper(top_k, device))
 
             if any(x < 1.0 for x in top_p):
+                #assert all(x != 0 for x in top_p)
                 warpers.append(HeterogeneousTopPLogitsWarper(top_p, dtype, device))
-            # We specifically exclude degenerate case 0, we devolves into greedy decoding,
-            # to align with the nonvectorized typical logit warping behavior.
-            if any(0.0 < x < 1.0 for x in typical_p):
-                corrected_probs = [p if p != 0 else 1 for p in typical_p]
-                warpers.append(HeterogeneousTypicalLogitsWarper(corrected_probs, dtype, device))
+
+            if any(x < 1.0 for x in typical_p):
+                #assert all(x != 0 for x in typical_p)
+                warpers.append(HeterogeneousTypicalLogitsWarper(typical_p, dtype, device))
+
             self.choice = HeterogeneousSampling(do_sample, seeds, device)
         else:
             self.choice = Greedy()
@@ -279,8 +280,10 @@ class HeterogeneousNextTokenChooser:
             temperature=[pb_.temperature for pb_ in pb],
             repetition_penalty=[pb_.repetition_penalty if pb_.HasField('repetition_penalty') else 1.0 for pb_ in pb],
             top_k=[pb_.top_k for pb_ in pb],
-            top_p=[pb_.top_p for pb_ in pb],
-            typical_p=[pb_.typical_p for pb_ in pb],
+            # Ensure that default (zero) values for top_p and typical_p are converted to 1.0
+            # (which corresponds to disabled in both cases)
+            top_p=[pb_.top_p if pb_.top_p > 0 else 1.0 for pb_ in pb],
+            typical_p=[pb_.typical_p if pb_.typical_p > 0 else 1.0 for pb_ in pb],
             length_penalty=[
                 (pb_.length_penalty.start_index, pb_.length_penalty.decay_factor)
                 if pb_.HasField('length_penalty') else None for pb_ in pb
@@ -310,7 +313,7 @@ class HeterogeneousNextTokenChooser:
         self.current_tokens = [self.current_tokens[i] for i in indices]
         self.min_new_tokens = [self.min_new_tokens[i] for i in indices]
         self.length_penalty = [self.length_penalty[i] for i in indices]
-        self.return_logprobs =  [self.return_logprobs[i] for i in indices]
+        self.return_logprobs = [self.return_logprobs[i] for i in indices]
 
         if any(self.do_sample):
             self.choice.filter(indices)
@@ -370,12 +373,13 @@ class HeterogeneousSampling:
         self.samplings = [self.samplings[i] for i in indices]
         return self
 
+
 # Extract requested token information from model output
 def get_token_info(
     request: generate_pb2.Request,
     scores: torch.Tensor,  # Assumes shape is [1, vocab_size]
     next_token: torch.Tensor,
-    logprobs: Optional[torch.Tensor], # Assumes shape matches logits
+    logprobs: Optional[torch.Tensor],  # Assumes shape matches logits
 ) -> TokenInfo:
     next_token = next_token.item()
     token_info = TokenInfo(request_id=request.id, token_id=next_token)
@@ -391,9 +395,8 @@ def get_token_info(
         # Ensure top_n doesn't exceed vocab size
         top_n = min(return_top_n, flat_scores.size(-1))
         # Get nth highest value, ensure it's not -inf (for example if top_n > top_k)
-        nth_highest = torch.topk(flat_scores, top_n)[0][-1]
-        if nth_highest == -float('inf'):
-            nth_highest = torch.finfo(flat_scores.dtype).min
+        nth_highest = flat_scores.topk(top_n).values[-1]
+        torch.nan_to_num_(nth_highest, neginf=torch.finfo(torch.float).min)
         # Get indices (token ids) of all scores >= nth highest value,
         # cap length at 4 * top_n as a precaution
         top_n_indices = (flat_scores >= nth_highest).nonzero().squeeze(-1)[:(top_n * 4)]
@@ -407,7 +410,7 @@ def get_token_info(
     # Token ranks if requested
     if request.details.ranks:
         #TODO if we're also returning top_n perhaps search those first
-        token_info.rank = (scores > scores[0][next_token]).sum() + 1
+        token_info.rank = (scores > scores[0, next_token]).sum() + 1
 
     return token_info
 
@@ -447,7 +450,7 @@ def get_input_tokens_info(request, input_token_ids, all_input_logits) -> InputTo
         # Ensure top_n doesn't exceed vocab size
         top_n = min(top_n, all_input_logits.size(-1))
         # Get the nth highest value for each input token's set of logits
-        nth_highest_values = torch.topk(all_input_logits, top_n)[0][..., -1, None]
+        nth_highest_values = torch.topk(all_input_logits, top_n).values[..., -1, None]
         # Construct bool tensor marking all scores >= nth highest value for each token
         diff = (all_input_logits >= nth_highest_values)
         # Gather set of marked indices for each token (correspond to top token ids)

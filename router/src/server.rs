@@ -207,7 +207,7 @@ impl<B: BatchType> BatchConfigValidator<B> {
             );
             if max_prefill_weight < single_request_prefill_weight {
                 panic!(
-                    "max_prefill_weight ({}) not large enough for max_sequence_length ({}",
+                    "max_prefill_weight ({}) not large enough for max_sequence_length ({})",
                     max_prefill_weight, max_sequence_length
                 )
             }

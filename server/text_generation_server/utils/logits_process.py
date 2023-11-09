@@ -121,10 +121,10 @@ class HeterogeneousRepetitionPenaltyLogitsProcessor(LogitsProcessor):
 
     def filter(self, indices):
         self.penalty = [self.penalty[i] for i in indices]
-        if any([x != 1.0 for x in self.penalty]):
-            self.penalty_tensor = self.penalty_tensor[indices]
-            return self
-        return None
+        if all(x == 1.0 for x in self.penalty):
+            return None
+        self.penalty_tensor = self.penalty_tensor[indices]
+        return self
 
 
 class HeterogeneousTemperatureLogitsWarper:
@@ -152,10 +152,10 @@ class HeterogeneousTemperatureLogitsWarper:
 
     def filter(self, indices):
         self.temperature = [self.temperature[i] for i in indices]
-        if any([x != 1.0 for x in self.temperature]):
-            self.temperature_tensor = self.temperature_tensor[indices]
-            return self
-        return None
+        if all(x == 1.0 for x in self.temperature):
+            return None
+        self.temperature_tensor = self.temperature_tensor[indices]
+        return self
 
 
 class HeterogeneousTopPLogitsWarper(LogitsWarper):
@@ -211,10 +211,10 @@ class HeterogeneousTopPLogitsWarper(LogitsWarper):
 
     def filter(self, indices):
         self.top_p = [self.top_p[i] for i in indices]
-        if any([x < 1.0 for x in self.top_p]):
-            self.top_p_opposite = self.top_p_opposite[indices]
-            return self
-        return None
+        if all(x == 1.0 for x in self.top_p):
+            return None
+        self.top_p_opposite = self.top_p_opposite[indices]
+        return self
 
 
 class HeterogeneousTopKLogitsWarper(LogitsWarper):
@@ -270,7 +270,7 @@ class HeterogeneousTopKLogitsWarper(LogitsWarper):
             top_k = self.top_k_tensor
 
         # Get the kth score for each member of the batch
-        kth_scores = torch.gather(torch.topk(scores, max_top_k)[0], 1, top_k)
+        kth_scores = torch.gather(torch.topk(scores, max_top_k).values, 1, top_k)
 
         # Mask member of kth_scores that do not want to use top_k warping
         if self.top_k_disabled_mask is not None:
@@ -376,16 +376,16 @@ class HeterogeneousTypicalLogitsWarper(LogitsWarper):
         self.mass = [self.mass[i] for i in indices]
         disabled = [x == 1.0 for x in self.mass]
 
-        if not all(disabled):
-            self.mass_tensor = self.mass_tensor[indices]
+        if all(disabled):
+            return None
 
-            if self.disabled_mask is not None:
-                self.disabled_mask = (
-                    self.disabled_mask[indices] if any(disabled) else None
-                )
+        self.mass_tensor = self.mass_tensor[indices]
 
-            return self
-        return None
+        if self.disabled_mask is not None:
+            self.disabled_mask = (
+                self.disabled_mask[indices] if any(disabled) else None
+            )
+        return self
 
 
 # NB: This class is not currently used.
