@@ -162,7 +162,7 @@ class CausalLMBatch(Batch):
 
         # Padded all_input_ids_tensor; the maximum length of any sequence is the max
         # (padded) input sequence length + the max output length
-        all_input_ids_tensor = torch.full(
+        all_input_ids_tensor = all_input_ids.new_full(
             (batch_size, tokenize_length + padding_right_offset),
             tokenizer.pad_token_id,
         )
@@ -710,9 +710,10 @@ class CausalLM(Model):
         if first and not for_concat:
             left_pad = batch.attention_mask.shape[1] - batch.padding_right_offset - batch.max_sequence_length
             if left_pad:
-                # Trim attention mask and past kvs if we padded to multiple of 8. This is important to be able to
-                # generate up to the model's token limit.
+                # Trim pre-allocated tensors if we padded to multiple of 8. This
+                # is important to be able to generate up to the model's token limit.
                 batch.attention_mask = batch.attention_mask[:, left_pad:]
+                batch.all_input_ids_tensor = batch.all_input_ids_tensor[:, left_pad:]
                 # For a combined KV cache, past is a list of Tensors, not Tuples
                 if torch.is_tensor(past[0]):
                     for cache in past:
