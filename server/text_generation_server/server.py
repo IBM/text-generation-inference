@@ -284,7 +284,10 @@ def serve(
                     elif EXLLAMA_VERSION == "2":
                         # NOTE: We're assuming that in this case, max_batch_weight == max_batch_tokens
                         # This will likely need to change soon when we rework the batching parameters
-                        create_exllama_buffers(max_batch_weight)
+                        max_batch_tokens = max_batch_weight if max_batch_weight is not None else (
+                            max_batch_size * max_sequence_length
+                        )
+                        create_exllama_buffers(max_batch_tokens)
                         for _, submodule in model.model.named_modules():
                             if isinstance(submodule, Ex4bitLinearV2):
                                 submodule.post_init()  # make q matrix and set scratch space
