@@ -8,6 +8,7 @@ mod decoder;
 mod pb;
 mod queue;
 mod batch_types;
+mod tokenizer;
 
 use batcher::Batcher;
 use serde::{Deserialize, Serialize};

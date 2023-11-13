@@ -3,7 +3,6 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::ops::Add;
 use futures::future::try_join_all;
-use tokenizers::tokenizer::Tokenizer;
 use futures::TryFutureExt;
 use tokio::fs::read;
 use tokio::sync::OwnedSemaphorePermit;
@@ -25,6 +24,7 @@ use crate::pb::fmaas::generation_service_server::{GenerationService, GenerationS
 use crate::server::ServerState;
 use unicode_truncate::UnicodeTruncateStr;
 use crate::pb::fmaas::model_info_response::ModelKind;
+use crate::tokenizer::AsyncTokenizer;
 use crate::validation::ValidationError;
 
 /// Whether to fail if sampling parameters are provided in greedy-mode requests
@@ -36,7 +36,7 @@ pub(crate) async fn start_grpc_server<F: Future<Output = ()> + Send +'static> (
     tls_key_pair: Option<(String, String)>,
     tls_client_ca_cert: Option<String>,
     shared_state: ServerState,
-    tokenizer: Tokenizer,
+    tokenizer: AsyncTokenizer,
     signal: F,
 ) -> JoinHandle<()> {
 
@@ -81,7 +81,7 @@ async fn load_pem(path: String, name: &str) -> Vec<u8> {
 //  #[derive(Debug, Default)]
 pub struct GenerationServicer {
     state: ServerState,
-    tokenizer: Tokenizer,
+    tokenizer: AsyncTokenizer,
     input_counter: metrics::Counter,
     tokenize_input_counter: metrics::Counter,
 }
@@ -251,19 +251,17 @@ impl GenerationService for GenerationServicer {
         let start_time = Instant::now();
         self.tokenize_input_counter.increment(br.requests.len() as u64);
 
-        let mut token_total = 0;
-        let responses = self.tokenizer.encode_batch(
-            br.requests.into_iter().map(|tr| tr.text).collect(), true
-        )
-            .map_err(Status::from_error)?.into_iter()
-            .map(|e| {
-                let token_count = e.len() as u32;
-                token_total += token_count;
-                TokenizeResponse {
-                    token_count,
-                    tokens: if br.return_tokens { e.get_tokens().to_vec() } else { vec![] },
+        let responses = try_join_all(br.requests.into_iter().map(|tr|
+            self.tokenizer.tokenize(tr.text, br.return_tokens).map_ok(
+                |(_, token_count, encoding)| TokenizeResponse {
+                    token_count: token_count as u32,
+                    tokens: encoding.map_or_else(
+                        Vec::new, |e| e.get_tokens().to_vec()
+                    ),
                 }
-            }).collect();
+            ))).map_err(Status::from_error).await?;
+
+        let token_total: u32 = responses.iter().map(|tr| tr.token_count).sum();
         metrics::histogram!("tgi_tokenize_request_tokens", token_total as f64);
         metrics::histogram!("tgi_tokenize_request_duration", start_time.elapsed().as_secs_f64());
 

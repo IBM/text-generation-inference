@@ -1353,7 +1353,7 @@
       - {"text": "A very long story:\n"}
   error:
     code: INVALID_ARGUMENT
-    message: can specify at most 6 non-empty stop sequences, each not more than 40 tokens
+    message: can specify at most 6 non-empty stop sequences, each not more than 240 UTF8 bytes
 
 # Error case 2
 - name: Input length + token min too long

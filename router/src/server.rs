@@ -23,6 +23,7 @@ use crate::decoder::Decoder;
 use crate::grpc_server::start_grpc_server;
 use crate::health::Health;
 use crate::queue::BatchingConfig;
+use crate::tokenizer::AsyncTokenizer;
 
 // Server shared state
 #[derive(Clone)]
@@ -247,7 +248,7 @@ pub struct ServerRunArgs {
     pub max_waiting_tokens: usize,
     pub client: ShardedClient,
     pub tokenizer: Tokenizer,
-    pub validation_workers: usize,
+    pub tokenization_workers: usize,
     pub addr: SocketAddr,
     pub grpc_addr: SocketAddr,
     pub tls_key_pair: Option<(String, String)>,
@@ -293,13 +294,17 @@ async fn do_run<B: BatchType>(
             args.max_prefill_weight,
         );
 
-    // Create state
-    let decoder = Decoder::new(
-        args.tokenizer.clone(), seq2seq, eos_token_id, !args.output_special_tokens,
+    let tokenizers = AsyncTokenizer::new(
+        &args.tokenizer, args.tokenization_workers
     );
+
+    // Create state
     let generation_health = Arc::new(AtomicBool::new(false));
     let health_ext = Health::new(
         args.client.clone(), generation_health.clone(), &args.tokenizer,
+    );
+    let decoder = Decoder::new(
+        args.tokenizer, seq2seq, eos_token_id, !args.output_special_tokens,
     );
     let batcher = Batcher::new(
         args.client.clone(),
@@ -315,8 +320,7 @@ async fn do_run<B: BatchType>(
         batch_type,
     );
     let validation = Validation::new(
-        args.validation_workers,
-        args.tokenizer.clone(),
+        tokenizers.clone(),
         args.client,
         args.max_sequence_length,
         args.max_new_tokens,
@@ -395,7 +399,7 @@ async fn do_run<B: BatchType>(
     // Create gRPC server
     let grpc_task = start_grpc_server(
         args.grpc_addr, args.tls_key_pair, args.tls_client_ca_cert,
-        shared_state, args.tokenizer, async move {
+        shared_state, tokenizers, async move {
             notify_clone.notified().await
         },
     ).await;

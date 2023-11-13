@@ -18,11 +18,13 @@ axum = { version = "0.6.20", features = ["json"] }
 text-generation-client = { path = "client" }
 clap = { version = "^4.4.7", features = ["derive", "env"] }
 futures = "^0.3.29"
+flume = "^0.11.0"
 metrics = "0.21.1"
 metrics-exporter-prometheus = { version = "0.12.1", features = [] }
-moka = { version = "0.11.3", features = ["future"] }
+moka = { version = "0.12.1", features = ["future"] }
 nohash-hasher = "^0.2.0"
 num = "^0.4.1"
+num_cpus = "^1.16.0"
 hyper = "^0.14.27" # Override to address CVE-2023-26964
 openssl = "^0.10.59" # Override to address WS-2023-0082, WS-2023-0083, WS-2023-0195
 openssl-sys = "^0.9.95" # Override to address WS-2023-0082, WS-2023-0083, WS-2023-0195

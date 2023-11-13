@@ -9,6 +9,47 @@
   response: {}
 
 
+# Tokenize count only
+- name: Tokenize count only
+  request_type: tokenize
+  request:
+    return_tokens: false
+    requests:
+      - {"text": "The very long story is written by a very long story"}
+  response:
+    responses:
+      - tokenCount: 16
+
+
+# Tokenize with tokens
+- name: Tokenize with tokens
+  request_type: tokenize
+  request:
+    return_tokens: true
+    requests:
+      - {"text": "The very long story is written by a very long story"}
+  response:
+    responses:
+      - tokenCount: 16
+        tokens:
+          - "\u2581The"
+          - "\u2581"
+          - very
+          - "\u2581long"
+          - "\u2581story"
+          - "\u2581is"
+          - "\u2581"
+          - written
+          - "\u2581by"
+          - "\u2581"
+          - a
+          - "\u2581"
+          - very
+          - "\u2581long"
+          - "\u2581story"
+          - </s>
+
+
 # Basic Greedy (implicit)
 - name: Basic Greedy, max new tokens (implicit)
   request:
@@ -53,8 +94,6 @@
         inputTokenCount: 12
         stopReason: EOS_TOKEN
         text: Wonderful day.
-
-
 
 
 # Prompt prefix - encoder only
@@ -1182,7 +1221,7 @@
       - {"text": "A very long story:\n"}
   error:
     code: INVALID_ARGUMENT
-    message: can specify at most 6 non-empty stop sequences, each not more than 40 tokens
+    message: can specify at most 6 non-empty stop sequences, each not more than 240 UTF8 bytes
 
 
 # Test input tokens boundary

@@ -33,8 +33,8 @@ struct Args {
     master_shard_uds_path: String,
     #[clap(long, env)]
     tokenizer_path: String,
-    #[clap(default_value = "2", long, env)]
-    validation_workers: usize,
+    #[clap(default_value = None, long, env)]
+    tokenization_workers: Option<usize>,
     #[clap(long, env)]
     json_output: bool,
     #[clap(long, env)]
@@ -59,8 +59,8 @@ fn main() -> Result<(), std::io::Error> {
         tracing_subscriber::fmt().compact().init();
     }
 
-    if args.validation_workers == 0 {
-        panic!("validation_workers must be > 0");
+    if args.tokenization_workers == Some(0) {
+        panic!("tokenization_workers must be > 0");
     }
 
     if args.tls_key_path.is_some() != args.tls_cert_path.is_some() {
@@ -98,6 +98,16 @@ fn main() -> Result<(), std::io::Error> {
             let mut sharded_client = ShardedClient::connect_uds(args.master_shard_uds_path)
                 .await
                 .expect("Could not connect to server");
+
+            let tokenization_workers = args.tokenization_workers.unwrap_or_else(|| {
+                // Determine number of threads to use for tokenization based on number of cores
+                let num_cpus = num_cpus::get();
+                let num_shards = sharded_client.shard_count();
+                num_cpus.checked_sub(num_shards).unwrap_or(1).min(8)
+            });
+
+            tracing::info!("Using pool of {tokenization_workers} threads for tokenization");
+
             // Clear the cache; useful if the webserver rebooted
             sharded_client
                 .clear_cache()
@@ -125,7 +135,7 @@ fn main() -> Result<(), std::io::Error> {
                 max_waiting_tokens: args.max_waiting_tokens,
                 client: sharded_client,
                 tokenizer,
-                validation_workers: args.validation_workers,
+                tokenization_workers,
                 addr,
                 grpc_addr,
                 tls_key_pair: args.tls_cert_path.map(|cp| (cp, args.tls_key_path.unwrap())),

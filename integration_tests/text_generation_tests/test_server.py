@@ -147,15 +147,23 @@ def _verify_error(expected_err: grpc.RpcError, err):
 async def run_unary_test_case(stub, case):
     # Get case details
     request = case["request"]
+    request_type = case.get("request_type", "generate")
     skip_check = "skip_check" in case
     expected = case.get("response")
     expected_err = case.get("error")
     # Create gRPC message from test request
-    message = json_format.ParseDict(request, pb2.BatchedGenerationRequest())
+    message = json_format.ParseDict(
+        request,
+        pb2.BatchedTokenizeRequest() if request_type == "tokenize"
+        else pb2.BatchedGenerationRequest(),
+    )
     print(f'================ Test: {case.get("name")}:')
     try:
         # Send request
-        response = await stub.Generate(message)
+        if request_type == "tokenize":
+            response = await stub.Tokenize(message)
+        else:
+            response = await stub.Generate(message)
         assert not expected_err
         # Convert response back to dict
         response_dict = json_format.MessageToDict(response)
@@ -165,7 +173,7 @@ async def run_unary_test_case(stub, case):
                 print(yaml.dump(response_dict))
             # Check result matches expected
             assert response_dict == approx(expected)
-        else:
+        elif request_type == "generate":
             assert response_dict["responses"][0]["inputTokenCount"] == expected["responses"][0]["inputTokenCount"]
             assert response_dict["responses"][0].get("inputTokens") == expected["responses"][0].get("inputTokens")
     except grpc.RpcError as e:
@@ -266,8 +274,8 @@ async def run_test_cases_async(test_cases, seq2seq_model=False, sharded=False):
                 run_unary_test_case(stub, case), name=f"Generate: {name}",
             ))
             # For single-input tests, try the same thing as a streaming request
-            if INCLUDE_STREAMING and "requests" in case["request"] \
-                    and len(case["request"]["requests"]) == 1:
+            if INCLUDE_STREAMING and len(case["request"].get("requests", [])) == 1 \
+                    and case.get("request_type", "generate") == "generate":
                 tasks.append(asyncio.create_task(
                     run_streaming_test_case(stub, case, seq2seq_model),
                     name=f"GenerateStream: {name}",
