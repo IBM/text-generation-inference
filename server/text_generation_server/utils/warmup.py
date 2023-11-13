@@ -52,6 +52,7 @@ def pt2_compile_warmup(
         batch, errors = model.batch_type.from_pb(
             request.batch,
             tokenizer=model.tokenizer,
+            dtype=model.dtype,
             device=model.device,
             embeddings_lookup=model.word_embeddings,
             prefix_cache=model.prefix_cache,
