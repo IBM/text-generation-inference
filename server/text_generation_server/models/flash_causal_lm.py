@@ -577,7 +577,6 @@ class FlashCausalLM(Model):
 
             except Exception as e:
                 logging.exception(f"token decoding error for request #{request.id}")
-                next_token = all_input_ids.new_tensor([self.tokenizer.pad_token_id])
                 # Add to the errors to return
                 decode_errors.append(GenerateError(
                     request_id=request.id, message=f"Token decoding error: {str(e)}"

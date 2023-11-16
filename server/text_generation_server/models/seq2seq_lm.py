@@ -701,7 +701,6 @@ class Seq2SeqLM(Model):
 
             except Exception as e:
                 logging.exception(f"token decoding error for request #{request.id}")
-                next_token = batch.all_decoder_input_ids_tensor.new_tensor([self.tokenizer.pad_token_id])
                 # Add to the errors to return
                 decode_errors.append(GenerateError(
                     request_id=request.id, message=f"Token decoding error: {str(e)}"

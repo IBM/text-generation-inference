@@ -131,8 +131,10 @@ class CausalLMBatch(Batch):
         # Tokenize batch
         tokenize_length = max_input_length
         # Pad to multiple of 8 for tensor core GPUs
+        left_pad = 0
         if device.type == "cuda" and CUDA_PAD_TO_MULT_OF_8 and (mod := tokenize_length % 8) != 0:
-            tokenize_length += 8 - mod
+            left_pad = 8 - mod
+            tokenize_length += left_pad
         tokenized_inputs = tokenizer(
             input_texts,
             return_tensors="pt",
@@ -163,10 +165,11 @@ class CausalLMBatch(Batch):
         # Padded all_input_ids_tensor; the maximum length of any sequence is the max
         # (padded) input sequence length + the max output length
         all_input_ids_tensor = all_input_ids.new_full(
-            (batch_size, tokenize_length + padding_right_offset),
+            (batch_size, max_input_length + padding_right_offset),
             tokenizer.pad_token_id,
         )
-        all_input_ids_tensor[:, :all_input_ids.shape[1]] = all_input_ids
+        no_pad_input_ids = all_input_ids[:, left_pad:] if left_pad else all_input_ids
+        all_input_ids_tensor[:, :no_pad_input_ids.shape[1]] = no_pad_input_ids
 
         if prefix_ids:
             # Get input embeddings
@@ -282,22 +285,19 @@ class CausalLMBatch(Batch):
                 )
 
             # We need to slice the attention mask and all_input_ids_tensor to
-            # remove padding from previous steps and to remove unused allocated
-            # space
+            # remove padding from previous steps and to remove unused allocated space
             left_offset = max_sequence_length - batch.max_sequence_length
-            batch_left_offset = (
-                batch.attention_mask.shape[1] - batch.max_sequence_length - batch.padding_right_offset
-            )
+            batch_left_offset = -batch.max_sequence_length - batch.padding_right_offset
             attention_mask[
                 start_index:end_index, left_offset:-padding_right_offset,
             ] = batch.attention_mask[
-                :, batch_left_offset : -batch.padding_right_offset,
+                :, batch_left_offset: -batch.padding_right_offset,
             ]
 
             all_input_ids_tensor[
                 start_index:end_index, left_offset:-padding_right_offset,
             ] = batch.all_input_ids_tensor[
-                :, batch_left_offset : -batch.padding_right_offset,
+                :, :-batch.padding_right_offset,
             ]
 
             if batch.position_ids is not None:
@@ -692,7 +692,6 @@ class CausalLM(Model):
 
             except Exception as e:
                 logging.exception(f"token decoding error for request #{request.id}")
-                next_token = all_input_ids.new_tensor([self.tokenizer.pad_token_id])
                 # Add to the errors to return
                 decode_errors.append(GenerateError(
                     request_id=request.id, message=f"Token decoding error: {str(e)}"
@@ -713,7 +712,6 @@ class CausalLM(Model):
                 # Trim pre-allocated tensors if we padded to multiple of 8. This
                 # is important to be able to generate up to the model's token limit.
                 batch.attention_mask = batch.attention_mask[:, left_pad:]
-                batch.all_input_ids_tensor = batch.all_input_ids_tensor[:, left_pad:]
                 # For a combined KV cache, past is a list of Tensors, not Tuples
                 if torch.is_tensor(past[0]):
                     for cache in past:
