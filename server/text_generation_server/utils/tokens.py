@@ -173,6 +173,7 @@ class HeterogeneousNextTokenChooser:
         min_new_tokens: List[int],
         return_logprobs: List[bool],
         eos_token_id: Optional[int] = None,
+        pad_token_id: Optional[int] = None,
         device: Optional[torch.device] = None,
         dtype: torch.dtype = None,
         # allow passing in existing values to support combining HNTC instances
@@ -181,7 +182,9 @@ class HeterogeneousNextTokenChooser:
         warpers = []
         self.repetition_processor = (
             HeterogeneousRepetitionPenaltyLogitsProcessor(
-                repetition_penalty, dtype, device
+                repetition_penalty, dtype, device,
+                # do not penalize the eos token if it is the same id as the pad token
+                id_to_exclude = eos_token_id if eos_token_id == pad_token_id else None,
             )
             if any(x != 1.0 for x in repetition_penalty)
             else None
@@ -215,6 +218,7 @@ class HeterogeneousNextTokenChooser:
 
         self.warpers = warpers
         self.eos_token_id = eos_token_id
+        self.pad_token_id = pad_token_id
         self.length_penalty = length_penalty
         self.min_new_tokens = min_new_tokens
         self.current_tokens = current_tokens if current_tokens is not None else [0] * len(do_sample)
@@ -267,6 +271,7 @@ class HeterogeneousNextTokenChooser:
         cls,
         pb: List[generate_pb2.NextTokenChooserParameters],
         model_eos_token_id: Optional[int],
+        model_pad_token_id: Optional[int],
         return_logprobs: List[bool],
         dtype: torch.dtype,
         device: torch.device,
@@ -291,6 +296,7 @@ class HeterogeneousNextTokenChooser:
             seeds=seeds,
             min_new_tokens=[pb_.min_new_tokens for pb_ in pb],
             eos_token_id=model_eos_token_id,
+            pad_token_id=model_pad_token_id,
             return_logprobs=return_logprobs,
             device=device,
             dtype=dtype,

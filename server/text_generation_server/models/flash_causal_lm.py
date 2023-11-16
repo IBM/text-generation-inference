@@ -171,6 +171,7 @@ class FlashCausalLMBatch(Batch):
         next_token_chooser = HeterogeneousNextTokenChooser.from_pb(
             pb=next_token_chooser_parameters,
             model_eos_token_id=getattr(tokenizer, 'model_eos_token_id', tokenizer.eos_token_id),
+            model_pad_token_id=tokenizer.pad_token_id,
             return_logprobs=return_logprobs,
             dtype=dtype,
             device=device,
@@ -258,6 +259,7 @@ class FlashCausalLMBatch(Batch):
         next_token_chooser = HeterogeneousNextTokenChooser.from_pb(
             pb=next_token_chooser_parameters,
             model_eos_token_id=first_next_token_chooser.eos_token_id,
+            model_pad_token_id=first_next_token_chooser.pad_token_id,
             return_logprobs=ntc_return_logprobs,
             dtype=first_next_token_chooser.dtype,
             device=first_next_token_chooser.device,
@@ -521,7 +523,7 @@ class FlashCausalLM(Model):
             logits = out
 
         next_token_ids, next_token_scores, next_token_logprobs = batch.next_token_chooser(
-            input_ids=batch.all_input_ids_tensor, scores=logits,
+            input_ids=batch.all_input_ids_tensor[:, :batch.max_seqlen], scores=logits,
         )
 
         # add the next token ids to all_input_ids_tensor

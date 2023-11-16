@@ -47,6 +47,54 @@
         stopReason: MAX_TOKENS
         text: "\nclass Shape(object):\n    '''Shape class'''\n\n    def __init__(self, x, y, z):"
 
+# Regression test case for a bug that was found with the vectorization changes
+# If a model has eos_token_id == pad_token_id, we need to make sure that the
+# repetition penalty doesn't penalize the EOS token score just because the
+# all_input_ids_tensor has padding.
+# See also https://github.ibm.com/ai-foundation/fmaas-inference-server/pull/399
+#
+# First, see what the output would be with no padding in the request
+- name: Regression Test - don't penalize EOS because of PAD [1]
+  request:
+    params:
+      method: GREEDY
+      stopping:
+        maxNewTokens: 10
+      decoding:
+        repetition_penalty: 100
+    requests:
+      - &hello_request {"text": "def print_hello():\n\t"}
+  response:
+    responses:
+      - &hello_response
+        generatedTokenCount: 8
+        inputTokenCount: 6
+        stopReason: EOS_TOKEN
+        text: "\tprint(\"Hello World!\")\n"
+# we should get the same result with padding
+- name: Regression Test - don't penalize EOS because of PAD [2]
+  request:
+    params:
+      method: GREEDY
+      stopping:
+        maxNewTokens: 10
+      decoding:
+        repetition_penalty: 100
+    requests:
+      - *hello_request
+      # need two requests, since there is no padding with a one request batch...
+      # the second request needs to be longer than the first and generate more
+      # than one token as well so that the first is processed with padding
+      - {"text": "# write a function that prints hello world"}
+  response:
+    responses:
+      - *hello_response
+      - generatedTokenCount: 10
+        inputTokenCount: 8
+        stopReason: MAX_TOKENS
+        text: "\ndef print_hello():\n    # create an"
+
+
 # Multiple inputs with token info
 - name: Multiple inputs with token info
   request:

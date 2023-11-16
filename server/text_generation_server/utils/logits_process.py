@@ -102,13 +102,22 @@ class HeterogeneousRepetitionPenaltyLogitsProcessor(LogitsProcessor):
             paper](https://arxiv.org/pdf/1909.05858.pdf) for more details.
     """
 
-    def __init__(self, penalty: List[float], dtype: torch.dtype, device: torch.device):
+    def __init__(self, penalty: List[float], dtype: torch.dtype, device: torch.device, id_to_exclude: Optional[int] = None):
         self.penalty = penalty
         self.penalty_tensor = torch.tensor(
             penalty, dtype=dtype, device=device
         ).unsqueeze(1)
+        self.id_to_exclude = id_to_exclude
 
     def __call__(self, input_ids: torch.Tensor, scores: torch.Tensor) -> torch.Tensor:
+        # as an optimization for a common case, we skip the exclusion if there is only
+        # one request in the batch (assumes that there is no padding with a single request)
+        do_exclude = self.id_to_exclude is not None and input_ids.shape[0] != 1
+        # save out the original scores if we are excluding an id
+        if do_exclude:
+            # tensor is updated in-place, so need to clone here
+            scores_of_id_to_exclude = scores[:, self.id_to_exclude].clone()
+
         score = torch.gather(scores, 1, input_ids)
 
         # if score < 0 then repetition penalty has to be multiplied to reduce the previous token probability
@@ -117,6 +126,11 @@ class HeterogeneousRepetitionPenaltyLogitsProcessor(LogitsProcessor):
         )
 
         scores.scatter_(1, input_ids, score)
+
+        # restore the scores for the "excluded" id
+        if do_exclude:
+            scores[:, self.id_to_exclude] = scores_of_id_to_exclude
+
         return scores
 
     def filter(self, indices):
