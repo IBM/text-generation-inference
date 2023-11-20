@@ -253,6 +253,8 @@ COPY --from=flash-att-v2-builder /usr/src/flash-attention-v2/build /usr/src/flas
 FROM cuda-runtime as server-release
 ARG SITE_PACKAGES=/opt/miniconda/lib/python3.11/site-packages
 
+RUN dnf update -y
+
 # Install C++ compiler (required at runtime when PT2_COMPILE is enabled)
 RUN dnf install -y gcc-c++ && dnf clean all \
     && useradd -u 2000 tgis -m -g 0
