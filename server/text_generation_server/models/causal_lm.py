@@ -516,6 +516,9 @@ class CausalLM(Model):
         _, past_key_values, _ = self.forward(input_ids=one_token, attention_mask=one_token)
         if torch.is_tensor(past_key_values[0]):
             self.batch_type = CombinedKVCausalLMBatch
+        elif 'ipex' in deployment_framework:
+            print(deployment_framework)
+            self.batch_type = CausalLMBatch
         else:
             # check the ordering of the key tensor dimensions
             key_past, value_past = past_key_values[0]

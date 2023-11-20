@@ -22,6 +22,8 @@ class InferenceEngine(BaseInferenceEngine):
             "pretrained_model_name_or_path": model_path,
             "local_files_only": True,
             "trust_remote_code": TRUST_REMOTE_CODE,
+            "torchscript": 'jit',
+            "torch_dtype": dtype
         }
 
         if model_config.model_type == "mpt":
@@ -34,12 +36,23 @@ class InferenceEngine(BaseInferenceEngine):
         # else:
         #     kwargs["torch_dtype"] = dtype
 
+        try:
+            ipex._C.disable_jit_linear_repack()
+        except Exception:
+            pass
+
+        torch._C._jit_set_texpr_fuser_enabled(False)
+
         slow_but_exact = os.getenv('BLOOM_SLOW_BUT_EXACT', 'false').lower() == 'true'
         if slow_but_exact:
             kwargs["slow_but_exact"] = True
 
         with self.device:
             self.model = model_class.from_pretrained(**kwargs).requires_grad_(False).eval()
-            self.model = ipex.optimize_transformers(self.model, dtype=dtype)
+
+            self.model = self.model.to(memory_format=torch.channels_last)
+            # self.model = ipex.optimize_transformers(self.model, dtype=dtype)
+            self.model = ipex.optimize_transformers(self.model, dtype=dtype, inplace=True)
             print('Intel(R) Extension for PyTorch* enabled')
+
             self.model.to(self.device)
