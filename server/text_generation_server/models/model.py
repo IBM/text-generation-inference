@@ -14,6 +14,7 @@ from text_generation_server.inference_engine.engine import BaseInferenceEngine
 from text_generation_server.pb import generate_pb2
 from text_generation_server.prompt_cache import PrefixCache
 from text_generation_server.utils.dist import print_rank_n
+from text_generation_server.utils.layers import TensorParallelEmbedding
 from text_generation_server.utils.token_types import TokenInfo, InputTokens
 
 B = TypeVar("B", bound=Batch)
@@ -149,21 +150,28 @@ class Model(ABC):
         return next_batch_keep_indices
 
     def _setup_prompt_encoder(self) -> bool:
-        # this is the most common name for the word embedding module for transformers models
-        if hasattr(self.model, 'transformer') and hasattr(self.model.transformer, 'wte'):
-            self.word_embeddings = self.model.transformer.wte
+        try:
+            self.word_embeddings = self.model.get_input_embeddings()
             return True
+        except:
+            pass
 
         vocab_size = getattr(self.model.config, "vocab_size", None)
+        hidden_size = getattr(self.config, "hidden_size", None)
 
-        if vocab_size is not None and hasattr(self.model, "named_children"):
-            # Logic derived from https://github.com/huggingface/peft/blob/75925b1aaee47fe483a3fd0322d86df3d3eb8d22/src/peft/peft_model.py#L185
-            for name, module in self.model.named_children():
-                if isinstance(module, PreTrainedModel):
-                    for named_param, value in list(module.named_parameters()):
-                        if value.shape[0] == vocab_size:
-                            self.word_embeddings = module.get_submodule(named_param.replace(".weight", ""))
-                            return True
+        if vocab_size is not None and hidden_size is not None and isinstance(self.model, torch.nn.Module):
+            candidates = []
+
+            for _, m in self.model.named_modules():
+                if (isinstance(m, torch.nn.Embedding) or isinstance(m, torch.nn.modules.sparse.Embedding)) \
+                    and m.weight.shape == (vocab_size, hidden_size):
+                    candidates.append(m)
+                elif isinstance(m, TensorParallelEmbedding) and m.weight.shape == (vocab_size+1, hidden_size):
+                    candidates.append(m)
+
+            if len(candidates) == 1:
+                self.word_embeddings = candidates[0]
+                return True
 
         # Prompt-tuned prefixes not currently supported for ONNX or sharded vocab cases
         print_rank_n("WARN: Could not find input embedding layer for model - prompt prefixes disabled")

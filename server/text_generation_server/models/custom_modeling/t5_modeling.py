@@ -1044,6 +1044,9 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
             config, prefix="lm_head", weights=weights
         )
 
+    def get_input_embeddings(self) -> nn.Module:
+        return self.shared
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,

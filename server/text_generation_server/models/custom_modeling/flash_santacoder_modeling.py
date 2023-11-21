@@ -473,6 +473,9 @@ class FlashSantacoderForCausalLM(nn.Module):
             config, prefix="transformer.wte", weights=weights
         )
 
+    def get_input_embeddings(self) -> nn.Module:
+        return self.transformer.wte
+
     def forward(
         self,
         input_ids,
