@@ -235,6 +235,16 @@ FROM base as flash-att-v2-cache
 COPY --from=flash-att-v2-builder /usr/src/flash-attention-v2/build /usr/src/flash-attention-v2/build
 
 
+## Setup environment variables for performance on Xeon
+ENV KMP_BLOCKTIME=INF
+ENV KMP_TPAUSE=0
+ENV KMP_SETTINGS=1
+ENV KMP_AFFINITY=granularity=fine,compact,1,0
+ENV KMP_FORJOIN_BARRIER_PATTERN=dist,dist
+ENV KMP_PLAIN_BARRIER_PATTERN=dist,dist
+ENV KMP_REDUCTION_BARRIER_PATTERN=dist,dist
+
+
 ## Final Inference Server image ################################################
 FROM cuda-runtime as server-release
 

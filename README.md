@@ -168,8 +168,8 @@ This command will print the Docker image id for `text-gen-server`. Set `IMAGE_ID
 #### 1. Run the server
 
 ```
-export IMAGE_ID=<IMAGE_ID>
-export MODEL=Salesforce/codegen-2B-multi
+export IMAGE_ID=<image_id>
+export MODEL=<model>
 export volume=$PWD/data
 mkdir $volume
 chmod 777 volume
@@ -184,11 +184,8 @@ transformers-cli download $MODEL
 Move model from `~/.cache/huggingface/hub/` to `$volume` You can then run the inference server with:
 
 ```
-docker run -p 8033:8033 -p 3000:3000 -e TRANSFORMERS_CACHE=/data -e HUGGINGFACE_HUB_CACHE=/data -e DEPLOYMENT_FRAMEWORK=hf_transformers_ipex -e MODEL_NAME=$MODEL -v $volume:/data $IMAGE_ID text-generation-launcher --dtype-str float32
+docker run -p 8033:8033 -p 3000:3000 -e TRANSFORMERS_CACHE=/data -e HUGGINGFACE_HUB_CACHE=/data -e DEPLOYMENT_FRAMEWORK=hf_transformers_ipex -e MODEL_NAME=$MODEL -v $volume:/data $IMAGE_ID text-generation-launcher --dtype-str bfloat16
 ```
-
-Change --dtype-str to bfloat16 for half-precision inference
-INT8/INT4 question WIP
 
 #### 2. Prepare the client
 
