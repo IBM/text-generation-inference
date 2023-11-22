@@ -212,7 +212,7 @@ impl GenerationService for GenerationServicer {
                 if let Some(e) = err {
                     metrics::increment_counter!("tgi_request_failure", "err" => "generate");
                     tracing::error!("Streaming response failed after {count} tokens, \
-                        output so far: '{out}': {e}");
+                        output so far: '{:?}': {e}", truncate(&out, 32));
                 } else {
                     log_response(
                         &times, ctx.input_token_count, count,
