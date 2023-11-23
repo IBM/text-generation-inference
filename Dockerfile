@@ -32,7 +32,7 @@ ENV CUDA_VERSION=11.8.0 \
     NV_CUDA_COMPAT_VERSION=520.61.05-1
 
 RUN dnf config-manager \
-       --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo \
+       --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo \
     && dnf install -y \
         cuda-cudart-11-8-${NV_CUDA_CUDART_VERSION} \
         cuda-compat-11-8-${NV_CUDA_COMPAT_VERSION} \
@@ -53,7 +53,7 @@ ENV NV_NVTX_VERSION=11.8.86-1 \
     NV_LIBNCCL_PACKAGE_VERSION=2.15.5-1+cuda11.8
 
 RUN dnf config-manager \
-       --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo \
+       --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo \
     && dnf install -y \
         cuda-libraries-11-8-${NV_CUDA_LIB_VERSION} \
         cuda-nvtx-11-8-${NV_NVTX_VERSION} \
@@ -72,7 +72,7 @@ ENV NV_CUDA_CUDART_DEV_VERSION=11.8.89-1 \
     NV_LIBNCCL_DEV_PACKAGE_VERSION=2.15.5-1+cuda11.8
 
 RUN dnf config-manager \
-       --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo \
+       --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo \
     && dnf install -y \
         cuda-command-line-tools-11-8-${NV_CUDA_LIB_VERSION} \
         cuda-libraries-devel-11-8-${NV_CUDA_LIB_VERSION} \
@@ -158,7 +158,7 @@ RUN cd server && \
     make gen-server && \
     pip install ".[accelerate]" --no-cache-dir
 
-# Patch codegen model changes into transformers 4.34
+# Patch codegen model changes into transformers 4.35
 RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py
 
 # Install router
@@ -277,7 +277,7 @@ COPY proto proto
 COPY server server
 RUN cd server && make gen-server && pip install ".[accelerate, onnx-gpu, quantize]" --no-cache-dir
 
-# Patch codegen model changes into transformers 4.34.0
+# Patch codegen model changes into transformers 4.35
 RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py
 
 # Install router

@@ -3,7 +3,7 @@ flash_att_commit := v1.0.9
 flash-attention:
     # Clone flash attention
 	pip install packaging
-	git clone https://github.com/HazyResearch/flash-attention.git --branch main --single-branch
+	git clone https://github.com/Dao-AILab/flash-attention.git --branch main --single-branch
 
 build-flash-attention: flash-attention
 	cd flash-attention && git fetch && git checkout $(flash_att_commit)
