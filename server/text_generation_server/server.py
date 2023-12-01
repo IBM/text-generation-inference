@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from text_generation_server.cache import Cache
-from text_generation_server.models import Model, get_model, Seq2SeqLM
+from text_generation_server.models import Model, get_model, Seq2SeqLM, PT2_COMPILE
 from text_generation_server.models.flash_causal_lm import FlashCausalLM
 from text_generation_server.pb import generate_pb2_grpc, generate_pb2
 from text_generation_server.pb.generate_pb2 import ModelInfoResponse
@@ -305,7 +305,7 @@ def serve(
                 t = threading.Thread(target=partial(log_gpu_stats, device, interval))
                 t.start()
 
-        if model.compiled:
+        if PT2_COMPILE:
             # trigger pt2 compile for variety of tensor shapes
             print("Warming up PyTorch 2 compile...")
             warmup_t0 = time.time()

@@ -103,6 +103,13 @@ class Model(ABC):
                 if pkv is not None:
                     if type(pkv) != type_pkv_dim0 or type(pkv[0]) != type_pkv_dim1:
                         kwargs["past_key_values"] = type_pkv_dim0(type_pkv_dim1(t) for t in pkv)
+
+                    for t in pkv:
+                        for x in t:
+                            strides = list(x.stride())
+                            if strides != sorted(strides, reverse=True):
+                                x.data = x.data.clone(memory_format=torch.contiguous_format)
+
                 return kwargs
 
             def override_forward_with_compile(self, *args, **kwargs):
@@ -113,7 +120,6 @@ class Model(ABC):
                 kwargs = parse_kwargs(kwargs)
                 return run_forward(*args, **kwargs)
 
-            self.compiled = True
             self.model.forward = types.MethodType(override_forward_with_compile, self.model)
             self.model.run_forward = types.MethodType(override_forward_with_run, self.model)
 

@@ -39,10 +39,10 @@ def pt2_compile_warmup(
             x.data = x.data.contiguous(memory_format=torch.channels_last).contiguous()
         return x
 
-    def __eval_shape(batch_size: int, sequence_length: int, num_new_tokens: int, as_concat: bool = False):
+    def __eval_shape(batch_size: int, sequence_length: int, num_new_tokens: int):
 
         if verbose:
-            print(">> evaluating shape (batch_size: %d, sequence_length: %d, num_new_tokens: %d), as_concat: %d" % (batch_size, sequence_length, num_new_tokens, as_concat))
+            print(">> evaluating shape (batch_size: %d, sequence_length: %d, num_new_tokens: %d)" % (batch_size, sequence_length, num_new_tokens))
 
         input_length = sequence_length - num_new_tokens
 
@@ -59,27 +59,16 @@ def pt2_compile_warmup(
             use_position_ids=model.use_position_ids,
         )
 
-        if as_concat and has_decoder_attention_mask:
-            batch.decoder_attention_mask = batch.attention_mask.new_zeros(
-                batch_size,
-                batch.max_decoder_input_length + batch.padding_right_offset
-            )
-            batch.decoder_attention_mask[:, 0:-batch.padding_right_offset] = 1
-
         model.generate_token(
             batch, first=True, for_concat=False,
         )
 
         for i in range(num_new_tokens-1):
-
-            if as_concat:
-                batch.past_key_values = tuple(tuple(__force_contiguous(t) for t in layer) for layer in batch.past_key_values)
-
             model.generate_token(batch)
 
-    def __safe_eval_shape(batch_size: int, sequence_length: int, num_new_tokens: int, as_concat: bool = False):
+    def __safe_eval_shape(batch_size: int, sequence_length: int, num_new_tokens: int):
         try:
-            __eval_shape(batch_size, sequence_length, num_new_tokens, as_concat)
+            __eval_shape(batch_size, sequence_length, num_new_tokens)
         except Exception as e:
             print(">> caught exception: ", e)
 
@@ -101,30 +90,26 @@ def pt2_compile_warmup(
     if verbose:
         print("[Phase 1] Probing boundaries.")
 
-    for as_concat in [True, False]:
-        for batch_size in [1, max_batch_size]:
-            max_sequence_length_for_batch_size = __max_sequence_length_for_batch_size(batch_size)
-            for sequence_length in [2, 3, max_sequence_length_for_batch_size]:
+    for batch_size in [1, max_batch_size]:
+        max_sequence_length_for_batch_size = __max_sequence_length_for_batch_size(batch_size)
+        for sequence_length in [2, 3, max_sequence_length_for_batch_size]:
+            __safe_eval_shape(
+                batch_size=batch_size,
+                sequence_length=sequence_length,
+                num_new_tokens=1,
+            )
+            if sequence_length > 2:
                 __safe_eval_shape(
                     batch_size=batch_size,
                     sequence_length=sequence_length,
-                    num_new_tokens=1,
-                    as_concat=as_concat,
+                    num_new_tokens=2,
                 )
-                if sequence_length > 2:
-                    __safe_eval_shape(
-                        batch_size=batch_size,
-                        sequence_length=sequence_length,
-                        num_new_tokens=2,
-                        as_concat=as_concat,
-                    )
-                if sequence_length > 3:
-                    __safe_eval_shape(
-                        batch_size=batch_size,
-                        sequence_length=sequence_length,
-                        num_new_tokens=__max_new_tokens_for_sequence_length(sequence_length),
-                        as_concat=as_concat,
-                    )
+            if sequence_length > 3:
+                __safe_eval_shape(
+                    batch_size=batch_size,
+                    sequence_length=sequence_length,
+                    num_new_tokens=__max_new_tokens_for_sequence_length(sequence_length),
+                )
 
     if verbose:
         print("[Phase 2] Probing random valid tensor shapes.")
@@ -142,12 +127,10 @@ def pt2_compile_warmup(
     rs = np.random.RandomState(seed=42)
     for i in range(n_samples):
         shape = valid_shapes[rs.randint(low=0, high=len(valid_shapes))]
-        as_concat = rs.choice([True, False])
         __safe_eval_shape(
             batch_size=shape[0],
             sequence_length=shape[1],
             num_new_tokens=shape[2],
-            as_concat=as_concat,
         )
         if verbose:
             print(">> n_samples: %3d, n_new_compiles: %3d" % (i+1, model.n_kernels-n_compiles))
