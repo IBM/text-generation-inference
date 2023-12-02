@@ -1,9 +1,9 @@
 ## Global Args #################################################################
 ARG BASE_UBI_IMAGE_TAG=9.3-1361.1699548029
-ARG PROTOC_VERSION=25.0
+ARG PROTOC_VERSION=25.1
 ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
 #ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
-ARG PYTORCH_VERSION=2.1.0
+ARG PYTORCH_VERSION=2.1.1
 
 ## Base Layer ##################################################################
 FROM registry.access.redhat.com/ubi9/ubi:${BASE_UBI_IMAGE_TAG} as base
@@ -178,7 +178,7 @@ ARG PYTORCH_VERSION
 RUN dnf install -y unzip git ninja-build && dnf clean all
 
 RUN cd ~ && \
-    curl -L -O https://repo.anaconda.com/miniconda/Miniconda3-py311_23.9.0-0-Linux-x86_64.sh && \
+    curl -L -O https://repo.anaconda.com/miniconda/Miniconda3-py311_23.10.0-1-Linux-x86_64.sh && \
     chmod +x Miniconda3-*-Linux-x86_64.sh && \
     bash ./Miniconda3-*-Linux-x86_64.sh -bf -p /opt/miniconda
 

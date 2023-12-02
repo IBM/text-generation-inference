@@ -16,7 +16,7 @@ path = "src/main.rs"
 [dependencies]
 axum = { version = "0.6.20", features = ["json"] }
 text-generation-client = { path = "client" }
-clap = { version = "^4.4.7", features = ["derive", "env"] }
+clap = { version = "^4.4.10", features = ["derive", "env"] }
 futures = "^0.3.29"
 flume = "^0.11.0"
 metrics = "0.21.1"
@@ -30,18 +30,18 @@ openssl = "^0.10.59" # Override to address WS-2023-0082, WS-2023-0083, WS-2023-0
 openssl-sys = "^0.9.95" # Override to address WS-2023-0082, WS-2023-0083, WS-2023-0195
 rustls-webpki = "^0.101.7" # Override to address WS-2023-0305, CVE-2018-16875
 rand = "^0.8.5"
-serde = "^1.0.173"
-serde_json = "^1.0.103"
+serde = "^1.0.193"
+serde_json = "^1.0.108"
 # Pin sct to avoid WS-2023-0094 in older 0.5.2 version of spin sub-dependency
 sct = "=0.7.1"
 thiserror = "^1.0.50"
-tokenizers = "0.14.1"
+tokenizers = "0.15.0"
 tokio = { version = "1.34.0", features = ["rt", "rt-multi-thread", "parking_lot", "signal", "sync", "fs"] }
 tokio-rustls = "^0.24.1"
 rustls = "0.21.8"
 tracing = "^0.1.40"
 tracing-subscriber = { version = "0.3.17", features = ["json"] }
-prost = "^0.12.1"
+prost = "^0.12.3"
 tonic = { version = "^0.10.2", features = ["tls"] }
 tokio-stream ="^0.1.14"
 unicode-segmentation = "^1.10.1"
