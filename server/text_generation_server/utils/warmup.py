@@ -1,8 +1,8 @@
 from typing import Optional
 from text_generation_server.pb import generate_pb2
 import numpy as np
-from dataclasses import fields
 import torch
+
 
 def pt2_compile_warmup(
     model: 'Model',
@@ -13,10 +13,6 @@ def pt2_compile_warmup(
     n_samples: int = 10,
     verbose: bool = False
 ):
-
-
-    has_decoder_attention_mask = "decoder_attention_mask" in [ x.name for x in fields(model.batch_type) ]
-
     text = "test " * 10_000
 
     def __generate_prefill_request(batch_size: int, in_tokens: int, num_new_tokens: int):
@@ -40,9 +36,11 @@ def pt2_compile_warmup(
         return x
 
     def __eval_shape(batch_size: int, sequence_length: int, num_new_tokens: int):
-
         if verbose:
-            print(">> evaluating shape (batch_size: %d, sequence_length: %d, num_new_tokens: %d)" % (batch_size, sequence_length, num_new_tokens))
+            print(
+                ">> evaluating shape (batch_size: %d, sequence_length: %d, num_new_tokens: %d)"
+                % (batch_size, sequence_length, num_new_tokens)
+            )
 
         input_length = sequence_length - num_new_tokens
 
@@ -59,33 +57,24 @@ def pt2_compile_warmup(
             use_position_ids=model.use_position_ids,
         )
 
-        model.generate_token(
-            batch, first=True, for_concat=False,
-        )
+        model.generate_token(batch, first=True, for_concat=False)
 
-        for i in range(num_new_tokens-1):
+        for i in range(num_new_tokens - 1):
             model.generate_token(batch)
 
     def __safe_eval_shape(batch_size: int, sequence_length: int, num_new_tokens: int):
         try:
             __eval_shape(batch_size, sequence_length, num_new_tokens)
-        except Exception as e:
-            print(">> caught exception: ", e)
+        except torch.cuda.OutOfMemoryError as e:
+            print(">> caught OOM error: ", e)
 
     def __max_sequence_length_for_batch_size(batch_size: int):
-        if max_batch_weight is not None:
-            return min(
-                max_sequence_length,
-                int(np.floor(np.sqrt(max_batch_weight/batch_size)))
-            )
-        else:
-            return max_sequence_length
+        return max_sequence_length if max_batch_weight is None else min(
+            max_sequence_length, int(np.floor(np.sqrt(max_batch_weight/batch_size)))
+        )
 
     def __max_new_tokens_for_sequence_length(sequence_length: int):
-        return min(
-            max_new_tokens,
-            sequence_length-1
-        )
+        return min(max_new_tokens, sequence_length - 1)
 
     if verbose:
         print("[Phase 1] Probing boundaries.")
@@ -117,11 +106,11 @@ def pt2_compile_warmup(
     n_compiles = model.n_kernels
 
     valid_shapes = []
-    for batch_size in range(1, 1+max_batch_size):
+    for batch_size in range(1, 1 + max_batch_size):
         this_max_sequence_length = __max_sequence_length_for_batch_size(batch_size)
-        for sequence_length in range(1, 1+this_max_sequence_length):
+        for sequence_length in range(1, 1 + this_max_sequence_length):
             this_max_new_tokens = __max_new_tokens_for_sequence_length(sequence_length)
-            for new_tokens in range(1, 1+this_max_new_tokens):
+            for new_tokens in range(1, 1 + this_max_new_tokens):
                 valid_shapes.append((batch_size, sequence_length, new_tokens))
 
     rs = np.random.RandomState(seed=42)
