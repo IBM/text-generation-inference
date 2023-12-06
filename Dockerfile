@@ -220,7 +220,7 @@ FROM python-builder as exllama-kernels-builder
 WORKDIR /usr/src
 
 COPY server/exllama_kernels/ .
-RUN TORCH_CUDA_ARCH_LIST="8.0;8.6+PTX" python setup.py build
+RUN TORCH_CUDA_ARCH_LIST="8.0;8.6+PTX;8.9" python setup.py build
 
 ## Build transformers exllamav2 kernels ########################################
 FROM python-builder as exllamav2-kernels-builder
@@ -228,7 +228,7 @@ FROM python-builder as exllamav2-kernels-builder
 WORKDIR /usr/src
 
 COPY server/exllamav2_kernels/ .
-RUN TORCH_CUDA_ARCH_LIST="8.0;8.6+PTX" python setup.py build
+RUN TORCH_CUDA_ARCH_LIST="8.0;8.6+PTX;8.9" python setup.py build
 
 ## Flash attention cached build image ##########################################
 FROM base as flash-att-cache
