@@ -38,24 +38,24 @@ pub(crate) struct ServerState {
     pub(crate) seq2seq: bool,
 }
 
+// This is a safety-net timeout, it's expected the client (e.g. kubelet) will
+// be configured with a shorter one
+const PROBE_TIMEOUT_SECS: u64 = 60;
+
 /// Health check method
 #[instrument(skip(health))]
 async fn health(mut health: Extension<Health>) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
-    match timeout(Duration::from_secs(5), health.check()).await {
+    match timeout(Duration::from_secs(PROBE_TIMEOUT_SECS), health.check()).await {
         Ok(true) => Ok(()),
         Ok(false) => Err((
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(ErrorResponse {
-                error: "unhealthy".to_string(),
-            }),
+            Json(ErrorResponse { error: "unhealthy".to_string() }),
         )),
         Err(_) => {
-            tracing::error!("Healthcheck request timed-out");
+            tracing::error!("Aborting health-check request after {PROBE_TIMEOUT_SECS}s time-out");
             Err((
-                StatusCode::REQUEST_TIMEOUT,
-                Json(ErrorResponse {
-                    error: "Healthcheck timed-out".to_string(),
-                }),
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse { error: "Healthcheck timed-out".to_string() }),
             ))
         }
     }
