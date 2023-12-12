@@ -156,7 +156,6 @@ class FlashCausalLMBatch(Batch):
 
         # convert all requests to embeddings if any request has a prefix_id
         if prefix_ids:
-            # TODO: Handle TP distributed embeddings layer
             inputs_embeds = embeddings_lookup(input_ids)
             input_ids = None
             # fill in the prefix embeddings into the space that we already

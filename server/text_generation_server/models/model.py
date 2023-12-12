@@ -53,11 +53,21 @@ class Model(ABC):
             decoder_start_token_id = self.model.config.decoder_start_token_id
             if decoder_start_token_id is None:
                 decoder_start_token_id = self.tokenizer.bos_token_id
+
+            return_zero = False
+            # If the word_embeddings layer is configured not to reduce at the end of the forward() call
+            # each shard will have only a partial tensor. This tensor cannot be concatenated with a
+            # prefix tensor in each shard because the reduce that happens afterwards would result
+            # in adding the prefix N times, where N is the world size.
+            if isinstance(self.word_embeddings, TensorParallelEmbedding) and not self.word_embeddings.reduce:
+                return_zero = self.word_embeddings.process_group.rank() != 0
+
             self.prefix_cache = PrefixCache(
                 device=self.device,
                 dtype=dtype,
                 max_length=MAX_PROMPT_PREFIX_LENGTH,
                 encoder_decoder=self.model.config.is_encoder_decoder,
+                return_zero=return_zero,
                 decoder_start_tok_embedding=self.word_embeddings(
                     torch.tensor([decoder_start_token_id], device=self.device, dtype=torch.long)
                 ) if decoder_start_token_id is not None else None,
