@@ -16,8 +16,8 @@ use std::ffi::OsString;
 use subprocess::{Popen, PopenConfig, PopenError, Redirection};
 use tracing::info;
 
-// For now this will be disabled by default, more testing is needed
-const DEFAULT_MAX_SPLIT_SIZE_MB: &'static str = "none";
+// In most cases this gives the best performance for inferencing
+const DEFAULT_PYTORCH_CUDA_ALLOC_CONF: &'static str = "expandable_segments:True";
 
 /// App Configuration
 #[derive(Parser, Debug, Clone)]
@@ -108,18 +108,16 @@ fn main() -> ExitCode {
         &args.model_name, args.revision.as_deref()
     ).expect("Could not find tokenizer for model");
 
-    // Set max_split_size to default value if PYTORCH_CUDA_ALLOC_CONF is not set,
-    // or unset it if PYTORCH_CUDA_ALLOC_CONF is set but empty
+    // Set PYTORCH_CUDA_ALLOC_CONF to default value if it's not set in the environment
     let cuda_alloc_conf = match env::var("PYTORCH_CUDA_ALLOC_CONF") {
-        Err(VarError::NotPresent) if DEFAULT_MAX_SPLIT_SIZE_MB == "none" => None,
+        Err(VarError::NotPresent) if DEFAULT_PYTORCH_CUDA_ALLOC_CONF == "" => None,
         Err(VarError::NotPresent) => {
-            let alloc_conf = format!("max_split_size_mb:{}", DEFAULT_MAX_SPLIT_SIZE_MB);
-            info!("Setting PYTORCH_CUDA_ALLOC_CONF to default value: {alloc_conf}");
-            Some(alloc_conf)
+            info!("Setting PYTORCH_CUDA_ALLOC_CONF to default value: {DEFAULT_PYTORCH_CUDA_ALLOC_CONF}");
+            Some(DEFAULT_PYTORCH_CUDA_ALLOC_CONF)
         },
         Ok(alloc_conf) if alloc_conf.trim().is_empty() => {
             info!("PYTORCH_CUDA_ALLOC_CONF is unset");
-            Some(String::new()) // This means remove it from the env
+            Some("") // This means remove it from the env
         },
         Ok(alloc_conf) => {
             info!("PYTORCH_CUDA_ALLOC_CONF is set to: {alloc_conf}");
@@ -406,7 +404,7 @@ fn shard_manager(
     max_batch_weight: Option<usize>,
     uds_path: String,
     cuda_process_memory_fraction: f32,
-    cuda_alloc_conf: Option<String>,
+    cuda_alloc_conf: Option<&str>,
     rank: usize,
     world_size: usize,
     master_addr: String,
