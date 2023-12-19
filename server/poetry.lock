@@ -71,7 +71,7 @@ tests-no-zope = ["cloudpickle", "hypothesis", "mypy (>=1.1.1)", "pympler", "pyte
 
 [[package]]
 name = "bitsandbytes"
-version = "0.41.2.post2"
+version = "0.41.3.post2"
 description = "k-bit optimizers and matrix multiplication routines."
 category = "main"
 optional = true
@@ -550,7 +550,7 @@ sympy = "*"
 
 [[package]]
 name = "optimum"
-version = "1.16.0"
+version = "1.16.1"
 description = "Optimum Library is an extension of the Hugging Face Transformers library, providing a framework to integrate third-party libraries from Hardware Partners and interface with their specific functionality."
 category = "main"
 optional = true
@@ -935,7 +935,7 @@ telegram = ["requests"]
 
 [[package]]
 name = "transformers"
-version = "4.36.1"
+version = "4.36.2"
 description = "State-of-the-art Machine Learning for JAX, PyTorch and TensorFlow"
 category = "main"
 optional = false
@@ -1089,7 +1089,7 @@ quantize = ["datasets", "texttable"]
 [metadata]
 lock-version = "1.1"
 python-versions = ">=3.11.0,<3.13"
-content-hash = "88f8e17407ad4c8aadf4199d418518608bb553671151241a654cdfa040455055"
+content-hash = "af95a6b7dcc72877f00228f17fd8ded61468b3e5f14ecd33317eed5dd342713c"
 
 [metadata.files]
 accelerate = [
@@ -1183,8 +1183,8 @@ attrs = [
     {file = "attrs-23.1.0.tar.gz", hash = "sha256:6279836d581513a26f1bf235f9acd333bc9115683f14f7e8fae46c98fc50e015"},
 ]
 bitsandbytes = [
-    {file = "bitsandbytes-0.41.2.post2-py3-none-any.whl", hash = "sha256:98e5e1979aea3d481ed06181c689f3a154d7f5dc1af770c5173485bc54cf7b72"},
-    {file = "bitsandbytes-0.41.2.post2.tar.gz", hash = "sha256:d374da4700651f36a285ed53e012ee527736109614e3f5c0249985d41027136d"},
+    {file = "bitsandbytes-0.41.3.post2-py3-none-any.whl", hash = "sha256:ceb301a3d4e6bf52bdad8d09f3064ac194bdfdeae535994c0315bd2ef7639cca"},
+    {file = "bitsandbytes-0.41.3.post2.tar.gz", hash = "sha256:7d25a51fb3b74b58e569473f8b70a5239124c0593dc053479c41cf2cd6730502"},
 ]
 certifi = [
     {file = "certifi-2023.11.17-py3-none-any.whl", hash = "sha256:e036ab49d5b79556f99cfc2d9320b34cfbe5be05c5871b51de9329f0603b0474"},
@@ -1856,8 +1856,8 @@ onnxruntime-gpu = [
     {file = "onnxruntime_gpu-1.16.3-cp39-cp39-win_amd64.whl", hash = "sha256:d3ad8e7fbb22493267c23d61e997a6b2ac6236a08aa6b58a3a91848124c9b037"},
 ]
 optimum = [
-    {file = "optimum-1.16.0-py3-none-any.whl", hash = "sha256:fbccc56cc01b4c1d20af7aaf37fca6c0a63c3b2a9bfc8063fe6c6349cb15035d"},
-    {file = "optimum-1.16.0.tar.gz", hash = "sha256:297ca10022159f42ace59a391c7ba084d792d919d62c72fd75a5871c1c0cbcbd"},
+    {file = "optimum-1.16.1-py3-none-any.whl", hash = "sha256:c0d0cb5877ae7b8f40289c54885341297f61b30255a93a71f5e979bc86b03598"},
+    {file = "optimum-1.16.1.tar.gz", hash = "sha256:9a74bc5cbbe2373fc45f477257d5046fd28b725bce91c1f8846baadba57f2129"},
 ]
 packaging = [
     {file = "packaging-23.2-py3-none-any.whl", hash = "sha256:8c491190033a9af7e1d931d0b5dacc2ef47509b34dd0de67ed209b5203fc88c7"},
@@ -2444,8 +2444,8 @@ tqdm = [
     {file = "tqdm-4.66.1.tar.gz", hash = "sha256:d88e651f9db8d8551a62556d3cff9e3034274ca5d66e93197cf2490e2dcb69c7"},
 ]
 transformers = [
-    {file = "transformers-4.36.1-py3-none-any.whl", hash = "sha256:0e309d03634885f02d46801ec4f2c3fc1d614a5b9ebde608181f3e842bac53b8"},
-    {file = "transformers-4.36.1.tar.gz", hash = "sha256:28e55952d9bed68f06cf45a3d29cc480679b528afe944e68f8cf6c799e428759"},
+    {file = "transformers-4.36.2-py3-none-any.whl", hash = "sha256:462066c4f74ee52516f12890dcc9ec71d1a5e97998db621668455117a54330f6"},
+    {file = "transformers-4.36.2.tar.gz", hash = "sha256:d8068e897e47793281501e547d2bbdfc5b8556409c2cb6c3d9e2ca77d4c0b4ec"},
 ]
 typer = [
     {file = "typer-0.9.0-py3-none-any.whl", hash = "sha256:5d96d986a21493606a358cae4461bd8cdf83cbf33a5aa950ae629ca3b51467ee"},
