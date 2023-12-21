@@ -133,7 +133,7 @@ RUN dnf install -y make unzip python3.11 python3.11-pip gcc openssl-devel gcc-c+
     ln -fs /usr/bin/python3.11 /usr/bin/python3 && \
     ln -s /usr/bin/python3.11 /usr/local/bin/python && ln -s /usr/bin/pip3.11 /usr/local/bin/pip
 
-RUN pip install --upgrade pip && pip install pytest && pip install pytest-asyncio
+RUN pip install --upgrade pip --no-cache-dir && pip install pytest --no-cache-dir && pip install pytest-asyncio --no-cache-dir
 
 # CPU only
 ENV CUDA_VISIBLE_DEVICES=""
