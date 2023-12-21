@@ -499,6 +499,9 @@ fn shard_manager(
     env.push(("MASTER_PORT".into(), master_port.to_string().into()));
     env.push(("NCCL_ASYNC_ERROR_HANDLING".into(), "1".into()));
 
+    // See https://discuss.pytorch.org/t/cuda-allocation-lifetime-for-inputs-to-distributed-all-reduce/191573
+    env.push(("TORCH_NCCL_AVOID_RECORD_STREAMS".into(), "1".into()));
+
     // Safetensors load fast
     env.push(("SAFETENSORS_FAST_GPU".into(), "1".into()));
 
