@@ -3,7 +3,7 @@ ARG BASE_UBI_IMAGE_TAG=9.3-1476
 ARG PROTOC_VERSION=25.1
 #ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
 ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
-ARG PYTORCH_VERSION=2.2.0.dev20231102
+ARG PYTORCH_VERSION=2.3.0.dev20231221
 
 ## Base Layer ##################################################################
 FROM registry.access.redhat.com/ubi9/ubi:${BASE_UBI_IMAGE_TAG} as base
