@@ -365,7 +365,6 @@ async fn do_run<B: BatchType>(
     // Total tokens buckets
     let total_tokens_matcher = Matcher::Full(String::from("tgi_request_total_tokens"));
     // Batch size buckets
-    let batch_size_matcher = Matcher::Full(String::from("tgi_batch_next_size"));
     let batch_inference_size_matcher = Matcher::Full(String::from("tgi_batch_inference_batch_size"));
     let batch_size_buckets: Vec<f64> = (0..args.max_batch_size).map(|x| (x + 1) as f64).collect();
 
@@ -377,7 +376,6 @@ async fn do_run<B: BatchType>(
         .set_buckets_for_metric(generated_tokens_matcher, &max_new_tokens_buckets).unwrap()
         .set_buckets_for_metric(max_new_tokens_matcher, &max_new_tokens_buckets).unwrap()
         .set_buckets_for_metric(total_tokens_matcher, &max_sequence_length_buckets).unwrap()
-        .set_buckets_for_metric(batch_size_matcher, &batch_size_buckets).unwrap()
         .set_buckets_for_metric(batch_inference_size_matcher, &batch_size_buckets).unwrap();
     let prom_handle = builder
         .install_recorder()

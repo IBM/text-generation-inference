@@ -27,12 +27,18 @@ COMPACT_BEFORE_PREFILL = os.getenv("COMPACT_BEFORE_PREFILL", "true") != "false"
 HEALTHCHECK_BATCH_ID = (1 << 64) - 1
 
 
-def log_errs(func):
+def log_rpc_handler_errors(func):
     async def func_with_log(*args, **kwargs):
         try:
             return await func(*args, **kwargs)
         except AbortError:
+            # We don't log AbortErrors since these correspond to gRPC errors intentionally
+            # raised during handling of requests.
             raise
+        except torch.cuda.OutOfMemoryError as e:
+            context = kwargs.get("context", None) or args[-1]
+            logging.exception(f"{func.__name__} caused GPU OOM error")
+            await context.abort(StatusCode.RESOURCE_EXHAUSTED, str(e))
         except Exception:
             logging.exception(f"{func.__name__} failed")
             raise
@@ -50,14 +56,14 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
     ) -> generate_pb2.ServiceDiscoveryResponse:
         return generate_pb2.ServiceDiscoveryResponse(urls=self.server_urls)
 
-    @log_errs
+    @log_rpc_handler_errors
     async def ClearCache(
         self, request: generate_pb2.ClearCacheRequest, context
     ) -> generate_pb2.ClearCacheResponse:
         self.cache.clear()
         return generate_pb2.ClearCacheResponse()
 
-    @log_errs
+    @log_rpc_handler_errors
     async def ModelInfo(self, request: generate_pb2.ModelInfoRequest, context) -> generate_pb2.ModelInfoResponse:
         return generate_pb2.ModelInfoResponse(
             model_type=ModelInfoResponse.ModelType.SEQ2SEQ_LM
@@ -66,14 +72,13 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
             batch_padding=not isinstance(self.model, FlashCausalLM),
         )
 
-    @log_errs
+    @log_rpc_handler_errors
     async def Health(self, request, context):
         if self.model.device.type == "cuda":
             torch.zeros((2, 2)).cuda()
         return generate_pb2.HealthResponse()
 
-
-    @log_errs
+    @log_rpc_handler_errors
     async def PrefixLookup(self, request: generate_pb2.PrefixLookupRequest, context) -> generate_pb2.PrefixLookupResponse:
         try:
             # This may throw other errors too
@@ -84,7 +89,7 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
             prefix_length=len(prefix) if torch.is_tensor(prefix) else sum(len(t) for t in prefix if t is not None)
         )
 
-    @log_errs
+    @log_rpc_handler_errors
     async def Prefill(self, request: generate_pb2.PrefillRequest, context) -> generate_pb2.PrefillResponse:
         with self.model.context_manager():
             # Prune any existing batches first
@@ -148,7 +153,7 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
                 ] if input_token_info is not None else None,
             )
 
-    @log_errs
+    @log_rpc_handler_errors
     async def NextToken(self, request: generate_pb2.NextTokenRequest, context) -> generate_pb2.NextTokenResponse:
         if len(request.batches) == 0:
             raise ValueError("Must provide at least one batch")
