@@ -19,8 +19,8 @@ text-generation-client = { path = "client" }
 clap = { version = "^4.4.11", features = ["derive", "env"] }
 futures = "^0.3.30"
 flume = "^0.11.0"
-metrics = "0.22.0"
-metrics-exporter-prometheus = { version = "0.13.0", features = [] }
+metrics = "0.21.1"
+metrics-exporter-prometheus = { version = "0.12.2", features = [] }
 moka = { version = "0.12.2", features = ["future"] }
 nohash-hasher = "^0.2.0"
 num = "^0.4.1"
@@ -32,8 +32,6 @@ rustls-webpki = "0.102.0" # Override to address WS-2023-0305, CVE-2018-16875
 rand = "^0.8.5"
 serde = "^1.0.194"
 serde_json = "^1.0.110"
-# Pin sct to avoid WS-2023-0094 in older 0.5.2 version of spin sub-dependency
-sct = "=0.7.1"
 thiserror = "^1.0.56"
 tokenizers = "0.15.0"
 tokio = { version = "1.35.1", features = ["rt", "rt-multi-thread", "parking_lot", "signal", "sync", "fs"] }
@@ -49,4 +47,3 @@ unicode-truncate = "^0.2.0"
 
 [build-dependencies]
 tonic-build = "^0.10.2"
-tempfile = "^3.9.0" # Override 0.3.3 version from tonic-build/prost-build, due to RUSTSEC-2023-0018 and WS-2023-0366

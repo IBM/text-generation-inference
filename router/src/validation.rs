@@ -111,7 +111,7 @@ impl Validation {
         // Get the number of tokens in the inputs
         let futures = inputs.into_iter().map(|input|
             self.tokenizer.tokenize(input, false).map_ok(|(input, input_length, _)| {
-                metrics::histogram!("tgi_request_raw_input_length").record(input_length as f64);
+                metrics::histogram!("tgi_request_raw_input_length", input_length as f64);
                 (input, input_length)
             })
         );
@@ -176,8 +176,8 @@ impl Validation {
                 }).collect::<Result<Vec<(usize, GenerateRequest)>, ValidationError>>().map(|results| {
                     // Only record these for successful validation
                     for (input_length, _) in &results {
-                        metrics::histogram!("tgi_request_input_length").record(*input_length as f64);
-                        metrics::histogram!("tgi_request_max_new_tokens").record(max_new_tokens as f64);
+                        metrics::histogram!("tgi_request_input_length", *input_length as f64);
+                        metrics::histogram!("tgi_request_max_new_tokens", max_new_tokens as f64);
                     }
                     results
                 })
@@ -195,9 +195,9 @@ async fn prompt_prefix_lookup(
     let start_time = Instant::now();
     let result = client.clone().prefix_lookup(prefix_id).await;
     if result.is_ok() {
-        metrics::histogram!("tgi_prompt_load_duration").record(start_time.elapsed().as_secs_f64());
+        metrics::histogram!("tgi_prompt_load_duration", start_time.elapsed().as_secs_f64());
     } else {
-        metrics::counter!("tgi_prompt_load_failure").increment(1);
+        metrics::increment_counter!("tgi_prompt_load_failure");
     }
     result
 }
