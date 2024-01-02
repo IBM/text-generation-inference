@@ -6,9 +6,9 @@ authors = ["Olivier Dehaene"]
 description = "Text Generation Launcher"
 
 [dependencies]
-clap = { version = "4.4.11", features = ["derive", "env"] }
-ctrlc = { version = "3.4.1", features = ["termination"] }
+clap = { version = "4.4.12", features = ["derive", "env"] }
+ctrlc = { version = "3.4.2", features = ["termination"] }
 subprocess = "0.2.9"
 tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.17", features = ["json"] }
+tracing-subscriber = { version = "0.3.18", features = ["json"] }
 
