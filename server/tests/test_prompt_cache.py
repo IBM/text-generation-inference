@@ -24,7 +24,8 @@ def temp_prompt_cache_enc_dec_meta():
         dtype=dtype,
         max_length=16,
         encoder_decoder=True,
-        decoder_start_tok_embedding=torch.rand((1, 8), dtype=dtype, device='meta')
+        decoder_start_tok_embedding=torch.rand((1, 8), dtype=dtype, device='meta'),
+        return_zero=None,
     )
 
 @pytest.fixture()
@@ -35,7 +36,8 @@ def temp_prompt_cache():
         dtype=torch.float32,
         max_length=8,
         encoder_decoder=False,
-        decoder_start_tok_embedding=None
+        decoder_start_tok_embedding=None,
+        return_zero=None,
     )
 
 ### Tests for linked list operations
@@ -224,12 +226,12 @@ def test_get_prompt_cache_no_eviction(mock_load_tensors, temp_prompt_cache):
     assert len(temp_prompt_cache) == 1
     assert t1 is t2
 
-@patch("text_generation_server.prompt_cache.PromptCacheNode._get_prompt_size_mb")
+@patch("text_generation_server.prompt_cache.PromptCacheNode._get_prompt_stats")
 @patch("text_generation_server.prompt_cache.PrefixCache._load_embedding_tensors")
 def test_get_prompt_cache_with_eviction(mock_load_tensors, mock_get_prompt_size, temp_prompt_cache):
     """Ensure that if we need to make space, we evicted the least recently used tensor."""
     mock_load_tensors.return_value = torch.ones((3, 3))
-    mock_get_prompt_size.return_value = (prompt_cache.PROMPT_CACHE_SIZE_MB / 2) - 1
+    mock_get_prompt_size.return_value = (None, (prompt_cache.PROMPT_CACHE_SIZE_MB / 2) - 1)
     temp_prompt_cache.get("prompt1")
     temp_prompt_cache.get("prompt2")
     # Evicts lru prompt ID (prompt1)
@@ -243,12 +245,12 @@ def test_get_prompt_cache_with_eviction(mock_load_tensors, mock_get_prompt_size,
     assert len(temp_prompt_cache) == 2
     assert set(temp_prompt_cache.keys()) == set(["prompt2", "prompt4"])
 
-@patch("text_generation_server.prompt_cache.PromptCacheNode._get_prompt_size_mb")
+@patch("text_generation_server.prompt_cache.PromptCacheNode._get_prompt_stats")
 @patch("text_generation_server.prompt_cache.PrefixCache._load_embedding_tensors")
 def test_get_prompt_cache_tensor_too_large(mock_load_tensors, mock_get_prompt_size, temp_prompt_cache):
     """Ensure that an error is raised if a tensor greater than the cache size is found."""
     mock_load_tensors.return_value = torch.ones((3, 3))
-    mock_get_prompt_size.return_value = prompt_cache.PROMPT_CACHE_SIZE_MB + 1
+    mock_get_prompt_size.return_value = (None, prompt_cache.PROMPT_CACHE_SIZE_MB + 1)
     with pytest.raises(ValueError):
         temp_prompt_cache.get("prompt1")
 

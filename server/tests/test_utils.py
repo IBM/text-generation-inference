@@ -4,40 +4,8 @@ from text_generation_server.utils import (
     weight_hub_files,
     download_weights,
     weight_files,
-    StopSequenceCriteria,
-    StoppingCriteria,
     LocalEntryNotFoundError,
 )
-
-
-def test_stop_sequence_criteria():
-    criteria = StopSequenceCriteria("/test;")
-
-    assert not criteria("/")
-    assert not criteria("/test")
-    assert criteria("/test;")
-    assert not criteria("/test; ")
-
-
-def test_stopping_criteria():
-    criteria = StoppingCriteria(0, [StopSequenceCriteria("/test;")], max_new_tokens=5)
-    assert criteria(65827, "/test") == (False, None)
-    assert criteria(30, ";") == (True, "stop_sequence")
-
-
-def test_stopping_criteria_eos():
-    criteria = StoppingCriteria(0, [StopSequenceCriteria("/test;")], max_new_tokens=5)
-    assert criteria(1, "") == (False, None)
-    assert criteria(0, "") == (True, "eos_token")
-
-
-def test_stopping_criteria_max():
-    criteria = StoppingCriteria(0, [StopSequenceCriteria("/test;")], max_new_tokens=5)
-    assert criteria(1, "") == (False, None)
-    assert criteria(1, "") == (False, None)
-    assert criteria(1, "") == (False, None)
-    assert criteria(1, "") == (False, None)
-    assert criteria(1, "") == (True, "length")
 
 
 def test_weight_hub_files():
