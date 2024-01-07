@@ -6,14 +6,19 @@ use axum::http::StatusCode;
 use axum::Json;
 use std::future::Future;
 use std::mem::take;
+use std::ops::Add;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
+use std::time::Duration;
 use futures::{FutureExt, pin_mut, TryFutureExt};
 use futures::future::Map;
 use nohash_hasher::IntMap;
-use text_generation_client::{ClientError, Token, ShardedClient, CachedBatch, RequestsStatus, InputTokens, GenerateError, Batch, GenerateTokenResponse};
+use text_generation_client::{
+    ClientError, Token, ShardedClient, CachedBatch, RequestsStatus,
+    InputTokens, GenerateError, Batch, GenerateTokenResponse
+};
 use thiserror::Error;
 use tokio::select;
 
@@ -355,11 +360,12 @@ async fn batching_task<B: BatchType>(
         }
         log_new_batch(batch.id, processor.entries());
 
-        let mut cached_batch = processor.prefill(
+        let (mut cached_batch, _) = processor.prefill(
             &mut client, batch, vec![], None, &mut queue,
         ).await;
         let mut waiting_tokens = 1;
         let mut batch_max_remaining_tokens = None;
+        let mut next_prefill_after = None;
 
         // We loop until we do not receive any cached batch from the inference server (== until
         // all requests have met their stopping criteria)
@@ -385,7 +391,8 @@ async fn batching_task<B: BatchType>(
             metrics::gauge!("tgi_batch_max_remaining_tokens", batch_max_remaining_tokens.unwrap() as f64);
 
             // Don't interfere with current batch if it's about to complete
-            if batch_max_remaining_tokens.unwrap() >= 2 {
+            if batch_max_remaining_tokens.unwrap() >= 2 &&
+                next_prefill_after.map_or(true, |t| Instant::now() > t) {
                 // Determine min num of requests for add-on batch based on current batch size and
                 // tokens since last prefill
                 let min_size = if batch_size <= 1 || waiting_tokens >= max_waiting_tokens {
@@ -411,7 +418,7 @@ async fn batching_task<B: BatchType>(
                     // Generate one token for this new batch to have the attention past in cache
                     let first_new_id = new_batch.requests.first()
                         .expect("Batch can't be empty here").id;
-                    let new_cached_batch = processor.prefill(
+                    let (new_cached_batch, prefill_time) = processor.prefill(
                         &mut client, new_batch, to_prune, Some(first_new_id), &mut queue
                     ).await;
 
@@ -424,6 +431,9 @@ async fn batching_task<B: BatchType>(
                     // Reset waiting counter and batch_remaining_tokens
                     waiting_tokens = 1;
                     batch_max_remaining_tokens = None;
+                    // Ensure we wait at least half as long as the last prefill took
+                    // before we do another prefill (unless the entire batch completes by then)
+                    next_prefill_after = Some(Instant::now().add(prefill_time / 2));
                     // Extend current batch with the new batch
                     if let Some(new_batch) = new_cached_batch {
                         let new_batch_id = new_batch.batch_id;
@@ -452,10 +462,12 @@ async fn batching_task<B: BatchType>(
                         // All batches completed or failed, fetch a new one
                         break
                     }
+                } else {
+                    next_prefill_after = None;
                 }
             }
 
-            cached_batch = processor.next_token(&mut client, batches, &mut queue).await;
+            (cached_batch, _) = processor.next_token(&mut client, batches, &mut queue).await;
             waiting_tokens += 1;
             // Reset batch_remaining_tokens if any requests in the batch completed
             if batch_max_remaining_tokens.is_some() && some_completed(&cached_batch) {
@@ -520,7 +532,7 @@ impl<'a> TokenProcessor<'a> {
         // First request id in this batch if it doesn't comprise all current entries
         start_id: Option<u64>,
         queue: &mut Queue<B>,
-    ) -> Option<CachedBatch> {
+    ) -> (Option<CachedBatch>, Duration) {
         let batch_size = batch.requests.len();
         let batch_tokens = batch.total_tokens;
         let start_time = Instant::now();
@@ -528,21 +540,16 @@ impl<'a> TokenProcessor<'a> {
         metrics::histogram!(
             "tgi_batch_inference_batch_size", batch_size as f64, "method" => "prefill"
         );
-        self._wrap_future(
-            client.prefill(batch, to_prune).map(|r| {
-                info!(
-                    "Prefill took {:?} for {batch_size} inputs, {batch_tokens} total tokens",
-                    start_time.elapsed(),
-                );
-                r
-            }),
-            "prefill", start_time, start_id, queue
-        ).await
+        let (result, prefill_time) = self._wrap_future(
+            client.prefill(batch, to_prune), "prefill", start_time, start_id, queue
+        ).await;
+        info!("Prefill took {prefill_time:?} for {batch_size} inputs, {batch_tokens} total tokens");
+        (result, prefill_time)
     }
 
     async fn next_token<B: BatchType>(
         &mut self, client: &mut ShardedClient, batches: Vec<CachedBatch>, queue: &mut Queue<B>,
-    ) -> Option<CachedBatch> {
+    ) -> (Option<CachedBatch>, Duration) {
         metrics::histogram!(
             "tgi_batch_inference_batch_size", self.entries.len() as f64, "method" => "next_token"
         );
@@ -561,7 +568,7 @@ impl<'a> TokenProcessor<'a> {
         // First request id in this batch if it doesn't comprise all current entries
         start_id: Option<u64>,
         queue: &mut Queue<B>,
-    ) -> Option<CachedBatch> {
+    ) -> (Option<CachedBatch>, Duration) {
         metrics::increment_counter!("tgi_batch_inference_count", "method" => method);
 
         // We process the shared queue while waiting for the response from the python shard(s)
@@ -574,7 +581,8 @@ impl<'a> TokenProcessor<'a> {
             }
         };
 
-        match result {
+        let elapsed = start_time.elapsed();
+        let result = match result {
             Ok(
                 Some((generated_tokens, input_tokens, errors, next_batch_id, forward_duration))
             ) => {
@@ -587,7 +595,7 @@ impl<'a> TokenProcessor<'a> {
                 self.generation_health.store(true, Ordering::SeqCst);
                 metrics::histogram!(
                     "tgi_batch_inference_duration",
-                    start_time.elapsed().as_secs_f64(),
+                    elapsed.as_secs_f64(),
                     "method" => method,
                     "makeup" => "single_only", // later will possibly be beam_only or mixed
                 );
@@ -626,7 +634,9 @@ impl<'a> TokenProcessor<'a> {
                 self.send_errors(err, start_id);
                 None
             },
-        }
+        };
+
+        (result, elapsed)
     }
 
     /// Send errors to the Batcher for all `request_ids`

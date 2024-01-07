@@ -49,6 +49,8 @@ struct Args {
     max_batch_weight: Option<usize>,
     #[clap(default_value = None, long, env)]
     max_prefill_weight: Option<usize>,
+    #[clap(default_value = "0.2", long, env)]
+    max_prefill_padding: f32,
     #[clap(default_value = "24", long, env)]
     max_waiting_tokens: usize,
     #[clap(default_value = "3000", long, short, env)]
@@ -221,6 +223,8 @@ fn main() -> ExitCode {
         args.max_new_tokens.to_string(),
         "--max-batch-size".to_string(),
         args.max_batch_size.to_string(),
+        "--max-prefill-padding".to_string(),
+        args.max_prefill_padding.to_string(),
         "--max-waiting-tokens".to_string(),
         args.max_waiting_tokens.to_string(),
         "--port".to_string(),

@@ -245,6 +245,7 @@ pub struct ServerRunArgs {
     pub max_batch_size: usize,
     pub max_batch_weight: Option<usize>,
     pub max_prefill_weight: Option<usize>,
+    pub max_prefill_padding: f32,
     pub max_waiting_tokens: usize,
     pub client: ShardedClient,
     pub tokenizer: Tokenizer,
@@ -273,6 +274,7 @@ pub async fn run(mut args: ServerRunArgs) {
     if use_padding {
         do_run(args, seq2seq, eos_token_id, PaddedBatch{}).await
     } else {
+        args.max_prefill_padding = 1.0; // There's no padding so disable checking for this
         do_run(args, seq2seq, eos_token_id, FlashBatch{}).await
     }
 }
@@ -294,6 +296,11 @@ async fn do_run<B: BatchType>(
             args.max_prefill_weight,
         );
 
+    let max_prefill_padding = args.max_prefill_padding;
+    if max_prefill_padding < 0.0 || max_prefill_padding > 1.0 {
+        panic!("max_prefill_padding ({}) must be a percentage in the range [0.0, 1.0]", max_prefill_padding)
+    }
+
     let tokenizers = AsyncTokenizer::new(
         &args.tokenizer, args.tokenization_workers
     );
@@ -312,6 +319,7 @@ async fn do_run<B: BatchType>(
             size_limit: args.max_batch_size,
             weight_limit: max_batch_weight,
             prefill_weight_limit: max_prefill_weight,
+            prefill_padding_limit: max_prefill_padding,
         },
         args.max_waiting_tokens,
         args.max_concurrent_requests,

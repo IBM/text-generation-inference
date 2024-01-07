@@ -15,6 +15,8 @@ pub(crate) trait BatchType: Send + Sync + Clone + 'static {
     fn batch_initial_weight(stats: &Self::Stats, batch_size: usize) -> usize;
     /// Calculate prefill batch weight given prefill batch statistics
     fn prefill_weight(prefill_stats: &Self::Stats, batch_size: usize) -> usize;
+    /// Percentage of batch tokens that are padding
+    fn percent_padding(prefill_stats: &Self::Stats, batch_size: usize) -> f32;
     /// Indicate whether a hypothetical batch will exceed the combined weight limit
     fn exceeds_weight(
         tree: &BTreeSet<(usize, usize, usize)>, max_total_weight: usize, current_output_len: usize
@@ -61,14 +63,16 @@ impl BatchType for FlashBatch {
         total_in_tokens + total_out_tokens
     }
 
-    fn batch_initial_weight(total_tokens: &Self::Stats, _batch_size: usize) -> usize {
-        let (total_in_tokens, _) = total_tokens;
+    fn batch_initial_weight((total_in_tokens, _): &Self::Stats, _batch_size: usize) -> usize {
         *total_in_tokens
     }
 
-    fn prefill_weight(total_tokens: &Self::Stats, _batch_size: usize) -> usize {
-        let (total_in_tokens, _) = total_tokens;
+    fn prefill_weight((total_in_tokens, _): &Self::Stats, _batch_size: usize) -> usize {
         *total_in_tokens
+    }
+
+    fn percent_padding(_: &Self::Stats, _batch_size: usize) -> f32 {
+        0.0
     }
 
     fn exceeds_weight(
@@ -106,32 +110,42 @@ impl BatchType for FlashBatch {
 pub(crate) struct PaddedBatch {}
 
 impl BatchType for PaddedBatch {
-    /// Keep track of maximum input length, maximum output length
-    type Stats = (usize, usize);
+    /// Keep track of maximum input length, maximum output length, input token count
+    type Stats = (usize, usize, usize);
 
     fn update_stats(
         max_in_out_lengths: &Self::Stats, input_length: usize, output_length: usize
     ) -> Self::Stats {
-        let (max_input_length, max_output_length) = max_in_out_lengths;
-        (max(*max_input_length, input_length), max(*max_output_length, output_length))
+        let (max_input_length, max_output_length, total_in_tokens) = max_in_out_lengths;
+        (
+            max(*max_input_length, input_length),
+            max(*max_output_length, output_length),
+            total_in_tokens + input_length
+        )
     }
 
     fn batch_max_weight(max_in_out_lengths: &Self::Stats, batch_size: usize) -> usize {
-        let (max_input_length, max_output_length) = max_in_out_lengths;
+        let (max_input_length, max_output_length, _) = max_in_out_lengths;
         let max_seq_len = max_input_length + max_output_length;
         // Memory requirement roughly proportional to batch_size * seq_len^2
         batch_size * max_seq_len.pow(2)
     }
 
-    fn batch_initial_weight(max_in_out_lengths: &Self::Stats, batch_size: usize) -> usize {
-        let (max_input_length, _) = max_in_out_lengths;
+    fn batch_initial_weight((max_input_length, _, _): &Self::Stats, batch_size: usize) -> usize {
         batch_size * max_input_length.pow(2)
     }
 
-    fn prefill_weight(max_in_out_lengths: &Self::Stats, batch_size: usize) -> usize {
+    fn prefill_weight((max_input_length, _, _): &Self::Stats, batch_size: usize) -> usize {
         // Empirically, prefill latency is proportional to batch_size * seq_len^(3/2)
-        let (max_input_length, _) = max_in_out_lengths;
         batch_size * max_input_length.pow(3).sqrt()
+    }
+
+    fn percent_padding((max_input_length, _, total_in_tokens): &Self::Stats, batch_size: usize) -> f32 {
+        let total_toks = max_input_length * batch_size;
+        match total_toks {
+            0 => 0.0,
+            total_toks => (total_toks - total_in_tokens) as f32 / total_toks as f32,
+        }
     }
 
     fn exceeds_weight(

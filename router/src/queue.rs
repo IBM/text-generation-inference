@@ -105,6 +105,8 @@ pub(crate) struct BatchingConfig {
     pub(crate) weight_limit: usize,
     /// Maximum weight of individual prefill batches
     pub(crate) prefill_weight_limit: usize,
+    /// Maximum percentage of pad tokens in prefill batches. In range [0, 1]
+    pub(crate) prefill_padding_limit: f32,
 }
 
 /// Request Queue
@@ -249,9 +251,15 @@ impl<B: BatchType> Queue<B> {
                 let pct_space_free = 1.0 - (
                     current_batch_weight as f64 / self.config.weight_limit as f64
                 );
-                (pct_space_free * prefill_limit as f64) as usize
+                let limit = (pct_space_free * prefill_limit as f64) as usize;
+                if limit == 0 {
+                    return None
+                }
+                limit
             },
         };
+        let max_prefill_padding = self.config.prefill_padding_limit;
+
         // We first do a read-only pass over the queue to allow skipping over large entries
         // that don't fit in the current batch to reach smaller entries that do
         for (index, entry) in self.buffer.iter().enumerate() {
@@ -316,14 +324,29 @@ impl<B: BatchType> Queue<B> {
             }
 
             // Also check whether adding this request will breach the prefill weight limit
-            if effective_prefill_weight_limit > 0 {
+            if effective_prefill_weight_limit > 0 || max_prefill_padding < 1.0 {
                 let next_prefill_stats = <B>::update_stats(
                     &prefill_stats, input_len, 0
                 );
-                let prefill_weight = <B>::prefill_weight(
-                    &next_prefill_stats, chosen_indices.len() + 1
-                );
-                if prefill_weight > effective_prefill_weight_limit {
+                let batch_size = chosen_indices.len() + 1;
+                let mut skip = false;
+                if effective_prefill_weight_limit > 0 {
+                    let prefill_weight = <B>::prefill_weight(&next_prefill_stats, batch_size);
+                    if prefill_weight > effective_prefill_weight_limit {
+                        skip = true;
+                        metrics::increment_counter!("tgi_prefill_weight_limit_exceeded");
+                    }
+                }
+                if !skip && max_prefill_padding < 1.0 {
+                    let percentage_padding = <B>::percent_padding(&next_prefill_stats, batch_size);
+                    if percentage_padding > max_prefill_padding {
+                        skip = true;
+                        //TODO if we skip due to padding and added other requests from queue,
+                        // we could consider doing another pass since the padding proportion may have decreased
+                        metrics::increment_counter!("tgi_prefill_padding_limit_exceeded");
+                    }
+                }
+                if skip {
                     if let Some(tree) = btree.as_mut() {
                         // Remove our tuple from the set
                         tree.remove(&(output_len, input_len, tree.len() - 1));

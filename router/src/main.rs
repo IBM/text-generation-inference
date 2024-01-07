@@ -23,6 +23,8 @@ struct Args {
     max_batch_weight: Option<usize>,
     #[clap(default_value = None, long, env)]
     max_prefill_weight: Option<usize>,
+    #[clap(default_value = "0.2", long, env)]
+    max_prefill_padding: f32,
     #[clap(default_value = "24", long, env)]
     max_waiting_tokens: usize,
     #[clap(default_value = "3000", long, short, env)]
@@ -129,6 +131,7 @@ fn main() -> Result<(), std::io::Error> {
                 max_batch_size: args.max_batch_size,
                 max_batch_weight: args.max_batch_weight,
                 max_prefill_weight: args.max_prefill_weight,
+                max_prefill_padding: args.max_prefill_padding,
                 max_waiting_tokens: args.max_waiting_tokens,
                 client: sharded_client,
                 tokenizer,
