@@ -9,6 +9,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::get,
+    routing::post,
     Json, Router,
 };
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
@@ -436,9 +437,8 @@ async fn do_run<B: BatchType>(
 
     // Create router
     let app = Router::new()
-        // Disabling HTTP generate endpoint for now
-        //.route("/generate", post(generate))
-        //.layer(Extension(shared_state.clone()))
+        .route("/generate", post(generate))
+        .layer(Extension(shared_state.clone()))
         .route("/health", get(health))
         .layer(Extension(health_ext))
         .route("/metrics", get(metrics))
