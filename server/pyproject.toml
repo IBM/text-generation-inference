@@ -22,7 +22,7 @@ sentencepiece = "^0.1.99"
 datasets = { version = "^2.14.6", optional = true }
 texttable = { version = "^1.7.0", optional = true }
 transformers = "4.35.0"
-optimum = { version = "^1.14.1", extras = ["onnxruntime-gpu"], optional = true }
+optimum = { version = "^1.16.1", extras = ["onnxruntime-gpu"], optional = true }
 onnxruntime = { version = "^1.16.2", optional = true }
 onnxruntime-gpu = { version = "^1.16.2", optional = true }
 onnx = { version = "^1.15.0", optional = true }
