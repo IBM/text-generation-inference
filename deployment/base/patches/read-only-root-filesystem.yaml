@@ -7,15 +7,17 @@ spec:
     spec:
       containers:
         - name: server
-          env:
-            # set base directory for caches
-            - name: HF_HOME
-              value: /tmp/
           securityContext:
             readOnlyRootFilesystem: true
           volumeMounts:
+            # Writeable home directory for caches
+            - name: home
+              mountPath: /home/tgis
+            # Need a temp directory for Python
             - name: tmp
               mountPath: /tmp
       volumes:
+        - name: home
+          emptyDir: {}
         - name: tmp
           emptyDir: {}
