@@ -1,6 +1,6 @@
 [[package]]
 name = "accelerate"
-version = "0.25.0"
+version = "0.26.1"
 description = "Accelerate"
 category = "main"
 optional = true
@@ -71,11 +71,14 @@ tests-no-zope = ["cloudpickle", "hypothesis", "mypy (>=1.1.1)", "pympler", "pyte
 
 [[package]]
 name = "bitsandbytes"
-version = "0.41.3.post2"
+version = "0.42.0"
 description = "k-bit optimizers and matrix multiplication routines."
 category = "main"
 optional = true
 python-versions = "*"
+
+[package.dependencies]
+scipy = "*"
 
 [[package]]
 name = "certifi"
@@ -410,10 +413,10 @@ python-versions = ">=3.7"
 
 [[package]]
 name = "jinja2"
-version = "3.1.2"
+version = "3.1.3"
 description = "A very fast and expressive template engine."
 category = "main"
-optional = true
+optional = false
 python-versions = ">=3.7"
 
 [package.dependencies]
@@ -442,7 +445,7 @@ name = "markupsafe"
 version = "2.1.3"
 description = "Safely add untrusted strings to HTML/XML markup."
 category = "main"
-optional = true
+optional = false
 python-versions = ">=3.7"
 
 [[package]]
@@ -660,7 +663,7 @@ testing = ["pytest", "pytest-benchmark"]
 
 [[package]]
 name = "protobuf"
-version = "4.25.1"
+version = "4.25.2"
 description = ""
 category = "main"
 optional = false
@@ -714,7 +717,7 @@ python-versions = "*"
 
 [[package]]
 name = "pytest"
-version = "7.4.3"
+version = "7.4.4"
 description = "pytest: simple powerful testing with Python"
 category = "dev"
 optional = false
@@ -1089,12 +1092,12 @@ quantize = ["datasets", "texttable"]
 [metadata]
 lock-version = "1.1"
 python-versions = ">=3.11.0,<3.13"
-content-hash = "af95a6b7dcc72877f00228f17fd8ded61468b3e5f14ecd33317eed5dd342713c"
+content-hash = "8f093cf1b7734b2c30ec8303b6da86dd9db648675aa59f04a5269eae3164e0e8"
 
 [metadata.files]
 accelerate = [
-    {file = "accelerate-0.25.0-py3-none-any.whl", hash = "sha256:c7bb817eb974bba0ff3ea1ba0f24d55afb86d50e3d4fe98d6922dc69cf2ccff1"},
-    {file = "accelerate-0.25.0.tar.gz", hash = "sha256:ecf55b0ab278a1dac8539dde0d276977aff04683f07ede73eaf02478538576a1"},
+    {file = "accelerate-0.26.1-py3-none-any.whl", hash = "sha256:04df826b84ac7bad8a0a8ab90e6aeacdecb1ea5a2d744d7e94f6735c29183227"},
+    {file = "accelerate-0.26.1.tar.gz", hash = "sha256:bf63716b6bd9460d87da970cf4d833abb824ca0aa633be36b741e63a1b504f89"},
 ]
 aiohttp = [
     {file = "aiohttp-3.9.1-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:e1f80197f8b0b846a8d5cf7b7ec6084493950d0882cc5537fb7b96a69e3c8590"},
@@ -1183,8 +1186,8 @@ attrs = [
     {file = "attrs-23.1.0.tar.gz", hash = "sha256:6279836d581513a26f1bf235f9acd333bc9115683f14f7e8fae46c98fc50e015"},
 ]
 bitsandbytes = [
-    {file = "bitsandbytes-0.41.3.post2-py3-none-any.whl", hash = "sha256:ceb301a3d4e6bf52bdad8d09f3064ac194bdfdeae535994c0315bd2ef7639cca"},
-    {file = "bitsandbytes-0.41.3.post2.tar.gz", hash = "sha256:7d25a51fb3b74b58e569473f8b70a5239124c0593dc053479c41cf2cd6730502"},
+    {file = "bitsandbytes-0.42.0-py3-none-any.whl", hash = "sha256:63798680912cc63bb77b535a2d0860af024e290a52e157f777ad2a52e2585967"},
+    {file = "bitsandbytes-0.42.0.tar.gz", hash = "sha256:fc1505f184f0d275766f2a6c663f1a43b734c1409b5c5a406f3a6073d9f329fd"},
 ]
 certifi = [
     {file = "certifi-2023.11.17-py3-none-any.whl", hash = "sha256:e036ab49d5b79556f99cfc2d9320b34cfbe5be05c5871b51de9329f0603b0474"},
@@ -1597,8 +1600,8 @@ iniconfig = [
     {file = "iniconfig-2.0.0.tar.gz", hash = "sha256:2d91e135bf72d31a410b17c16da610a82cb55f6b0477d1a902134b24a455b8b3"},
 ]
 jinja2 = [
-    {file = "Jinja2-3.1.2-py3-none-any.whl", hash = "sha256:6088930bfe239f0e6710546ab9c19c9ef35e29792895fed6e6e31a023a182a61"},
-    {file = "Jinja2-3.1.2.tar.gz", hash = "sha256:31351a702a408a9e7595a8fc6150fc3f43bb6bf7e319770cbc0db9df9437e852"},
+    {file = "Jinja2-3.1.3-py3-none-any.whl", hash = "sha256:7d6d50dd97d52cbc355597bd845fabfbac3f551e1f99619e39a35ce8c370b5fa"},
+    {file = "Jinja2-3.1.3.tar.gz", hash = "sha256:ac8bd6544d4bb2c9792bf3a159e80bba8fda7f07e81bc3aed565432d5925ba90"},
 ]
 loguru = [
     {file = "loguru-0.7.2-py3-none-any.whl", hash = "sha256:003d71e3d3ed35f0f8984898359d65b79e5b21943f78af86aa5491210429b8eb"},
@@ -1895,17 +1898,17 @@ pluggy = [
     {file = "pluggy-1.3.0.tar.gz", hash = "sha256:cf61ae8f126ac6f7c451172cf30e3e43d3ca77615509771b3a984a0730651e12"},
 ]
 protobuf = [
-    {file = "protobuf-4.25.1-cp310-abi3-win32.whl", hash = "sha256:193f50a6ab78a970c9b4f148e7c750cfde64f59815e86f686c22e26b4fe01ce7"},
-    {file = "protobuf-4.25.1-cp310-abi3-win_amd64.whl", hash = "sha256:3497c1af9f2526962f09329fd61a36566305e6c72da2590ae0d7d1322818843b"},
-    {file = "protobuf-4.25.1-cp37-abi3-macosx_10_9_universal2.whl", hash = "sha256:0bf384e75b92c42830c0a679b0cd4d6e2b36ae0cf3dbb1e1dfdda48a244f4bcd"},
-    {file = "protobuf-4.25.1-cp37-abi3-manylinux2014_aarch64.whl", hash = "sha256:0f881b589ff449bf0b931a711926e9ddaad3b35089cc039ce1af50b21a4ae8cb"},
-    {file = "protobuf-4.25.1-cp37-abi3-manylinux2014_x86_64.whl", hash = "sha256:ca37bf6a6d0046272c152eea90d2e4ef34593aaa32e8873fc14c16440f22d4b7"},
-    {file = "protobuf-4.25.1-cp38-cp38-win32.whl", hash = "sha256:abc0525ae2689a8000837729eef7883b9391cd6aa7950249dcf5a4ede230d5dd"},
-    {file = "protobuf-4.25.1-cp38-cp38-win_amd64.whl", hash = "sha256:1484f9e692091450e7edf418c939e15bfc8fc68856e36ce399aed6889dae8bb0"},
-    {file = "protobuf-4.25.1-cp39-cp39-win32.whl", hash = "sha256:8bdbeaddaac52d15c6dce38c71b03038ef7772b977847eb6d374fc86636fa510"},
-    {file = "protobuf-4.25.1-cp39-cp39-win_amd64.whl", hash = "sha256:becc576b7e6b553d22cbdf418686ee4daa443d7217999125c045ad56322dda10"},
-    {file = "protobuf-4.25.1-py3-none-any.whl", hash = "sha256:a19731d5e83ae4737bb2a089605e636077ac001d18781b3cf489b9546c7c80d6"},
-    {file = "protobuf-4.25.1.tar.gz", hash = "sha256:57d65074b4f5baa4ab5da1605c02be90ac20c8b40fb137d6a8df9f416b0d0ce2"},
+    {file = "protobuf-4.25.2-cp310-abi3-win32.whl", hash = "sha256:b50c949608682b12efb0b2717f53256f03636af5f60ac0c1d900df6213910fd6"},
+    {file = "protobuf-4.25.2-cp310-abi3-win_amd64.whl", hash = "sha256:8f62574857ee1de9f770baf04dde4165e30b15ad97ba03ceac65f760ff018ac9"},
+    {file = "protobuf-4.25.2-cp37-abi3-macosx_10_9_universal2.whl", hash = "sha256:2db9f8fa64fbdcdc93767d3cf81e0f2aef176284071507e3ede160811502fd3d"},
+    {file = "protobuf-4.25.2-cp37-abi3-manylinux2014_aarch64.whl", hash = "sha256:10894a2885b7175d3984f2be8d9850712c57d5e7587a2410720af8be56cdaf62"},
+    {file = "protobuf-4.25.2-cp37-abi3-manylinux2014_x86_64.whl", hash = "sha256:fc381d1dd0516343f1440019cedf08a7405f791cd49eef4ae1ea06520bc1c020"},
+    {file = "protobuf-4.25.2-cp38-cp38-win32.whl", hash = "sha256:33a1aeef4b1927431d1be780e87b641e322b88d654203a9e9d93f218ee359e61"},
+    {file = "protobuf-4.25.2-cp38-cp38-win_amd64.whl", hash = "sha256:47f3de503fe7c1245f6f03bea7e8d3ec11c6c4a2ea9ef910e3221c8a15516d62"},
+    {file = "protobuf-4.25.2-cp39-cp39-win32.whl", hash = "sha256:5e5c933b4c30a988b52e0b7c02641760a5ba046edc5e43d3b94a74c9fc57c1b3"},
+    {file = "protobuf-4.25.2-cp39-cp39-win_amd64.whl", hash = "sha256:d66a769b8d687df9024f2985d5137a337f957a0916cf5464d1513eee96a63ff0"},
+    {file = "protobuf-4.25.2-py3-none-any.whl", hash = "sha256:a8b7a98d4ce823303145bf3c1a8bdb0f2f4642a414b196f04ad9853ed0c8f830"},
+    {file = "protobuf-4.25.2.tar.gz", hash = "sha256:fe599e175cb347efc8ee524bcd4b902d11f7262c0e569ececcb89995c15f0a5e"},
 ]
 psutil = [
     {file = "psutil-5.9.6-cp27-cp27m-macosx_10_9_x86_64.whl", hash = "sha256:fb8a697f11b0f5994550555fcfe3e69799e5b060c8ecf9e2f75c69302cc35c0d"},
@@ -1976,8 +1979,8 @@ pyreadline3 = [
     {file = "pyreadline3-3.4.1.tar.gz", hash = "sha256:6f3d1f7b8a31ba32b73917cefc1f28cc660562f39aea8646d30bd6eff21f7bae"},
 ]
 pytest = [
-    {file = "pytest-7.4.3-py3-none-any.whl", hash = "sha256:0d009c083ea859a71b76adf7c1d502e4bc170b80a8ef002da5806527b9591fac"},
-    {file = "pytest-7.4.3.tar.gz", hash = "sha256:d989d136982de4e3b29dabcc838ad581c64e8ed52c11fbe86ddebd9da0818cd5"},
+    {file = "pytest-7.4.4-py3-none-any.whl", hash = "sha256:b090cdf5ed60bf4c45261be03239c2c1c22df034fbffe691abe93cd80cea01d8"},
+    {file = "pytest-7.4.4.tar.gz", hash = "sha256:2cf0005922c6ace4a3e2ec8b4080eb0d9753fdc93107415332f50ce9e7994280"},
 ]
 python-dateutil = [
     {file = "python-dateutil-2.8.2.tar.gz", hash = "sha256:0123cacc1627ae19ddf3c27a5de5bd67ee4586fbdd6440d9748f8abb483d3e86"},

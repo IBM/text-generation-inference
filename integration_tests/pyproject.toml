@@ -5,13 +5,13 @@ description = "Integration Tests for FMaaS inference Server"
 authors = ["Nick Hill"]
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = ">=3.11"
 
 [tool.poetry.group.dev.dependencies]
-protobuf = "^4.25.1"
+protobuf = "^4.25.2"
 grpcio-tools = "^1.60.0"
-pytest = "^7.4.3"
-pytest-asyncio = "^0.21.1"
+pytest = "^7.4.4"
+pytest-asyncio = "^0.23.3"
 requests = "^2.31.0"
 pyyaml = "^6.0.1"
 
