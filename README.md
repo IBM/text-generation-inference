@@ -36,7 +36,7 @@ Some upstream changes were intentionally not pulled in because they weren't requ
 ### Run the integration tests
 
 ```shell
-make integration-tests
+make build-test-image integration-tests
 ```
 
 ### Build the final container image
