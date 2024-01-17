@@ -6,7 +6,7 @@ ARG PYTORCH_VERSION=2.1.0
 # ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
 # ARG PYTORCH_VERSION=2.3.0.dev20231221
 ARG IPEX_INDEX="https://pytorch-extension.intel.com/release-whl/stable/cpu/us/"
-ARG IPEX_VERSION=2.1.0
+ARG IPEX_VERSION=2.1.100
 
 
 ## Base Layer ##################################################################
