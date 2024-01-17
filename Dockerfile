@@ -1,9 +1,13 @@
 ## Global Args #################################################################
 ARG BASE_UBI_IMAGE_TAG=9.3-1476
 ARG PROTOC_VERSION=25.1
-#ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
-ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
-ARG PYTORCH_VERSION=2.3.0.dev20231221
+ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
+ARG PYTORCH_VERSION=2.1.0
+# ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
+# ARG PYTORCH_VERSION=2.3.0.dev20231221
+ARG IPEX_INDEX="https://pytorch-extension.intel.com/release-whl/stable/cpu/us/"
+ARG IPEX_VERSION=2.1.100
+
 
 ## Base Layer ##################################################################
 FROM registry.access.redhat.com/ubi9/ubi:${BASE_UBI_IMAGE_TAG} as base
@@ -148,6 +152,7 @@ WORKDIR /usr/src
 
 # Install specific version of torch
 RUN pip install torch=="$PYTORCH_VERSION+cpu" --index-url "${PYTORCH_INDEX}/cpu" --no-cache-dir
+RUN pip install intel-extension-for-pytorch=="$IPEX_VERSION" --extra-index-url "${IPEX_INDEX}" --no-cache-dir
 
 COPY server/Makefile server/Makefile
 
@@ -174,6 +179,8 @@ RUN cd integration_tests && make install
 FROM cuda-devel as python-builder
 ARG PYTORCH_INDEX
 ARG PYTORCH_VERSION
+ARG IPEX_INDEX
+ARG IPEX_VERSION
 
 RUN dnf install -y unzip git ninja-build && dnf clean all
 
@@ -187,6 +194,7 @@ ENV PATH=/opt/miniconda/bin:$PATH
 # Install specific version of torch
 RUN pip install ninja==1.11.1.1 --no-cache-dir
 RUN pip install torch==$PYTORCH_VERSION+cu118 --index-url "${PYTORCH_INDEX}/cu118" --no-cache-dir
+RUN pip install intel-extension-for-pytorch~="$IPEX_VERSION" --extra-index-url "${IPEX_INDEX}" --no-cache-dir
 
 
 ## Build flash attention v2 ####################################################
@@ -241,6 +249,14 @@ COPY --from=flash-att-builder /usr/src/flash-attention/csrc/rotary/build /usr/sr
 FROM base as flash-att-v2-cache
 COPY --from=flash-att-v2-builder /usr/src/flash-attention-v2/build /usr/src/flash-attention-v2/build
 
+## Setup environment variables for performance on Xeon
+ENV KMP_BLOCKTIME=INF
+ENV KMP_TPAUSE=0
+ENV KMP_SETTINGS=1
+ENV KMP_AFFINITY=granularity=fine,compact,1,0
+ENV KMP_FORJOIN_BARRIER_PATTERN=dist,dist
+ENV KMP_PLAIN_BARRIER_PATTERN=dist,dist
+ENV KMP_REDUCTION_BARRIER_PATTERN=dist,dist
 
 ## Final Inference Server image ################################################
 FROM cuda-runtime as server-release
