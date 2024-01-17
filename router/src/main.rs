@@ -103,16 +103,13 @@ fn main() -> Result<(), std::io::Error> {
                 // Determine number of threads to use for tokenization based on number of cores
                 let num_cpus = num_cpus::get();
                 let num_shards = sharded_client.shard_count();
-                num_cpus.checked_sub(num_shards).unwrap_or(1).min(8)
+                num_cpus.checked_sub(num_shards).unwrap_or(1).clamp(1, 8)
             });
 
             tracing::info!("Using pool of {tokenization_workers} threads for tokenization");
 
-            // Clear the cache; useful if the webserver rebooted
-            sharded_client
-                .clear_cache()
-                .await
-                .expect("Unable to clear cache");
+            // Clear the cache; useful if this process rebooted
+            sharded_client.clear_cache().await.expect("Unable to clear cache");
             tracing::info!("Connected");
 
             let grpc_addr = SocketAddr::new(

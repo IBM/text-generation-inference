@@ -1,11 +1,13 @@
 ## Global Args #################################################################
-ARG BASE_UBI_IMAGE_TAG=9.3-1361.1699548029
-ARG PROTOC_VERSION=25.0
+ARG BASE_UBI_IMAGE_TAG=9.3-1476
+ARG PROTOC_VERSION=25.1
 ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
-ARG IPEX_INDEX="https://pytorch-extension.intel.com/release-whl/stable/cpu/us/"
-#ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
 ARG PYTORCH_VERSION=2.1.0
+# ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
+# ARG PYTORCH_VERSION=2.3.0.dev20231221
+ARG IPEX_INDEX="https://pytorch-extension.intel.com/release-whl/stable/cpu/us/"
 ARG IPEX_VERSION=2.1.0
+
 
 ## Base Layer ##################################################################
 FROM registry.access.redhat.com/ubi9/ubi:${BASE_UBI_IMAGE_TAG} as base
@@ -34,7 +36,7 @@ ENV CUDA_VERSION=11.8.0 \
     NV_CUDA_COMPAT_VERSION=520.61.05-1
 
 RUN dnf config-manager \
-       --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo \
+       --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo \
     && dnf install -y \
         cuda-cudart-11-8-${NV_CUDA_CUDART_VERSION} \
         cuda-compat-11-8-${NV_CUDA_COMPAT_VERSION} \
@@ -55,7 +57,7 @@ ENV NV_NVTX_VERSION=11.8.86-1 \
     NV_LIBNCCL_PACKAGE_VERSION=2.15.5-1+cuda11.8
 
 RUN dnf config-manager \
-       --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo \
+       --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo \
     && dnf install -y \
         cuda-libraries-11-8-${NV_CUDA_LIB_VERSION} \
         cuda-nvtx-11-8-${NV_NVTX_VERSION} \
@@ -74,7 +76,7 @@ ENV NV_CUDA_CUDART_DEV_VERSION=11.8.89-1 \
     NV_LIBNCCL_DEV_PACKAGE_VERSION=2.15.5-1+cuda11.8
 
 RUN dnf config-manager \
-       --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo \
+       --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo \
     && dnf install -y \
         cuda-command-line-tools-11-8-${NV_CUDA_LIB_VERSION} \
         cuda-libraries-devel-11-8-${NV_CUDA_LIB_VERSION} \
@@ -90,7 +92,7 @@ ENV LIBRARY_PATH="$CUDA_HOME/lib64/stubs"
 
 ## Rust builder ################################################################
 # Specific debian version so that compatible glibc version is used
-FROM rust:1.73-bullseye as rust-builder
+FROM rust:1.75-bullseye as rust-builder
 ARG PROTOC_VERSION
 
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
@@ -135,7 +137,7 @@ RUN dnf install -y make unzip python3.11 python3.11-pip gcc openssl-devel gcc-c+
     ln -fs /usr/bin/python3.11 /usr/bin/python3 && \
     ln -s /usr/bin/python3.11 /usr/local/bin/python && ln -s /usr/bin/pip3.11 /usr/local/bin/pip
 
-RUN pip install --upgrade pip && pip install pytest && pip install pytest-asyncio
+RUN pip install --upgrade pip --no-cache-dir && pip install pytest --no-cache-dir && pip install pytest-asyncio --no-cache-dir
 
 # CPU only
 ENV CUDA_VISIBLE_DEVICES=""
@@ -161,7 +163,7 @@ RUN cd server && \
     make gen-server && \
     pip install ".[accelerate]" --no-cache-dir
 
-# Patch codegen model changes into transformers 4.34
+# Patch codegen model changes into transformers 4.35
 RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py
 
 # Install router
@@ -183,7 +185,7 @@ ARG IPEX_VERSION
 RUN dnf install -y unzip git ninja-build && dnf clean all
 
 RUN cd ~ && \
-    curl -L -O https://repo.anaconda.com/miniconda/Miniconda3-py311_23.9.0-0-Linux-x86_64.sh && \
+    curl -L -O https://repo.anaconda.com/miniconda/Miniconda3-py311_23.10.0-1-Linux-x86_64.sh && \
     chmod +x Miniconda3-*-Linux-x86_64.sh && \
     bash ./Miniconda3-*-Linux-x86_64.sh -bf -p /opt/miniconda
 
@@ -226,7 +228,7 @@ FROM python-builder as exllama-kernels-builder
 WORKDIR /usr/src
 
 COPY server/exllama_kernels/ .
-RUN TORCH_CUDA_ARCH_LIST="8.0;8.6+PTX" python setup.py build
+RUN TORCH_CUDA_ARCH_LIST="8.0;8.6+PTX;8.9" python setup.py build
 
 ## Build transformers exllamav2 kernels ########################################
 FROM python-builder as exllamav2-kernels-builder
@@ -234,7 +236,7 @@ FROM python-builder as exllamav2-kernels-builder
 WORKDIR /usr/src
 
 COPY server/exllamav2_kernels/ .
-RUN TORCH_CUDA_ARCH_LIST="8.0;8.6+PTX" python setup.py build
+RUN TORCH_CUDA_ARCH_LIST="8.0;8.6+PTX;8.9" python setup.py build
 
 ## Flash attention cached build image ##########################################
 FROM base as flash-att-cache
@@ -291,7 +293,7 @@ COPY proto proto
 COPY server server
 RUN cd server && make gen-server && pip install ".[accelerate, onnx-gpu, quantize]" --no-cache-dir
 
-# Patch codegen model changes into transformers 4.34.0
+# Patch codegen model changes into transformers 4.35
 RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py
 
 # Install router

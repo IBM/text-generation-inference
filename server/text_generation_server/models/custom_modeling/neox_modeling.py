@@ -649,6 +649,9 @@ class GPTNeoxForCausalLM(GPTNeoXPreTrainedModel):
             config, prefix="embed_out", weights=weights
         )
 
+    def get_input_embeddings(self) -> nn.Module:
+        return self.gpt_neox.embed_in
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,

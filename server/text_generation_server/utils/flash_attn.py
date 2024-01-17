@@ -64,6 +64,7 @@ def attention(
             out,
             cu_seqlens_q,
             cu_seqlens,
+            None,
             max_s_q,
             max_s,
             0.0,

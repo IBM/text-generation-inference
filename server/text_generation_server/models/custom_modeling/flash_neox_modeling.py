@@ -326,10 +326,19 @@ class FlashGPTNeoXModel(FlashGPTNeoXPreTrainedModel):
         cu_seqlens,
         cu_seqlens_q,
         max_s,
+        inputs_embeds: Optional[torch.Tensor] = None,
         past_key_values=None,
         pre_allocate_past_size: Optional[int] = None,
-    ):
-        hidden_states = self.embed_in(input_ids)
+    ):        
+        if input_ids is not None and inputs_embeds is not None:
+            raise ValueError(
+                "You cannot specify both input_ids and inputs_embeds at the same time"
+            )
+        
+        if inputs_embeds is not None:
+            hidden_states = inputs_embeds
+        else:        
+            hidden_states = self.embed_in(input_ids)
 
         # Prefill
         if past_key_values is None:
@@ -394,6 +403,9 @@ class FlashGPTNeoXForCausalLM(FlashGPTNeoXPreTrainedModel):
             config, prefix="embed_out", weights=weights
         )
 
+    def get_input_embeddings(self) -> nn.Module:
+        return self.gpt_neox.embed_in
+
     def forward(
         self,
         input_ids,
@@ -406,15 +418,13 @@ class FlashGPTNeoXForCausalLM(FlashGPTNeoXPreTrainedModel):
         pre_allocate_past_size: Optional[int] = None,
         lm_head_indices: Optional[torch.Tensor] = None,
     ):
-        if inputs_embeds is not None:
-            raise ValueError("input_embeds not yet supported for flash neox")
-
         hidden_states, present = self.gpt_neox(
             input_ids,
             position_ids,
             cu_seqlens,
             cu_seqlens_q,
             max_s,
+            inputs_embeds,
             past_key_values,
             pre_allocate_past_size,
         )

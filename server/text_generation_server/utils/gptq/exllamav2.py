@@ -5,6 +5,7 @@ import torch
 from torch import nn
 
 from exllamav2_kernels import make_q_matrix, gemm_half_q_half
+from text_generation_server.utils import print_rank_n
 
 # Dummy tensor to pass instead of g_idx since there is no way to pass "None" to a C++ extension
 none_tensor = torch.empty((1, 1), device="meta")
@@ -75,6 +76,7 @@ class ExLlamaV2DeviceTensors:
         self.scratch = None
     
     def prepare(self):
+        print_rank_n(f"Allocating {self.scratch_bytes // (1024 * 1024)} MiB for exllama v2 scratch space")
         self.scratch = torch.empty((self.scratch_bytes // 2,), dtype=torch.half, device=self.device)
 
     def get_scratch_slice(self, size_bytes):

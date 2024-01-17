@@ -3,7 +3,7 @@ from typing import Optional
 
 import torch
 
-from text_generation_server.models.model import Model
+from text_generation_server.models.model import Model, PT2_COMPILE
 from transformers.models.auto import modeling_auto
 
 from text_generation_server.models.causal_lm import CausalLM
@@ -14,7 +14,7 @@ from transformers import AutoConfig, AutoModelForSeq2SeqLM, AutoModelForCausalLM
 
 FLASH_ATTENTION = os.getenv("FLASH_ATTENTION", "false").lower() == "true"
 
-__all__ = ["Model", "CausalLM", "Seq2SeqLM", "get_model", "FLASH_ATTENTION"]
+__all__ = ["Model", "CausalLM", "Seq2SeqLM", "get_model", "FLASH_ATTENTION", "PT2_COMPILE"]
 
 # The flag below controls whether to allow TF32 on matmul. This flag defaults to False
 # in PyTorch 1.12 and later.

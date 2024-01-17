@@ -409,10 +409,9 @@ class FlashSantacoderModel(nn.Module):
             raise ValueError(
                 "You cannot specify both input_ids and inputs_embeds at the same time"
             )
-
+        
         if inputs_embeds is not None:
             hidden_states = inputs_embeds + self.wpe(position_ids)
-            # TODO: support TP for the position embeddings
         else:
             hidden_states = self.wte(input_ids) + self.wpe(position_ids)
 
@@ -472,6 +471,9 @@ class FlashSantacoderForCausalLM(nn.Module):
         self.lm_head = TensorParallelHead.load(
             config, prefix="transformer.wte", weights=weights
         )
+
+    def get_input_embeddings(self) -> nn.Module:
+        return self.transformer.wte
 
     def forward(
         self,

@@ -1,6 +1,6 @@
 gen-client:
 	# Compile protos
-	pip install grpcio-tools==1.59.2 mypy-protobuf==3.4.0 'types-protobuf>=3.20.4' --no-cache-dir
+	pip install grpcio-tools==1.60.0 mypy-protobuf==3.5.0 'types-protobuf>=3.20.4' --no-cache-dir
 	mkdir text_generation_tests/pb || true
 	python -m grpc_tools.protoc -I../proto --python_out=text_generation_tests/pb \
 		--grpc_python_out=text_generation_tests/pb --mypy_out=text_generation_tests/pb ../proto/generation.proto

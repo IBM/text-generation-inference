@@ -172,8 +172,6 @@
 
 # Prompt prefix
 - name: Greedy with tuned prompt prefix
-  # Prompt prefixes with multi-shard not yet supported
-  singleShardOnly: true
   request:
     # Prefix is "def hello_world():\n"
     prefixId: tiny_starcoder
@@ -189,8 +187,6 @@
         text: "(\"Hello World!\")\n\nhello_world()\n"
 
 - name: Greedy with tuned prompt prefix and truncation
-  # Prompt prefixes with multi-shard not yet supported
-  singleShardOnly: true
   request:
     # Prefix is "def hello_world():\n"
     prefixId: tiny_starcoder
@@ -209,8 +205,6 @@
 
 # Prompt prefix returning input and generated tokens
 - name: Greedy with tuned prompt prefix and returned tokens
-  # Prompt prefixes with multi-shard not yet supported
-  singleShardOnly: true
   request:
     # Prefix is "def hello_world():\n"
     prefixId: tiny_starcoder
