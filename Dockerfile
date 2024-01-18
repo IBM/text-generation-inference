@@ -4,15 +4,18 @@ ARG PROTOC_VERSION=25.1
 #ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
 ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
 ARG PYTORCH_VERSION=2.3.0.dev20231221
+ARG PYTHON_VERSION=3.11
 
 ## Base Layer ##################################################################
 FROM registry.access.redhat.com/ubi9/ubi:${BASE_UBI_IMAGE_TAG} as base
 WORKDIR /app
 
+ARG PYTHON_VERSION
+
 RUN dnf remove -y --disableplugin=subscription-manager \
         subscription-manager \
         # we install newer version of requests via pip
-        python3.11-requests \
+    python${PYTHON_VERSION}-requests \
     && dnf install -y make \
         # to help with debugging
         procps \
@@ -128,10 +131,12 @@ RUN cargo install --path .
 ## Tests base ##################################################################
 FROM base as test-base
 
-RUN dnf install -y make unzip python3.11 python3.11-pip gcc openssl-devel gcc-c++ && \
+ARG PYTHON_VERSION
+
+RUN dnf install -y make unzip python${PYTHON_VERSION} python${PYTHON_VERSION}-pip gcc openssl-devel gcc-c++ && \
     dnf clean all && \
-    ln -fs /usr/bin/python3.11 /usr/bin/python3 && \
-    ln -s /usr/bin/python3.11 /usr/local/bin/python && ln -s /usr/bin/pip3.11 /usr/local/bin/pip
+    ln -fs /usr/bin/python${PYTHON_VERSION} /usr/bin/python3 && \
+    ln -s /usr/bin/python${PYTHON_VERSION} /usr/local/bin/python && ln -s /usr/bin/pip${PYTHON_VERSION} /usr/local/bin/pip
 
 RUN pip install --upgrade pip --no-cache-dir && pip install pytest --no-cache-dir && pip install pytest-asyncio --no-cache-dir
 
@@ -142,7 +147,8 @@ ENV CUDA_VISIBLE_DEVICES=""
 FROM test-base as cpu-tests
 ARG PYTORCH_INDEX
 ARG PYTORCH_VERSION
-ARG SITE_PACKAGES=/usr/local/lib/python3.11/site-packages
+ARG PYTHON_VERSION
+ARG SITE_PACKAGES=/usr/local/lib/python${PYTHON_VERSION}/site-packages
 
 WORKDIR /usr/src
 
@@ -174,15 +180,20 @@ RUN cd integration_tests && make install
 FROM cuda-devel as python-builder
 ARG PYTORCH_INDEX
 ARG PYTORCH_VERSION
+ARG PYTHON_VERSION
+ARG MINIFORGE_VERSION=23.3.1-1
 
 RUN dnf install -y unzip git ninja-build && dnf clean all
 
-RUN cd ~ && \
-    curl -L -O https://repo.anaconda.com/miniconda/Miniconda3-py311_23.10.0-1-Linux-x86_64.sh && \
-    chmod +x Miniconda3-*-Linux-x86_64.sh && \
-    bash ./Miniconda3-*-Linux-x86_64.sh -bf -p /opt/miniconda
+RUN curl -fsSL -v -o ~/miniforge3.sh -O  "https://github.com/conda-forge/miniforge/releases/download/${MINIFORGE_VERSION}/Miniforge3-$(uname)-$(uname -m).sh" && \
+    chmod +x ~/miniforge3.sh && \
+    bash ~/miniforge3.sh -b -p /opt/conda && \
+    source "/opt/conda/etc/profile.d/conda.sh" && \
+    conda create -y -p /opt/tgis python=${PYTHON_VERSION} && \
+    conda activate /opt/tgis && \
+    rm ~/miniforge3.sh
 
-ENV PATH=/opt/miniconda/bin:$PATH
+ENV PATH=/opt/tgis/bin/:$PATH
 
 # Install specific version of torch
 RUN pip install ninja==1.11.1.1 --no-cache-dir
@@ -244,7 +255,8 @@ COPY --from=flash-att-v2-builder /usr/src/flash-attention-v2/build /usr/src/flas
 
 ## Final Inference Server image ################################################
 FROM cuda-runtime as server-release
-ARG SITE_PACKAGES=/opt/miniconda/lib/python3.11/site-packages
+ARG PYTHON_VERSION
+ARG SITE_PACKAGES=/opt/tgis/lib/python${PYTHON_VERSION}/site-packages
 
 # Install C++ compiler (required at runtime when PT2_COMPILE is enabled)
 RUN dnf install -y gcc-c++ && dnf clean all \
@@ -252,9 +264,9 @@ RUN dnf install -y gcc-c++ && dnf clean all \
 
 SHELL ["/bin/bash", "-c"]
 
-COPY --from=build /opt/miniconda/ /opt/miniconda/
+COPY --from=build /opt/tgis /opt/tgis
 
-ENV PATH=/opt/miniconda/bin:$PATH
+ENV PATH=/opt/tgis/bin:$PATH
 
 # These could instead come from explicitly cached images
 
