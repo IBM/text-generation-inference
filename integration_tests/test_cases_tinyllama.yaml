@@ -175,6 +175,40 @@
       stopReason: MAX_TOKENS
       text: ' Once he can go to the park and play with his friends.'
 
+# Prompt loaded from peft adapter
+- name: Greedy with tuned peft adapter prefix
+  request:
+    prefixId: tinyllama_peft_adapter
+    params:
+      method: GREEDY
+      stopping:
+        maxNewTokens: 13
+    requests:
+    - {"text": ""}
+  response:
+    responses:
+    - generatedTokenCount: 13
+      inputTokenCount: 1
+      stopReason: MAX_TOKENS
+      text: ' Once upon a time, there was a little boy named Tim.'
+
+# Prompt loaded from peft adapter saved in a raw .bin file
+- name: Greedy with tuned peft adapter prefix in raw .bin format
+  request:
+    prefixId: tinyllama_peft_adapter_raw
+    params:
+      method: GREEDY
+      stopping:
+        maxNewTokens: 13
+    requests:
+    - {"text": ""}
+  response:
+    responses:
+    - generatedTokenCount: 13
+      inputTokenCount: 1
+      stopReason: MAX_TOKENS
+      text: ' Once upon a time, there was a little boy named Tim.'
+
 # Prompt prefix with truncation
 - name: Greedy with tuned prompt prefix with truncation
   request:
