@@ -183,6 +183,9 @@ ARG PYTORCH_VERSION
 ARG PYTHON_VERSION
 ARG MINIFORGE_VERSION=23.3.1-1
 
+# consistent arch support anywhere we compile CUDA code
+ENV TORCH_CUDA_ARCH_LIST="8.0;8.6+PTX;8.9"
+
 RUN dnf install -y unzip git ninja-build && dnf clean all
 
 RUN curl -fsSL -v -o ~/miniforge3.sh -O  "https://github.com/conda-forge/miniforge/releases/download/${MINIFORGE_VERSION}/Miniforge3-$(uname)-$(uname -m).sh" && \
@@ -231,7 +234,7 @@ FROM python-builder as exllama-kernels-builder
 WORKDIR /usr/src
 
 COPY server/exllama_kernels/ .
-RUN TORCH_CUDA_ARCH_LIST="8.0;8.6+PTX;8.9" python setup.py build
+RUN python setup.py build
 
 ## Build transformers exllamav2 kernels ########################################
 FROM python-builder as exllamav2-kernels-builder
@@ -239,7 +242,7 @@ FROM python-builder as exllamav2-kernels-builder
 WORKDIR /usr/src
 
 COPY server/exllamav2_kernels/ .
-RUN TORCH_CUDA_ARCH_LIST="8.0;8.6+PTX;8.9" python setup.py build
+RUN python setup.py build
 
 ## Flash attention cached build image ##########################################
 FROM base as flash-att-cache
