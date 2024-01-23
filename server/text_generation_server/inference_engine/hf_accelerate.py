@@ -13,6 +13,7 @@ class InferenceEngine(BaseInferenceEngine):
             model_path: str,
             model_class: type[_BaseAutoModelClass],
             dtype: torch.dtype,
+            quantize: Optional[str],
             model_config: Optional[Any]
     ) -> None:
         super().__init__(model_path, model_config)
@@ -27,9 +28,11 @@ class InferenceEngine(BaseInferenceEngine):
         if self.device.type == "cuda":
             kwargs["device_map"] = "balanced_low_0" if self.world_size > 1 else "auto"
 
-        if dtype == torch.int8:
+        if quantize == "bitsandbytes":
             # using LLM.int8()
             kwargs["load_in_8bit"] = True
+        elif quantize is not None:
+            raise ValueError(f"{quantize} quantization not supported by hf_transformers engine")
         else:
             kwargs["torch_dtype"] = dtype
 

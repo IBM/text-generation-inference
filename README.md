@@ -4,43 +4,41 @@
 
 This repo is an early fork of https://github.com/huggingface/text-generation-inference.
 
-It was developed internally in IBM and diverged somewhat from the original repo, but we have tried to keep aligned as much as possible - pulling in relevant upstream changes and contributing features/improvements back. This is an ongoing process and there's a backlog in both directions which we hope to work through quickly.
+It was developed internally in IBM and diverged somewhat from the original repo, but we tried to keep it aligned as much as possible - pulling in relevant upstream changes and contributing features/improvements back.
 
-It's not clear yet whether/when we will be able to reconcile the repos completely because goals/priorities of the projects may differ in some cases. Decisions related to design or implementation approaches are also sometimes different.
+A number of features here are similar/equivalent but are implemented differently. This is generally because we had implemented them first internally, and then either they were implemented independently in the upstream repo before we had had a chance to contribute the feature back (such as response streaming), or we had opened a PR against the upstream repo but the maintainers decided to reimplement in another way.
 
-Some features here are similar/equivalent to those in the upstream repo but are implemented differently. This is generally because we had implemented them first internally, and they were subsequently implemented independently in the upstream repo before we had had a chance to contribute back that feature. One example of this is response streaming. In some other cases we had opened PRs against the upstream repo but the maintainers decided to reimplement in another way.
-
-Some upstream changes were intentionally not pulled in because they weren't required for our current usage, for example OPT/Galactica model support. Others we have just not caught up with and ported back yet.
+Some upstream changes were intentionally not pulled in because they weren't required for our current usage, for example OPT/Galactica model support. And we have stopped pulling in any upstream work after TGI version 1.0, following which the Apache 2.0 OSS license doesn't apply.
 
 ---
 
-### Some of the differences in this repo
+### Some of the features in this repo not in HF TGI as of v1.0
 - gRPC front-end interface instead of REST, different arrangement of API parameters
 - Support for batch inputs in the API
-- Tokenization API
-- More comprehensive CI tests (excluding flash attention impls)
+- Independent tokenization API
+- More comprehensive CI tests (excluding GPU / flash attention impls)
 - Configurable inference engine abstraction
 - UBI based container image
-
-
-### Some of the changes we're contributing back or plan to contribute back soon
-- Dynamic batch sizing (upstream [PR](https://github.com/huggingface/text-generation-inference/pull/210))
+- More sophisticated dynamic batch sizing (upstream [PR](https://github.com/huggingface/text-generation-inference/pull/210))
 - Detokenization and stopping evaluation done on rust side (upstream [PR](https://github.com/huggingface/text-generation-inference/pull/138))
   - Includes parity of streaming and non-streaming output
 - More granular "extra token details" options
 - "top n" candidate token output option
 - Return token ranks in addition to logprobs
 - Length penalty, min new tokens parameters
+- Option to omit stop sequence from response text, include matched stop sequence in response
 - Optimum integration (for Onnx Runtime and BetterTransformer)
-- Support for tuned prompts, as trained via the PEFT library (not for flash or sharded impls yet)
+- Support for tuned prompts, as trained via the PEFT library (not for sharded impls yet)
+- Vectorized decoding for non-flash model deployments (in addition to flash)
 - Support for PyTorch 2 compile
+- Exllama V2 kernel for GPTQ quantized models
 
 ---
 
 ### Run the integration tests
 
 ```shell
-make integration-tests
+make build-test-image integration-tests
 ```
 
 ### Build the final container image
@@ -123,36 +121,41 @@ Prometheus metrics are exposed on the same port as the health probe endpoint (de
 
 They are all prefixed with `tgi_`. Descriptions will be added to the table below soon.
 
-| Metric                                     | Kind        | Labels                                              | Description  |
-|--------------------------------------------|-------------|-----------------------------------------------------|--------------|
-| `tgi_request_count`                        | `counter`   | kind = "single" or "batch" or "stream"              |              |
-| `tgi_request_input_count`                  | `counter`   |                                                     |              |
-| `tgi_request_failure`                      | `counter`   | err                                                 |              |
-| `tgi_request_success`                      | `counter`   | stop_reason, kind = "single" or "batch" or "stream" |              |
-| `tgi_request_max_new_tokens`               | `histogram` |                                                     |              |
-| `tgi_request_input_length`                 | `histogram` |                                                     |              |
-| `tgi_request_raw_input_length`             | `histogram` |                                                     |              |
-| `tgi_request_mean_time_per_token_duration` | `histogram` |                                                     |              |
-| `tgi_request_validation_duration`          | `histogram` |                                                     |              |
-| `tgi_request_queue_duration`               | `histogram` |                                                     |              |
-| `tgi_request_generated_tokens`             | `histogram` |                                                     |              |
-| `tgi_request_total_tokens`                 | `histogram` |                                                     |              |
-| `tgi_request_duration`                     | `histogram` |                                                     |              |
-| `tgi_request_inference_duration`           | `histogram` |                                                     |              |
-| `tgi_batch_inference_count`                | `counter`   | method = "prefill" or "next_token"                  |              |
-| `tgi_batch_inference_success`              | `counter`   | method = "prefill" or "next_token"                  |              |
-| `tgi_batch_inference_failure`              | `counter`   | method = "prefill" or "next_token"                  |              |
-| `tgi_batch_inference_batch_size`           | `histogram` | method = "prefill" or "next_token"                  |              |
-| `tgi_batch_inference_duration`             | `histogram` | method = "prefill" or "next_token", makeup          |              |
-| `tgi_batch_inference_forward_duration`     | `histogram` | method = "prefill" or "next_token", makeup          |              |
-| `tgi_batch_inference_tokproc_duration`     | `histogram` | method = "prefill" or "next_token", makeup          |              |
-| `tgi_batch_next_tokens`                    | `histogram` |                                                     | Prefill only |
-| `tgi_batch_current_size`                   | `gauge`     |                                                     |              |
-| `tgi_batch_input_tokens`                   | `gauge`     |                                                     |              |
-| `tgi_batch_max_remaining_tokens`           | `gauge`     |                                                     |              |
-| `tgi_queue_size`                           | `gauge`     |                                                     |              |
-| `tgi_queue_jump`                           | `counter`   |                                                     |              |
-| `tgi_granular_batch_addition`              | `counter`   |                                                     |              |
-| `tgi_prefill_weight_limit_exceeded`        | `counter`   |                                                     |              |
-| `tgi_prompt_load_failure`                  | `counter`   |                                                     |              |
-| `tgi_prompt_load_duration`                 | `histogram` |                                                     |              |
+| Metric                                     | Kind        | Labels                                                                        | Description                                                                        |
+|--------------------------------------------|-------------|-------------------------------------------------------------------------------|------------------------------------------------------------------------------------|
+| `tgi_request_count`                        | `counter`   | kind = "single" or "batch" or "stream"                                        | Count of generate requests (batch of n counts as 1)                                |
+| `tgi_request_input_count`                  | `counter`   |                                                                               | Count of generate request inputs (batch of n counts as n)                          |
+| `tgi_request_failure`                      | `counter`   | err                                                                           | Count of failed requests, segmented by error type                                  |
+| `tgi_request_success`                      | `counter`   | stop_reason, kind = "single" or "batch" or "stream"                           | Count of successful requests                                                       |
+| `tgi_request_max_new_tokens`               | `histogram` |                                                                               | Value of `max_new_tokens` request parameter                                        |
+| `tgi_request_input_length`                 | `histogram` |                                                                               | Request input length in tokens                                                     |
+| `tgi_request_raw_input_length`             | `histogram` |                                                                               | Raw request input length in tokens (including "too long" validation failures)      |
+| `tgi_request_mean_time_per_token_duration` | `histogram` |                                                                               | Mean time per token, per request (in seconds)                                      |
+| `tgi_request_validation_duration`          | `histogram` |                                                                               | Request validation time (in seconds)                                               |
+| `tgi_request_queue_duration`               | `histogram` |                                                                               | Request time spent in queue (in seconds)                                           |
+| `tgi_request_generated_tokens`             | `histogram` |                                                                               | Number of tokens generated for request                                             |
+| `tgi_request_total_tokens`                 | `histogram` |                                                                               | Total sequence length of request (input tokens + generated tokens)                 |
+| `tgi_request_duration`                     | `histogram` |                                                                               | End-to-end generate request duration (in seconds)                                  |
+| `tgi_request_inference_duration`           | `histogram` |                                                                               | Duration of inferencing portion of request (in seconds)                            |
+| `tgi_batch_concatenation_count`            | `counter`   |                                                                               | How many times the continuous batcher combined a new batch into the running batch  |
+| `tgi_batch_inference_count`                | `counter`   | method = "prefill" or "next_token"                                            | Count of model forward-pass iterations                                             |
+| `tgi_batch_inference_success`              | `counter`   | method = "prefill" or "next_token"                                            | Count of successful model forward-pass iterations                                  |
+| `tgi_batch_inference_failure`              | `counter`   | method = "prefill" or "next_token", reason = "oom", "connection", or "error"  | Count of failed model forward-pass iterations                                      |
+| `tgi_batch_inference_batch_size`           | `histogram` | method = "prefill" or "next_token"                                            | Batch size for each forward-pass iteration                                         |
+| `tgi_batch_inference_duration`             | `histogram` | method = "prefill" or "next_token", makeup                                    | Time taken for each forward-pass iteration (in seconds)                            |
+| `tgi_batch_inference_forward_duration`     | `histogram` | method = "prefill" or "next_token", makeup                                    | Time taken for each model `forward()` method invocation (in seconds)               |
+| `tgi_batch_inference_tokproc_duration`     | `histogram` | method = "prefill" or "next_token", makeup                                    | Rust-side token-processing time per model forward-pass iteration (in secs)         |
+| `tgi_batch_next_tokens`                    | `histogram` |                                                                               | Total number of tokens included in prefill batch (including padding)               |
+| `tgi_batch_current_size`                   | `gauge`     |                                                                               | Current batch size                                                                 |
+| `tgi_batch_input_tokens`                   | `gauge`     |                                                                               | Total number of input tokens in current batch, including padding tokens            |
+| `tgi_batch_max_remaining_tokens`           | `gauge`     |                                                                               | Maximum number of to-be-generated tokens of requests in current batch              |
+| `tgi_queue_size`                           | `gauge`     |                                                                               | Current number of queued requests                                                  |
+| `tgi_queue_jump`                           | `counter`   |                                                                               | Count of queue-jumps when batch filling                                            |
+| `tgi_granular_batch_addition`              | `counter`   |                                                                               | Count of batch additions due to granular analysis that would not otherwise fit     |
+| `tgi_prefill_weight_limit_exceeded`        | `counter`   |                                                                               | Count of times the max prefill weight is reached during new batch construction     |
+| `tgi_prompt_load_failure`                  | `counter`   |                                                                               | Count of failed tuned soft-prompt loads                                            |
+| `tgi_prompt_load_duration`                 | `histogram` |                                                                               | Time taken to JIT-load tuned soft-prompt in seconds (includes count of such loads) |
+| `tgi_tokenize_request_count`               | `counter`   |                                                                               | Count of tokenize requests (batch of n counts as 1)                                |
+| `tgi_tokenize_request_input_count`         | `counter`   |                                                                               | Count of tokenize request inputs (batch of n counts as n)                          |
+| `tgi_tokenize_request_tokens`              | `histogram` |                                                                               | Count of tokenized tokens per tokenize request                                     |
+| `tgi_tokenize_request_duration`            | `histogram` |                                                                               | Tokenize request duration (in seconds)                                             |

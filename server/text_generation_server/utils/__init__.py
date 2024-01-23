@@ -19,6 +19,7 @@ from text_generation_server.utils.hub import (
 from text_generation_server.utils.tokens import (
     Greedy,
     NextTokenChooser,
+    HeterogeneousNextTokenChooser,
     Sampling,
     get_token_info,
     get_input_tokens_info,
@@ -42,6 +43,7 @@ __all__ = [
     "TRUST_REMOTE_CODE",
     "Greedy",
     "NextTokenChooser",
+    "HeterogeneousNextTokenChooser",
     "Sampling",
     "get_token_info",
     "get_input_tokens_info",

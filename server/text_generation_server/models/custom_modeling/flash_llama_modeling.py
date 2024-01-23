@@ -148,24 +148,27 @@ class LlamaRMSNorm(nn.Module):
 
 
 def _load_gqa(config, prefix: str, weights):
-    w = [
-        weights.get_sharded(f"{prefix}.q_proj.weight", dim=0),
-        weights.get_sharded(f"{prefix}.k_proj.weight", dim=0),
-        weights.get_sharded(f"{prefix}.v_proj.weight", dim=0),
-    ]
-    weight = torch.cat(w, dim=0)
-    weight = weight.to(dtype=weights.dtype).to(device=weights.device)
-    bias = None
     assert config.hidden_size % config.num_attention_heads == 0
-    head_size = config.hidden_size // config.num_attention_heads
     assert config.num_attention_heads % weights.process_group.size() == 0
-    num_heads = config.num_attention_heads // weights.process_group.size()
-    num_key_value_heads = config.num_key_value_heads // weights.process_group.size()
-    assert list(weight.shape) == [
-        (num_heads + 2 * num_key_value_heads) * head_size,
-        config.hidden_size,
-    ], f"{list(weight.shape)} != {[(num_heads + 2 * config.num_key_value_heads) * head_size, config.hidden_size]}"
-    return TensorParallelColumnLinear(get_linear(weight, bias, config.quantize))
+
+    weight = weights.get_multi_weights_col(
+        prefixes=[f"{prefix}.q_proj", f"{prefix}.k_proj", f"{prefix}.v_proj"],
+        quantize=config.quantize,
+        dim=0
+    )
+
+    if config.quantize != "gptq":
+        weight = weight.to(dtype=weights.dtype).to(device=weights.device)
+
+        head_size = config.hidden_size // config.num_attention_heads
+        num_heads = config.num_attention_heads // weights.process_group.size()
+        num_key_value_heads = config.num_key_value_heads // weights.process_group.size()
+        assert list(weight.shape) == [
+            (num_heads + 2 * num_key_value_heads) * head_size,
+            config.hidden_size,
+            ], f"{list(weight.shape)} != {[(num_heads + 2 * config.num_key_value_heads) * head_size, config.hidden_size]}"
+
+    return TensorParallelColumnLinear(get_linear(weight, bias=None, quantize=config.quantize))
 
 
 class FlashLlamaAttention(torch.nn.Module):
@@ -412,10 +415,19 @@ class FlashLlamaModel(torch.nn.Module):
         cu_seqlens,
         cu_seqlens_q,
         max_s,
+        inputs_embeds: Optional[torch.Tensor] = None,
         past_key_values: Optional[torch.Tensor] = None,
         pre_allocate_past_size: Optional[int] = None,
     ):
-        hidden_states = self.embed_tokens(input_ids)
+        if input_ids is not None and inputs_embeds is not None:
+            raise ValueError(
+                "You cannot specify both input_ids and inputs_embeds at the same time"
+            )
+        
+        if inputs_embeds is not None:
+            hidden_states = inputs_embeds
+        else:
+            hidden_states = self.embed_tokens(input_ids)
 
         # Prefill
         if past_key_values is None:
@@ -482,6 +494,9 @@ class FlashLlamaForCausalLM(torch.nn.Module):
             weights=weights,
         )
 
+    def get_input_embeddings(self) -> nn.Module:
+        return self.model.embed_tokens
+
     def forward(
         self,
         input_ids,
@@ -494,8 +509,6 @@ class FlashLlamaForCausalLM(torch.nn.Module):
         pre_allocate_past_size: Optional[int] = None,
         lm_head_indices: Optional[torch.Tensor] = None,
     ):
-        if inputs_embeds is not None:
-            raise ValueError("input_embeds not yet supported for flash llama")
 
         hidden_states, present = self.model(
             input_ids,
@@ -503,6 +516,7 @@ class FlashLlamaForCausalLM(torch.nn.Module):
             cu_seqlens,
             cu_seqlens_q,
             max_s,
+            inputs_embeds,
             past_key_values,
             pre_allocate_past_size,
         )

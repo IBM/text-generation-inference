@@ -26,6 +26,7 @@ class InferenceEngine(BaseInferenceEngine):
         model_path: str,
         model_class: type[_BaseAutoModelClass],
         dtype: torch.dtype,
+        quantize: Optional[str],
         model_config: Optional[Any],
     ) -> None:
         super().__init__(model_path, model_config)
@@ -84,7 +85,10 @@ class InferenceEngine(BaseInferenceEngine):
         elif model_type in ["RefinedWeb", "RefinedWebModel", "falcon"]:
             if sharded and self._config.alibi:
                 raise NotImplementedError("TP is not supported for Falcon models using alibi")
-            aliases = {"transformer.word_embeddings.weight": ["lm_head.weight"]}
+            aliases = {
+                "transformer.word_embeddings.weight": ["lm_head.weight"],
+                "lm_head.weight": ["transformer.word_embeddings.weight"],
+            }
             from text_generation_server.models.custom_modeling.flash_rw_modeling import FlashRWForCausalLM
             model_class = FlashRWForCausalLM
 
@@ -92,9 +96,7 @@ class InferenceEngine(BaseInferenceEngine):
             from text_generation_server.models.custom_modeling.flash_llama_modeling import FlashLlamaForCausalLM
             model_class = FlashLlamaForCausalLM
 
-
-        #TODO support other quantizations
-        self._config.quantize = "bitsandbytes" if dtype == torch.int8 else None
+        self._config.quantize = quantize
 
         self.process_group = initialize_torch_distributed(self.world_size, self.rank)
         self.master = self.rank == 0
@@ -107,6 +109,9 @@ class InferenceEngine(BaseInferenceEngine):
         weights = Weights(
             filenames, device=self.device, dtype=dtype, process_group=self.process_group, aliases=aliases
         )
+
+        if quantize == "gptq":
+            weights._set_gptq_params(model_config, model_path)
 
         model = model_class(self._config, weights)
         torch.distributed.barrier(group=self.process_group)

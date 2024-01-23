@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import re
 import threading
-from typing import Dict, List, Union, Tuple
+from typing import Dict, List, Union, Tuple, Optional
 
 import torch
 
@@ -149,6 +149,7 @@ class PrefixCache:
         dtype: torch.dtype,
         max_length: int,
         encoder_decoder: bool,
+        return_zero: Optional[bool],
         decoder_start_tok_embedding: torch.Tensor,
     ):
         self.max_length = max_length
@@ -158,6 +159,7 @@ class PrefixCache:
         self.dtype = dtype
 
         self.is_encoder_decoder = encoder_decoder
+        self.zero = torch.zeros((1,), dtype=dtype, device=device) if return_zero else None
         self.decoder_start_tok_embedding = decoder_start_tok_embedding
 
         self.cache_map: Dict[str, PromptCacheNode] = {}
@@ -210,23 +212,34 @@ class PrefixCache:
         decoder_prefix = self._load_embedding_tensor(prefix_id, "decoder.pt", dtype=self.dtype)
         # For encoder-decoder we store a tuple of (encoder_prefix, decoder_prefix),
         # at least one must be non-None
+        if decoder_prefix is not None:
+            if self.zero is not None:
+                decoder_prefix = self.zero.expand(decoder_prefix.shape)
+            else:
+                decoder_prefix = decoder_prefix.to(self.dtype).to(self.device, non_blocking=True)
+
         if self.is_encoder_decoder:
             encoder_prefix = self._load_embedding_tensor(prefix_id, "encoder.pt", dtype=self.dtype)
             if decoder_prefix is None:
                 if encoder_prefix is None:
                     raise PrefixNotFound(f"Prefix id {prefix_id} not found")
             else:
-                decoder_prefix = decoder_prefix.to(self.device, non_blocking=True)
                 # TODO confirm this cat is correct
-                decoder_prefix = torch.cat((decoder_prefix, self.decoder_start_tok_embedding))
+                if self.zero is not None:
+                    decoder_prefix = self.zero.expand(decoder_prefix.shape[0] + 1, *decoder_prefix.shape[1:])
+                else:
+                    decoder_prefix = torch.cat((decoder_prefix, self.decoder_start_tok_embedding))
             if encoder_prefix is not None:
-                encoder_prefix = encoder_prefix.to(self.device, non_blocking=True)
+                if self.zero is not None:
+                    encoder_prefix = self.zero.expand(encoder_prefix.shape)
+                else:    
+                    encoder_prefix = encoder_prefix.to(self.device, non_blocking=True)
             prefix = encoder_prefix, decoder_prefix
         # For decoder-only we store just the decoder prefix
         elif decoder_prefix is None:
             raise PrefixNotFound(f"Prefix id {prefix_id} not found")
         else:
-            prefix = decoder_prefix.to(self.dtype).to(self.device, non_blocking=True)
+            prefix = decoder_prefix
         return prefix
 
     def _load_embedding_tensor(self, prefix_id: str, filename: str, dtype: torch.dtype) -> torch.Tensor:

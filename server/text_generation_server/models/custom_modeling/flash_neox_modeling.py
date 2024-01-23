@@ -40,7 +40,8 @@ from text_generation_server.utils.layers import (
 
 
 def load_row(config, prefix: str, weights, bias: bool):
-    weight = weights.get_sharded(f"{prefix}.weight", dim=1)
+    weight = weights.get_multi_weights_row(prefix, quantize=config.quantize)
+
     if bias and weights.process_group.rank() == 0:
         # Rank is only on the first rank process
         bias = weights.get_tensor(f"{prefix}.bias")
@@ -55,19 +56,21 @@ def load_row(config, prefix: str, weights, bias: bool):
 
 
 def load_qkv(config, prefix: str, weights, num_heads, head_size, hidden_size):
-    weight = weights.get_sharded(f"{prefix}.weight", dim=0)
-    bias = weights.get_sharded(f"{prefix}.bias", dim=0)
-
-    weight = (
-        weight.view(
-            num_heads,
-            3,
-            head_size,
-            hidden_size,
+    weight = weights.get_multi_weights_col([prefix], quantize=config.quantize, dim=0)
+    if isinstance(weight, torch.Tensor):
+        # Only on non quantized versions
+        weight = (
+            weight.view(
+                num_heads,
+                3,
+                head_size,
+                hidden_size,
+            )
+            .permute(1, 0, 2, 3)
+            .reshape(-1, hidden_size)
         )
-        .permute(1, 0, 2, 3)
-        .reshape(-1, hidden_size)
-    )
+
+    bias = weights.get_sharded(f"{prefix}.bias", dim=0)
     bias = bias.view(num_heads, 3, head_size).permute(1, 0, 2).reshape(-1)
 
     linear = get_linear(weight, bias, config.quantize)
@@ -323,10 +326,19 @@ class FlashGPTNeoXModel(FlashGPTNeoXPreTrainedModel):
         cu_seqlens,
         cu_seqlens_q,
         max_s,
+        inputs_embeds: Optional[torch.Tensor] = None,
         past_key_values=None,
         pre_allocate_past_size: Optional[int] = None,
-    ):
-        hidden_states = self.embed_in(input_ids)
+    ):        
+        if input_ids is not None and inputs_embeds is not None:
+            raise ValueError(
+                "You cannot specify both input_ids and inputs_embeds at the same time"
+            )
+        
+        if inputs_embeds is not None:
+            hidden_states = inputs_embeds
+        else:        
+            hidden_states = self.embed_in(input_ids)
 
         # Prefill
         if past_key_values is None:
@@ -391,6 +403,9 @@ class FlashGPTNeoXForCausalLM(FlashGPTNeoXPreTrainedModel):
             config, prefix="embed_out", weights=weights
         )
 
+    def get_input_embeddings(self) -> nn.Module:
+        return self.gpt_neox.embed_in
+
     def forward(
         self,
         input_ids,
@@ -403,15 +418,13 @@ class FlashGPTNeoXForCausalLM(FlashGPTNeoXPreTrainedModel):
         pre_allocate_past_size: Optional[int] = None,
         lm_head_indices: Optional[torch.Tensor] = None,
     ):
-        if inputs_embeds is not None:
-            raise ValueError("input_embeds not yet supported for flash neox")
-
         hidden_states, present = self.gpt_neox(
             input_ids,
             position_ids,
             cu_seqlens,
             cu_seqlens_q,
             max_s,
+            inputs_embeds,
             past_key_values,
             pre_allocate_past_size,
         )

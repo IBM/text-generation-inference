@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokenizers::Tokenizer;
+use tokio::time::Instant;
 use text_generation_client::{Batch, NextTokenChooserParameters, Request, ShardedClient};
 
 const TEST_INPUT: &str = "liveness";
@@ -25,9 +26,15 @@ impl Health {
     }
 
     pub(crate) async fn check(&mut self) -> bool {
-        if self.generation_health.load(Ordering::SeqCst) {
+        let generation_healthy = self.generation_health.load(Ordering::SeqCst);
+
+        let mut guard = Guard{ prefill: !generation_healthy, start_time: Some(Instant::now()) };
+
+        let ok = if generation_healthy {
             // Generation is healthy, we only check that the shards are answering gRPC calls
-            self.client.health().await.is_ok()
+            self.client.health().await
+                .map_err(|err| tracing::error!("Basic shard healthcheck error: {err}"))
+                .is_ok()
         } else {
             // Generation is unhealthy or have not sent any generation request yet
 
@@ -51,13 +58,32 @@ impl Health {
                 requests: vec![liveness_request],
                 total_tokens: 1,
             };
-            // Skips the queue
+            // Skips the queue, but will still be serialized behind in-flight prefill/next_token requests
             let value = self.client.prefill(batch, vec![]).await
-                .map_err(|err| tracing::error!("Healthcheck error: {err}"))
+                .map_err(|err| tracing::error!("Prefill healthcheck error: {err}"))
                 .is_ok();
             // Update generation health
             self.generation_health.store(value, Ordering::SeqCst);
             value
+        };
+        guard.start_time = None;
+        ok
+    }
+}
+
+struct Guard {
+    prefill: bool,
+    start_time: Option<Instant>, // None once completed
+}
+
+impl Drop for Guard {
+    fn drop(&mut self) {
+        if let Some(start_time) = self.start_time {
+            tracing::warn!(
+                "Healthcheck request cancelled during {} check after {}ms",
+                if self.prefill { "prefill" } else { "basic shard" },
+                start_time.elapsed().as_millis(),
+            )
         }
     }
 }

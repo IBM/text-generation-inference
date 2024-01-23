@@ -3,7 +3,6 @@ import glob
 import os
 import random
 import sys
-
 import yaml
 import subprocess
 import threading
@@ -148,15 +147,23 @@ def _verify_error(expected_err: grpc.RpcError, err):
 async def run_unary_test_case(stub, case):
     # Get case details
     request = case["request"]
+    request_type = case.get("request_type", "generate")
     skip_check = "skip_check" in case
     expected = case.get("response")
     expected_err = case.get("error")
     # Create gRPC message from test request
-    message = json_format.ParseDict(request, pb2.BatchedGenerationRequest())
+    message = json_format.ParseDict(
+        request,
+        pb2.BatchedTokenizeRequest() if request_type == "tokenize"
+        else pb2.BatchedGenerationRequest(),
+    )
     print(f'================ Test: {case.get("name")}:')
     try:
         # Send request
-        response = await stub.Generate(message)
+        if request_type == "tokenize":
+            response = await stub.Tokenize(message)
+        else:
+            response = await stub.Generate(message)
         assert not expected_err
         # Convert response back to dict
         response_dict = json_format.MessageToDict(response)
@@ -166,7 +173,7 @@ async def run_unary_test_case(stub, case):
                 print(yaml.dump(response_dict))
             # Check result matches expected
             assert response_dict == approx(expected)
-        else:
+        elif request_type == "generate":
             assert response_dict["responses"][0]["inputTokenCount"] == expected["responses"][0]["inputTokenCount"]
             assert response_dict["responses"][0].get("inputTokens") == expected["responses"][0].get("inputTokens")
     except grpc.RpcError as e:
@@ -267,8 +274,8 @@ async def run_test_cases_async(test_cases, seq2seq_model=False, sharded=False):
                 run_unary_test_case(stub, case), name=f"Generate: {name}",
             ))
             # For single-input tests, try the same thing as a streaming request
-            if INCLUDE_STREAMING and "requests" in case["request"] \
-                    and len(case["request"]["requests"]) == 1:
+            if INCLUDE_STREAMING and len(case["request"].get("requests", [])) == 1 \
+                    and case.get("request_type", "generate") == "generate":
                 tasks.append(asyncio.create_task(
                     run_streaming_test_case(stub, case, seq2seq_model),
                     name=f"GenerateStream: {name}",
@@ -319,6 +326,48 @@ async def _test_multi_input_seeds(stub):
             assert 0 <= seed <= 4294967295
 
 
+async def run_time_limit_test(stub, *, streaming=False, time_limit=200, min_generated_tokens=2):
+    generation_request = pb2.GenerationRequest(
+        text='def doit():\n'
+    )
+    generation_params = pb2.Parameters(
+        method=pb2.GREEDY,
+        stopping=pb2.StoppingCriteria(
+            max_new_tokens=169,
+            min_new_tokens=169,
+            time_limit_millis=time_limit,
+        )
+    )
+
+    start = time.time_ns()
+    if streaming:
+        response = pb2.GenerationResponse()
+        async for resp in stub.GenerateStream(
+            pb2.SingleGenerationRequest(
+                request=generation_request,
+                params=generation_params
+            )
+        ):
+            response.generated_token_count = resp.generated_token_count
+            response.stop_reason = resp.stop_reason
+    else:
+        response = await stub.Generate(
+            pb2.BatchedGenerationRequest(
+                requests=[generation_request],
+                params=generation_params,
+            )
+        )
+        # single req/resp in the batch
+        response = response.responses[0]
+    end = time.time_ns()
+
+    assert response.stop_reason == pb2.StopReason.TIME_LIMIT
+    # ensure that some tokens were actually generated
+    assert min_generated_tokens <= response.generated_token_count < 100
+    # generating all tokens takes a few seconds
+    assert time_limit < (end-start) / (10**6)  < time_limit+300
+
+
 @pytest.mark.model("gpt2")
 @pytest.mark.extensions(".safetensors,.json")
 @pytest.mark.shards(1)
@@ -347,7 +396,7 @@ async def test_mt0(server_fixture, test_cases):
 # test with tiny GPTBigCode model for the merged kv cache
 @pytest.mark.model("bigcode/tiny_starcoder_py")
 @pytest.mark.extensions(".safetensors,.json")
-@pytest.mark.shards(1)
+@pytest.mark.shards(2)
 @pytest.mark.test_case_file("test_cases_tinystarcoderpy.yaml")
 @pytest.mark.asyncio
 async def test_gptbigcode(server_fixture, test_cases):
@@ -356,7 +405,7 @@ async def test_gptbigcode(server_fixture, test_cases):
 # test with Llama model which has tokenizer.add_bos_token == true
 @pytest.mark.model("Maykeye/TinyLLama-v0")
 @pytest.mark.extensions(".bin,.json,.model")
-@pytest.mark.shards(1)
+@pytest.mark.shards(2)
 @pytest.mark.test_case_file("test_cases_tinyllama.yaml")
 @pytest.mark.asyncio
 async def test_llama(server_fixture, test_cases):
@@ -381,6 +430,28 @@ async def test_bloom(server_fixture, test_cases):
 async def test_mt0_output_special_tokens(server_fixture, test_cases):
     await run_test_cases_async(test_cases)
 
+
+# Test that the time based stopping criteria works
+@pytest.mark.model("bigcode/tiny_starcoder_py")
+@pytest.mark.extensions(".safetensors,.json")
+@pytest.mark.shards(1)
+@pytest.mark.asyncio
+async def test_time_limit_stopping(server_fixture):
+    async with grpc.aio.insecure_channel('localhost:8033') as channel:
+        stub = gpb2.GenerationServiceStub(channel)
+        # verify server is up with metrics request
+        response = requests.get(f'http://localhost:{3000}/metrics')
+        assert response.status_code == 200
+
+        # batched
+        await run_time_limit_test(stub)
+        # one token should always be generated
+        await run_time_limit_test(stub, time_limit=1, min_generated_tokens=1)
+
+        # streaming
+        await run_time_limit_test(stub, streaming=True)
+        # one token should always be generated
+        await run_time_limit_test(stub, streaming=True, time_limit=1, min_generated_tokens=1)
 
 # Test loading when an explicit local path is provided
 def test_explicit_path():

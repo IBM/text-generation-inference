@@ -2,7 +2,6 @@
 use crate::{ClientError, Result};
 use crate::{Batch, Client, HealthResponse};
 use futures::future::join_all;
-use tokio::runtime::Handle;
 use tokio::sync::{broadcast, mpsc};
 use tonic::transport::Uri;
 use crate::client::GenerateTokenResponse;
@@ -21,7 +20,6 @@ enum Request {
 pub struct ShardedClient {
     clients: Vec<Client>,
     sender: broadcast::Sender<(Request, mpsc::Sender<Result<Option<GenerateTokenResponse>>>)>,
-    handle: Handle,
 }
 
 impl Clone for ShardedClient {
@@ -38,7 +36,7 @@ impl ShardedClient {
         for mut client in clients.clone() {
             let mut receiver: broadcast::Receiver<(Request, _)> = sender.subscribe();
             tokio::spawn(async move {
-                while let Ok((request , response_chan)) = receiver.recv().await {
+                while let Ok((request, response_chan)) = receiver.recv().await {
                     let result = match request {
                         Prefill(batch, to_prune) =>
                             client.prefill(batch, to_prune).await.map(|r| Some(r)),
@@ -50,7 +48,7 @@ impl ShardedClient {
             });
         }
 
-        Self { clients, sender, handle: Handle::current() }
+        Self { clients, sender }
     }
 
     /// Create a new ShardedClient from a master client. The master client will communicate with
@@ -73,6 +71,10 @@ impl ShardedClient {
     pub async fn connect_uds(path: String) -> Result<Self> {
         let master_client = Client::connect_uds(path).await?;
         Self::from_master_client(master_client).await
+    }
+
+    pub fn shard_count(&self) -> usize {
+        self.clients.len()
     }
 
     /// GRPC health check
@@ -126,16 +128,13 @@ impl ShardedClient {
     }
 
     /// Get length of prompt prefix - verifies existence and populates cache
-    pub fn prefix_lookup(&mut self, prefix_id: &String) -> Result<usize> {
+    pub async fn prefix_lookup(&mut self, prefix_id: &String) -> Result<usize> {
         let futures: Vec<_> = self
             .clients
             .iter_mut()
             .map(|client| client.prefix_lookup(prefix_id.clone()))
             .collect();
-        let v: Vec<Result<u32>> = self.handle.block_on(join_all(futures));
-
-        //let v: Vec<Result<u32>> = join_all(futures).await;
-        v.first().unwrap().clone().map(|l| l as usize)
+        join_all(futures).await.first().unwrap().clone().map(|l| l as usize)
     }
 
     /// Get shard model info

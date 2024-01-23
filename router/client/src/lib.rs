@@ -15,7 +15,7 @@ pub use pb::generate::v1::next_token_chooser_parameters::LengthPenalty;
 pub use sharded_client::ShardedClient;
 pub use client::GenerateTokenResponse;
 use thiserror::Error;
-use tonic::transport;
+use tonic::{Code, transport};
 use tonic::Status;
 
 #[derive(Error, Debug, Clone)]
@@ -24,11 +24,17 @@ pub enum ClientError {
     Connection(String),
     #[error("{0}")]
     Generation(String),
+    #[error("GPU out of memory")]
+    OutOfMemory(),
 }
 
 impl From<Status> for ClientError {
     fn from(err: Status) -> Self {
-        Self::Generation(err.message().to_string())
+        match err.code() {
+            Code::ResourceExhausted => Self::OutOfMemory(),
+            Code::Unavailable => Self::Connection(err.message().to_string()),
+            _ => Self::Generation(err.message().to_string())
+        }
     }
 }
 

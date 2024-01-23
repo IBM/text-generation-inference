@@ -23,6 +23,7 @@ use crate::decoder::Decoder;
 use crate::grpc_server::start_grpc_server;
 use crate::health::Health;
 use crate::queue::BatchingConfig;
+use crate::tokenizer::AsyncTokenizer;
 
 // Server shared state
 #[derive(Clone)]
@@ -37,24 +38,24 @@ pub(crate) struct ServerState {
     pub(crate) seq2seq: bool,
 }
 
+// This is a safety-net timeout, it's expected the client (e.g. kubelet) will
+// be configured with a shorter one
+const PROBE_TIMEOUT_SECS: u64 = 60;
+
 /// Health check method
 #[instrument(skip(health))]
 async fn health(mut health: Extension<Health>) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
-    match timeout(Duration::from_secs(5), health.check()).await {
+    match timeout(Duration::from_secs(PROBE_TIMEOUT_SECS), health.check()).await {
         Ok(true) => Ok(()),
         Ok(false) => Err((
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(ErrorResponse {
-                error: "unhealthy".to_string(),
-            }),
+            Json(ErrorResponse { error: "unhealthy".to_string() }),
         )),
         Err(_) => {
-            tracing::error!("Healthcheck request timed-out");
+            tracing::error!("Aborting health-check request after {PROBE_TIMEOUT_SECS}s time-out");
             Err((
-                StatusCode::REQUEST_TIMEOUT,
-                Json(ErrorResponse {
-                    error: "Healthcheck timed-out".to_string(),
-                }),
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse { error: "Healthcheck timed-out".to_string() }),
             ))
         }
     }
@@ -207,7 +208,7 @@ impl<B: BatchType> BatchConfigValidator<B> {
             );
             if max_prefill_weight < single_request_prefill_weight {
                 panic!(
-                    "max_prefill_weight ({}) not large enough for max_sequence_length ({}",
+                    "max_prefill_weight ({}) not large enough for max_sequence_length ({})",
                     max_prefill_weight, max_sequence_length
                 )
             }
@@ -247,7 +248,7 @@ pub struct ServerRunArgs {
     pub max_waiting_tokens: usize,
     pub client: ShardedClient,
     pub tokenizer: Tokenizer,
-    pub validation_workers: usize,
+    pub tokenization_workers: usize,
     pub addr: SocketAddr,
     pub grpc_addr: SocketAddr,
     pub tls_key_pair: Option<(String, String)>,
@@ -293,13 +294,17 @@ async fn do_run<B: BatchType>(
             args.max_prefill_weight,
         );
 
-    // Create state
-    let decoder = Decoder::new(
-        args.tokenizer.clone(), seq2seq, eos_token_id, !args.output_special_tokens,
+    let tokenizers = AsyncTokenizer::new(
+        &args.tokenizer, args.tokenization_workers
     );
+
+    // Create state
     let generation_health = Arc::new(AtomicBool::new(false));
     let health_ext = Health::new(
         args.client.clone(), generation_health.clone(), &args.tokenizer,
+    );
+    let decoder = Decoder::new(
+        args.tokenizer, seq2seq, eos_token_id, !args.output_special_tokens,
     );
     let batcher = Batcher::new(
         args.client.clone(),
@@ -315,8 +320,7 @@ async fn do_run<B: BatchType>(
         batch_type,
     );
     let validation = Validation::new(
-        args.validation_workers,
-        args.tokenizer.clone(),
+        tokenizers.clone(),
         args.client,
         args.max_sequence_length,
         args.max_new_tokens,
@@ -343,6 +347,9 @@ async fn do_run<B: BatchType>(
         value *= 1.5;
         duration_buckets.push(value);
     }
+    // Tokenization token count buckets
+    let tokenized_tokens_matcher = Matcher::Full(String::from("tgi_tokenize_request_tokens"));
+    let tokenized_tokens_buckets: Vec<f64> = (6..20).map(|x| (1 << x) as f64).collect();
     // Input Length buckets
     let input_length_matcher = Matcher::Full(String::from("tgi_request_input_length"));
     let max_sequence_length_buckets: Vec<f64> = (0..64)
@@ -358,26 +365,18 @@ async fn do_run<B: BatchType>(
     // Total tokens buckets
     let total_tokens_matcher = Matcher::Full(String::from("tgi_request_total_tokens"));
     // Batch size buckets
-    let batch_size_matcher = Matcher::Full(String::from("tgi_batch_next_size"));
     let batch_inference_size_matcher = Matcher::Full(String::from("tgi_batch_inference_batch_size"));
     let batch_size_buckets: Vec<f64> = (0..args.max_batch_size).map(|x| (x + 1) as f64).collect();
 
     // Prometheus handler
     let builder = PrometheusBuilder::new()
-        .set_buckets_for_metric(duration_matcher, &duration_buckets)
-        .unwrap()
-        .set_buckets_for_metric(input_length_matcher, &max_sequence_length_buckets)
-        .unwrap()
-        .set_buckets_for_metric(generated_tokens_matcher, &max_new_tokens_buckets)
-        .unwrap()
-        .set_buckets_for_metric(max_new_tokens_matcher, &max_new_tokens_buckets)
-        .unwrap()
-        .set_buckets_for_metric(total_tokens_matcher, &max_sequence_length_buckets)
-        .unwrap()
-        .set_buckets_for_metric(batch_size_matcher, &batch_size_buckets)
-        .unwrap()
-        .set_buckets_for_metric(batch_inference_size_matcher, &batch_size_buckets)
-        .unwrap();
+        .set_buckets_for_metric(duration_matcher, &duration_buckets).unwrap()
+        .set_buckets_for_metric(tokenized_tokens_matcher, &tokenized_tokens_buckets).unwrap()
+        .set_buckets_for_metric(input_length_matcher, &max_sequence_length_buckets).unwrap()
+        .set_buckets_for_metric(generated_tokens_matcher, &max_new_tokens_buckets).unwrap()
+        .set_buckets_for_metric(max_new_tokens_matcher, &max_new_tokens_buckets).unwrap()
+        .set_buckets_for_metric(total_tokens_matcher, &max_sequence_length_buckets).unwrap()
+        .set_buckets_for_metric(batch_inference_size_matcher, &batch_size_buckets).unwrap();
     let prom_handle = builder
         .install_recorder()
         .expect("failed to install metrics recorder");
@@ -398,7 +397,7 @@ async fn do_run<B: BatchType>(
     // Create gRPC server
     let grpc_task = start_grpc_server(
         args.grpc_addr, args.tls_key_pair, args.tls_client_ca_cert,
-        shared_state, args.tokenizer, async move {
+        shared_state, tokenizers, async move {
             notify_clone.notified().await
         },
     ).await;

@@ -16,8 +16,8 @@ use std::ffi::OsString;
 use subprocess::{Popen, PopenConfig, PopenError, Redirection};
 use tracing::info;
 
-// For now this will be disabled by default, more testing is needed
-const DEFAULT_MAX_SPLIT_SIZE_MB: &'static str = "none";
+// In most cases this gives the best performance for inferencing
+const DEFAULT_PYTORCH_CUDA_ALLOC_CONF: &'static str = "expandable_segments:True";
 
 /// App Configuration
 #[derive(Parser, Debug, Clone)]
@@ -33,6 +33,8 @@ struct Args {
     dtype: Option<String>,
     #[clap(default_value = None, long, env)]
     dtype_str: Option<String>,
+    #[clap(default_value = None, long, env)]
+    quantize: Option<String>,
     #[clap(long, env)]
     num_shard: Option<usize>,
     #[clap(default_value = "96", long, env)]
@@ -106,18 +108,16 @@ fn main() -> ExitCode {
         &args.model_name, args.revision.as_deref()
     ).expect("Could not find tokenizer for model");
 
-    // Set max_split_size to default value if PYTORCH_CUDA_ALLOC_CONF is not set,
-    // or unset it if PYTORCH_CUDA_ALLOC_CONF is set but empty
+    // Set PYTORCH_CUDA_ALLOC_CONF to default value if it's not set in the environment
     let cuda_alloc_conf = match env::var("PYTORCH_CUDA_ALLOC_CONF") {
-        Err(VarError::NotPresent) if DEFAULT_MAX_SPLIT_SIZE_MB == "none" => None,
+        Err(VarError::NotPresent) if DEFAULT_PYTORCH_CUDA_ALLOC_CONF == "" => None,
         Err(VarError::NotPresent) => {
-            let alloc_conf = format!("max_split_size_mb:{}", DEFAULT_MAX_SPLIT_SIZE_MB);
-            info!("Setting PYTORCH_CUDA_ALLOC_CONF to default value: {alloc_conf}");
-            Some(alloc_conf)
+            info!("Setting PYTORCH_CUDA_ALLOC_CONF to default value: {DEFAULT_PYTORCH_CUDA_ALLOC_CONF}");
+            Some(DEFAULT_PYTORCH_CUDA_ALLOC_CONF)
         },
         Ok(alloc_conf) if alloc_conf.trim().is_empty() => {
             info!("PYTORCH_CUDA_ALLOC_CONF is unset");
-            Some(String::new()) // This means remove it from the env
+            Some("") // This means remove it from the env
         },
         Ok(alloc_conf) => {
             info!("PYTORCH_CUDA_ALLOC_CONF is set to: {alloc_conf}");
@@ -156,6 +156,7 @@ fn main() -> ExitCode {
                 args.revision,
                 args.deployment_framework,
                 args.dtype.or(args.dtype_str),
+                args.quantize,
                 args.max_sequence_length,
                 args.max_new_tokens,
                 args.max_batch_size,
@@ -396,13 +397,14 @@ fn shard_manager(
     revision: Option<String>,
     deployment_framework: String,
     dtype: Option<String>,
+    quantize: Option<String>,
     max_sequence_length: usize,
     max_new_tokens: usize,
     max_batch_size: usize,
     max_batch_weight: Option<usize>,
     uds_path: String,
     cuda_process_memory_fraction: f32,
-    cuda_alloc_conf: Option<String>,
+    cuda_alloc_conf: Option<&str>,
     rank: usize,
     world_size: usize,
     master_addr: String,
@@ -440,6 +442,11 @@ fn shard_manager(
     if let Some(dtype) = dtype {
         shard_argv.push("--dtype".to_string());
         shard_argv.push(dtype);
+    }
+
+    if let Some(quantize) = quantize {
+        shard_argv.push("--quantize".to_string());
+        shard_argv.push(quantize);
     }
 
     // Activate tensor parallelism
@@ -491,6 +498,9 @@ fn shard_manager(
     env.push(("MASTER_ADDR".into(), master_addr.into()));
     env.push(("MASTER_PORT".into(), master_port.to_string().into()));
     env.push(("NCCL_ASYNC_ERROR_HANDLING".into(), "1".into()));
+
+    // See https://discuss.pytorch.org/t/cuda-allocation-lifetime-for-inputs-to-distributed-all-reduce/191573
+    env.push(("TORCH_NCCL_AVOID_RECORD_STREAMS".into(), "1".into()));
 
     // Safetensors load fast
     env.push(("SAFETENSORS_FAST_GPU".into(), "1".into()));

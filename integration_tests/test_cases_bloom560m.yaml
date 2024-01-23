@@ -42,8 +42,6 @@
 
 # Prompt prefix
 - name: Greedy with tuned prompt prefix
-  # Prompt prefixes with multi-shard not yet supported
-  singleShardOnly: true
   request:
     prefixId: bloom_sentiment_1
     params:
@@ -59,8 +57,6 @@
         text: ' positive'
 
 - name: Greedy with tuned prompt prefix and truncation
-  # Prompt prefixes with multi-shard not yet supported
-  singleShardOnly: true
   request:
     prefixId: bloom_sentiment_1
     params:
@@ -79,8 +75,6 @@
 
 # Prompt prefix with nested path
 - name: Greedy with tuned prompt prefix with nested path (id)
-  # Prompt prefixes with multi-shard not yet supported
-  singleShardOnly: true
   request:
     prefixId: nested/path
     params:
@@ -98,8 +92,6 @@
 
 # Prompt prefix returning input and generated tokens
 - name: Greedy with tuned prompt prefix and returned tokens
-  # Prompt prefixes with multi-shard not yet supported
-  singleShardOnly: true
   request:
     prefixId: bloom_sentiment_1
     params:
@@ -279,8 +271,6 @@
 
 # Error case - invalid prefix id
 - name: Error case - invalid prefix id
-  # Prompt prefixes with multi-shard not yet supported
-  singleShardOnly: true
   request:
     prefixId: invalid_prefix_id
     params:
@@ -1209,21 +1199,59 @@
 
 
  # Repetition penalty
-- name: Repetition penalty
+- name: Repetition penalty - disabled and has repetition
+  request:
+    params:
+      stopping:
+        minNewTokens: 21
+        maxNewTokens: 21
+    requests:
+      - {"text": "I will be a good AI."}
+  response:
+    responses:
+      - generatedTokenCount: 21
+        inputTokenCount: 7
+        stopReason: MAX_TOKENS
+        text: ' I will be a good AI. I will be a good AI. I will be a good AI.'
+
+- name: Repetition penalty - enabled to remove repetition
   request:
     params:
       decoding:
         repetition_penalty: 2.5
       stopping:
+        minNewTokens: 20
         maxNewTokens: 20
     requests:
-      - {"text": "A very long story:\n"}
+      - {"text": "I will be a good AI."}
   response:
     responses:
       - generatedTokenCount: 20
-        inputTokenCount: 6
+        inputTokenCount: 7
         stopReason: MAX_TOKENS
-        text: The first time I saw the movie, it was in a theater. It had been on my mind
+        text: ' I have been working on this for the past few years and am now ready to start
+          my own company'
+
+- name: Repetition penalty with truncation
+  request:
+    params:
+      truncateInputTokens: 7
+      decoding:
+        repetition_penalty: 2.5
+      stopping:
+        minNewTokens: 20
+        maxNewTokens: 20
+    requests:
+      # Truncation removes "I have been working." which means it can be generated again
+      - {"text": "I have been working.I will be a good AI."}
+  response:
+    responses:
+      - generatedTokenCount: 20
+        inputTokenCount: 7
+        stopReason: MAX_TOKENS
+        text: ' I have been working on this for the past few years and am now ready to start
+          my own company'
+
 
 # Length penalty
 - name: Length penalty
@@ -1315,7 +1343,7 @@
       - {"text": "A very long story:\n"}
   error:
     code: INVALID_ARGUMENT
-    message: can specify at most 6 non-empty stop sequences, each not more than 40 tokens
+    message: can specify at most 6 non-empty stop sequences, each not more than 240 UTF8 bytes
 
 # Error case 2
 - name: Input length + token min too long

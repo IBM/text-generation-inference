@@ -436,6 +436,7 @@ async fn batching_task<B: BatchType>(
                             if added_batch_size > 0 {
                                 info!("Extending batch #{} of {} with additional batch #{} of {}",
                                 batch_id, batch_size, new_batch_id, added_batch_size);
+                                metrics::increment_counter!("tgi_batch_concatenation_count");
                             }
                         } else {
                             combined_batch_id = new_batch_id;
@@ -616,8 +617,13 @@ impl<'a> TokenProcessor<'a> {
             Err(err) => {
                 // Update health
                 self.generation_health.store(false, Ordering::SeqCst);
+                let reason = match err {
+                    ClientError::OutOfMemory() => "oom",
+                    ClientError::Connection(_) => "connection",
+                    _ => "error"
+                };
+                metrics::increment_counter!("tgi_batch_inference_failure", "method" => method, "reason" => reason);
                 self.send_errors(err, start_id);
-                metrics::increment_counter!("tgi_batch_inference_failure", "method" => method);
                 None
             },
         }

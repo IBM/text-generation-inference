@@ -16,11 +16,12 @@ from text_generation_server.utils.dist import run_rank_n
 # basic DeepSpeed inference model class for benchmarking
 class InferenceEngine(BaseInferenceEngine):
     def __init__(
-            self,
-            model_path: str,
-            model_class: type[_BaseAutoModelClass],
-            dtype: torch.dtype,
-            model_config: Optional[Any]
+        self,
+        model_path: str,
+        model_class: type[_BaseAutoModelClass],
+        dtype: torch.dtype,
+        quantize: Optional[str],
+        model_config: Optional[Any]
     ) -> None:
         super().__init__(model_path, model_config)
 

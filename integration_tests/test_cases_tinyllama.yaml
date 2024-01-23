@@ -160,8 +160,6 @@
 
 # Prompt prefix
 - name: Greedy with tuned prompt prefix
-  # Prompt prefixes with multi-shard not yet supported
-  singleShardOnly: true
   request:
     prefixId: tinyllama
     params:
@@ -179,8 +177,6 @@
 
 # Prompt prefix with truncation
 - name: Greedy with tuned prompt prefix with truncation
-  # Prompt prefixes with multi-shard not yet supported
-  singleShardOnly: true
   request:
     prefixId: tinyllama
     params:
@@ -201,8 +197,6 @@
 
 # Prompt prefix returning input and generated tokens
 - name: Greedy with tuned prompt prefix and returned tokens
-  # Prompt prefixes with multi-shard not yet supported
-  singleShardOnly: true
   request:
     prefixId: tinyllama
     params:

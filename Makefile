@@ -70,5 +70,7 @@ python-tests: check-test-image ## Run Python tests.
 		-e TRANSFORMERS_CACHE=/transformers_cache \
 		$(TEST_IMAGE_NAME) pytest -sv --ignore=server/tests/test_utils.py server/tests
 
+clean:
+	rm -rf target
 
 .PHONY: build build-test-image integration-tests python-tests

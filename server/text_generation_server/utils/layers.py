@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.distributed
 
@@ -5,15 +6,41 @@ from torch import nn
 from torch.nn import functional as F
 from typing import List
 
-HAS_BITS_AND_BYTES = True
-try:
-    import bitsandbytes as bnb
-    from bitsandbytes.nn import Int8Params
-
-except ImportError:
-    HAS_BITS_AND_BYTES = False
+from text_generation_server.utils import print_rank_n
 
 from accelerate import init_empty_weights
+
+HAS_BITS_AND_BYTES = False
+HAS_EXLLAMA = False
+EXLLAMA_VERSION = None
+
+if torch.cuda.is_available():
+    try:
+        import bitsandbytes as bnb
+        from bitsandbytes.nn import Int8Params
+        HAS_BITS_AND_BYTES = False
+    except ImportError:
+        pass
+
+    from text_generation_server.utils.gptq.quant_linear import QuantLinear
+
+    if os.getenv("DISABLE_EXLLAMA", "False").lower() != "true":
+        try:
+            EXLLAMA_VERSION = os.getenv("EXLLAMA_VERSION", "2") # Use v2 as default
+            if EXLLAMA_VERSION == "1":
+                from text_generation_server.utils.gptq.exllama import Ex4bitLinear as ExllamaQuantLinear
+            elif EXLLAMA_VERSION == "2":
+                from text_generation_server.utils.gptq.exllamav2 import Ex4bitLinearV2 as ExllamaQuantLinear
+            else:
+                raise ValueError(f"Unsupported value for EXLLAMA_VERSION: {EXLLAMA_VERSION}")
+            HAS_EXLLAMA = True
+        except ImportError as e:
+            print_rank_n(f"Error importing ExllamaV{EXLLAMA_VERSION} kernels: {e}")
+            EXLLAMA_VERSION = None
+
+    print_rank_n(
+        f"HAS_BITS_AND_BYTES={HAS_BITS_AND_BYTES}, HAS_EXLLAMA={HAS_EXLLAMA}, EXLLAMA_VERSION={EXLLAMA_VERSION}"
+    )
 
 
 # Monkey patching
@@ -141,7 +168,22 @@ def get_linear(weight, bias, quantize):
         if bias is not None:
             linear.bias = nn.Parameter(bias)
     elif quantize == "gptq":
-        raise NotImplementedError("Soon")
+        try:
+            qweight, qzeros, scales, g_idx, bits, groupsize, use_exllama = weight
+        except Exception:
+            raise NotImplementedError(
+                f"The passed weight is not `gptq` compatible, loader needs to be updated."
+            )
+
+        linear = (ExllamaQuantLinear if use_exllama else QuantLinear)(
+            qweight,
+            qzeros,
+            scales,
+            g_idx,
+            bias,
+            bits,
+            groupsize,
+        )
     else:
         raise NotImplementedError(f"Quantization `{quantize}` is not implemented yet.")
     return linear
@@ -176,8 +218,11 @@ class TensorParallelHead(SuperLayer):
         else:
             weight = weights.get_tensor(f"{prefix}.weight")
             should_gather = False
+
+        # GPTQ doesn't quantize heads (nor embeddings)
+        quantize = None if config.quantize == "gptq" else config.quantize
         return TensorParallelHead(
-            get_linear(weight, bias=None, quantize=config.quantize),
+            get_linear(weight, bias=None, quantize=quantize),
             process_group=weights.process_group,
             should_gather=should_gather,
         )
@@ -221,24 +266,21 @@ class TensorParallelHead(SuperLayer):
 class TensorParallelColumnLinear(SuperLayer):
     @classmethod
     def load(cls, config, prefix: str, weights, bias: bool):
-        weight = weights.get_sharded(f"{prefix}.weight", dim=0)
-        if bias:
-            bias = weights.get_sharded(f"{prefix}.bias", dim=0)
-        else:
-            bias = None
-        return cls(get_linear(weight, bias, config.quantize))
+        return cls.load_multi(config, [prefix], weights, bias, dim=0)
 
     @classmethod
     def load_multi(cls, config, prefixes: List[str], weights, bias: bool, dim: int):
-        w = [weights.get_sharded(f"{p}.weight", dim=0) for p in prefixes]
-        weight = torch.cat(w, dim=dim)
+        weight = weights.get_multi_weights_col(
+            prefixes, quantize=config.quantize, dim=dim
+        )
 
         if bias:
             b = [weights.get_sharded(f"{p}.bias", dim=0) for p in prefixes]
-            bias = torch.cat(b, dim=0)
+            bias = torch.cat(b, dim=dim)
         else:
             bias = None
-        return cls(get_linear(weight, bias, config.quantize))
+        linear = get_linear(weight, bias, config.quantize)
+        return cls(linear)
 
 
 class TensorParallelRowLinear(SuperLayer):
@@ -248,7 +290,7 @@ class TensorParallelRowLinear(SuperLayer):
 
     @classmethod
     def load(cls, config, prefix: str, weights, bias: bool):
-        weight = weights.get_sharded(f"{prefix}.weight", dim=1)
+        weight = weights.get_multi_weights_row(prefix, quantize=config.quantize)
         if bias and weights.process_group.rank() == 0:
             # Rank is only on the first rank process
             bias = weights.get_tensor(f"{prefix}.bias")

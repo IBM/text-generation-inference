@@ -831,6 +831,9 @@ class BloomForCausalLM(BloomPreTrainedModel):
             weights=weights,
         )
 
+    def get_input_embeddings(self) -> nn.Module:
+        return self.transformer.word_embeddings
+
     def prepare_inputs_for_generation(
         self,
         input_ids: torch.LongTensor,

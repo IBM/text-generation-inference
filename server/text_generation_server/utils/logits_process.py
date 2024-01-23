@@ -12,7 +12,7 @@ from transformers import (
     TemperatureLogitsWarper,
     TopKLogitsWarper,
     TopPLogitsWarper,
-    #TypicalLogitsWarper,
+    TypicalLogitsWarper,
 )
 
 #TODO diagnose errors seen when using CUDA Graphs with NCCL - for now we'll disable in sharded case
@@ -102,13 +102,22 @@ class HeterogeneousRepetitionPenaltyLogitsProcessor(LogitsProcessor):
             paper](https://arxiv.org/pdf/1909.05858.pdf) for more details.
     """
 
-    def __init__(self, penalty: List[float], dtype: torch.dtype, device: torch.device):
+    def __init__(self, penalty: List[float], dtype: torch.dtype, device: torch.device, id_to_exclude: Optional[int] = None):
         self.penalty = penalty
         self.penalty_tensor = torch.tensor(
             penalty, dtype=dtype, device=device
         ).unsqueeze(1)
+        self.id_to_exclude = id_to_exclude
 
     def __call__(self, input_ids: torch.Tensor, scores: torch.Tensor) -> torch.Tensor:
+        # as an optimization for a common case, we skip the exclusion if there is only
+        # one request in the batch (assumes that there is no padding with a single request)
+        do_exclude = self.id_to_exclude is not None and input_ids.shape[0] != 1
+        # save out the original scores if we are excluding an id
+        if do_exclude:
+            # tensor is updated in-place, so need to clone here
+            scores_of_id_to_exclude = scores[:, self.id_to_exclude].clone()
+
         score = torch.gather(scores, 1, input_ids)
 
         # if score < 0 then repetition penalty has to be multiplied to reduce the previous token probability
@@ -117,14 +126,19 @@ class HeterogeneousRepetitionPenaltyLogitsProcessor(LogitsProcessor):
         )
 
         scores.scatter_(1, input_ids, score)
+
+        # restore the scores for the "excluded" id
+        if do_exclude:
+            scores[:, self.id_to_exclude] = scores_of_id_to_exclude
+
         return scores
 
     def filter(self, indices):
         self.penalty = [self.penalty[i] for i in indices]
-        if any([x != 1.0 for x in self.penalty]):
-            self.penalty_tensor = self.penalty_tensor[indices]
-            return self
-        return None
+        if all(x == 1.0 for x in self.penalty):
+            return None
+        self.penalty_tensor = self.penalty_tensor[indices]
+        return self
 
 
 class HeterogeneousTemperatureLogitsWarper:
@@ -152,10 +166,10 @@ class HeterogeneousTemperatureLogitsWarper:
 
     def filter(self, indices):
         self.temperature = [self.temperature[i] for i in indices]
-        if any([x != 1.0 for x in self.temperature]):
-            self.temperature_tensor = self.temperature_tensor[indices]
-            return self
-        return None
+        if all(x == 1.0 for x in self.temperature):
+            return None
+        self.temperature_tensor = self.temperature_tensor[indices]
+        return self
 
 
 class HeterogeneousTopPLogitsWarper(LogitsWarper):
@@ -211,10 +225,10 @@ class HeterogeneousTopPLogitsWarper(LogitsWarper):
 
     def filter(self, indices):
         self.top_p = [self.top_p[i] for i in indices]
-        if any([x < 1.0 for x in self.top_p]):
-            self.top_p_opposite = self.top_p_opposite[indices]
-            return self
-        return None
+        if all(x == 1.0 for x in self.top_p):
+            return None
+        self.top_p_opposite = self.top_p_opposite[indices]
+        return self
 
 
 class HeterogeneousTopKLogitsWarper(LogitsWarper):
@@ -270,7 +284,7 @@ class HeterogeneousTopKLogitsWarper(LogitsWarper):
             top_k = self.top_k_tensor
 
         # Get the kth score for each member of the batch
-        kth_scores = torch.gather(torch.topk(scores, max_top_k)[0], 1, top_k)
+        kth_scores = torch.gather(torch.topk(scores, max_top_k).values, 1, top_k)
 
         # Mask member of kth_scores that do not want to use top_k warping
         if self.top_k_disabled_mask is not None:
@@ -353,7 +367,7 @@ class HeterogeneousTypicalLogitsWarper(LogitsWarper):
 
         # Remove tokens with cumulative mass above the threshold
         last_ind = (probs < self.mass_tensor).sum(dim=1)
-        last_ind[last_ind < 0] = 0
+        last_ind.clamp_(max=sorted_scores.shape[-1] - 1)
 
         if self.disabled_mask is not None:
             last_ind.masked_fill_(self.disabled_mask, scores.shape[-1] - 1)
@@ -376,18 +390,19 @@ class HeterogeneousTypicalLogitsWarper(LogitsWarper):
         self.mass = [self.mass[i] for i in indices]
         disabled = [x == 1.0 for x in self.mass]
 
-        if not all(disabled):
-            self.mass_tensor = self.mass_tensor[indices]
+        if all(disabled):
+            return None
 
-            if self.disabled_mask is not None:
-                self.disabled_mask = (
-                    self.disabled_mask[indices] if any(disabled) else None
-                )
+        self.mass_tensor = self.mass_tensor[indices]
 
-            return self
-        return None
+        if self.disabled_mask is not None:
+            self.disabled_mask = (
+                self.disabled_mask[indices] if any(disabled) else None
+            )
+        return self
 
 
+# NB: This class is not currently used.
 class HeterogeneousProcessorWrapper(LogitsProcessor):
     r"""
     A wrapper for logit warpers or processors without heterogeneous parameter support.
@@ -417,51 +432,3 @@ class HeterogeneousProcessorWrapper(LogitsProcessor):
             self.processors = new_processors
             return self
         return None
-
-
-# This is a fixed version of the class in transformers. Can be moved once we contribute back the fix and upgrade.
-class TypicalLogitsWarper(LogitsWarper):
-    r"""
-    [`LogitsWarper`] that performs typical decoding. See [Typical Decoding for Natural Language
-    Generation](https://arxiv.org/abs/2202.00666) for more information.
-
-    Args:
-        mass (`float`):
-            Value of typical_p between 0 and 1 inclusive, defaults to 0.9.
-        filter_value (`float`, *optional*, defaults to `-float("Inf")`):
-            All filtered values will be set to this float value.
-        min_tokens_to_keep (`int`, *optional*, defaults to 1):
-            Minimum number of tokens that cannot be filtered.
-    """
-
-    def __init__(self, mass: float = 0.9, filter_value: float = -float("Inf"), min_tokens_to_keep: int = 1):
-        mass = float(mass)
-        if not (0 < mass < 1):
-            raise ValueError(f"`typical_p` has to be a float > 0 and < 1, but is {mass}")
-
-        self.filter_value = filter_value
-        self.mass = mass
-        self.min_tokens_to_keep = min_tokens_to_keep
-
-    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
-        # calculate entropy
-        normalized = torch.nn.functional.log_softmax(scores, dim=-1)
-        p = torch.exp(normalized)
-        ent = -(normalized * p).nansum(-1, keepdim=True)
-
-        # shift and sort
-        shifted_scores = torch.abs((-normalized) - ent)
-        sorted_scores, sorted_indices = torch.sort(shifted_scores, descending=False)
-        sorted_logits = scores.gather(-1, sorted_indices)
-        cumulative_probs = sorted_logits.softmax(dim=-1).cumsum(dim=-1)
-
-        # Remove tokens with cumulative mass above the threshold
-        last_ind = (cumulative_probs < self.mass).sum(dim=1)
-        last_ind.clamp_(0, sorted_scores.shape[-1] - 1)
-        sorted_indices_to_remove = sorted_scores > sorted_scores.gather(1, last_ind.view(-1, 1))
-        # Keep at least min_tokens_to_keep (set to min_tokens_to_keep-1 because we add the first one below)
-        sorted_indices_to_remove[..., : self.min_tokens_to_keep] = 0
-        indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
-
-        scores = scores.masked_fill(indices_to_remove, self.filter_value)
-        return scores
