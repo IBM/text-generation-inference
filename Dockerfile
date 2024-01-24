@@ -1,21 +1,31 @@
 ## Global Args #################################################################
 ARG BASE_UBI_IMAGE_TAG=9.3-1476
+
 ARG FLASH_ATTN_VERSION=1.0.9
 ARG FLASH_ATTN_V2_VERSION=2.3.6
+
 ARG PROTOC_VERSION=25.1
+
 #ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
 ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
 ARG PYTORCH_VERSION=2.3.0.dev20231221
 
+ARG PYTHON_VERSION=3.11
+ARG PYTHON_SITE_PACKAGES=/usr/local/lib/python${PYTHON_VERSION}/site-packages
+ARG CONDA_SITE_PACKAGES=/opt/miniconda/lib/python${PYTHON_VERSION}/site-packages
+
 
 ## Base Layer ##################################################################
 FROM registry.access.redhat.com/ubi9/ubi:${BASE_UBI_IMAGE_TAG} as base
+
+ARG PYTHON_VERSION
+
 WORKDIR /app
 
 RUN dnf remove -y --disableplugin=subscription-manager \
         subscription-manager \
         # we install newer version of requests via pip
-        python3.11-requests \
+        python${PYTHON_VERSION}-requests \
     && dnf install -y make \
         # to help with debugging
         procps \
@@ -138,12 +148,17 @@ RUN cargo install --path .
 ## Tests base ##################################################################
 FROM base as test-base
 
-RUN dnf install -y make unzip python3.11 python3.11-pip gcc openssl-devel gcc-c++ && \
-    dnf clean all && \
-    ln -fs /usr/bin/python3.11 /usr/bin/python3 && \
-    ln -s /usr/bin/python3.11 /usr/local/bin/python && ln -s /usr/bin/pip3.11 /usr/local/bin/pip
+ARG PYTHON_VERSION
 
-RUN pip install --upgrade pip --no-cache-dir && pip install pytest --no-cache-dir && pip install pytest-asyncio --no-cache-dir
+RUN dnf install -y make unzip python${PYTHON_VERSION} python${PYTHON_VERSION}-pip gcc openssl-devel gcc-c++ && \
+    dnf clean all && \
+    ln -fs /usr/bin/python${PYTHON_VERSION} /usr/bin/python3 && \
+    ln -s /usr/bin/python${PYTHON_VERSION} /usr/local/bin/python && \
+    ln -s /usr/bin/python${PYTHON_VERSION} /usr/local/bin/pip
+
+RUN pip install --upgrade pip --no-cache-dir && \
+    pip install pytest --no-cache-dir && \
+    pip install pytest-asyncio --no-cache-dir
 
 # CPU only
 ENV CUDA_VISIBLE_DEVICES=""
@@ -153,7 +168,8 @@ ENV CUDA_VISIBLE_DEVICES=""
 FROM test-base as cpu-tests
 ARG PYTORCH_INDEX
 ARG PYTORCH_VERSION
-ARG SITE_PACKAGES=/usr/local/lib/python3.11/site-packages
+ARG PYTHON_VERSION
+ARG PYTHON_SITE_PACKAGES
 
 WORKDIR /usr/src
 
@@ -170,7 +186,7 @@ RUN cd server && \
     pip install ".[accelerate]" --no-cache-dir
 
 # Patch codegen model changes into transformers 4.35
-RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py
+RUN cp server/transformers_patch/modeling_codegen.py ${PYTHON_SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py
 
 # Install router
 COPY --from=router-builder /usr/local/cargo/bin/text-generation-router /usr/local/bin/text-generation-router
@@ -256,7 +272,6 @@ RUN cd /usr/src \
     && MAX_JOBS=2 python setup.py install
 
 
-
 ## Build transformers exllama kernels ##########################################
 FROM python-builder as exllama-kernels-builder
 
@@ -264,6 +279,7 @@ WORKDIR /usr/src
 
 COPY server/exllama_kernels/ .
 RUN TORCH_CUDA_ARCH_LIST="8.0;8.6+PTX;8.9" python setup.py build
+
 
 ## Build transformers exllamav2 kernels ########################################
 FROM python-builder as exllamav2-kernels-builder
@@ -273,23 +289,26 @@ WORKDIR /usr/src
 COPY server/exllamav2_kernels/ .
 RUN TORCH_CUDA_ARCH_LIST="8.0;8.6+PTX;8.9" python setup.py build
 
+
 ## Flash attention cached build image ##########################################
 FROM base as flash-att-cache
+ARG CONDA_SITE_PACKAGES
 
-COPY --from=flash-att-builder /opt/miniconda/lib/python3.9/site-packages/flash_attn* /opt/miniconda/lib/python3.9/site-packages/
-COPY --from=flash-att-dropout /opt/miniconda/lib/python3.9/site-packages/dropout* /opt/miniconda/lib/python3.9/site-packages/
-COPY --from=flash-att-rotary /opt/miniconda/lib/python3.9/site-packages/rotary* /opt/miniconda/lib/python3.9/site-packages/
+COPY --from=flash-att-builder ${CONDA_SITE_PACKAGES}/flash_attn* ${CONDA_SITE_PACKAGES}/
+COPY --from=flash-att-dropout ${CONDA_SITE_PACKAGES}/dropout*    ${CONDA_SITE_PACKAGES}/
+COPY --from=flash-att-rotary  ${CONDA_SITE_PACKAGES}/rotary*     ${CONDA_SITE_PACKAGES}/
 
 
 ## Flash attention v2 cached build image #######################################
 FROM base as flash-att-v2-cache
+ARG CONDA_SITE_PACKAGES
 
-COPY --from=flash-att-v2-builder /opt/miniconda/lib/python3.9/site-packages/flash_attn* /opt/miniconda/lib/python3.9/site-packages/
+COPY --from=flash-att-v2-builder ${CONDA_SITE_PACKAGES}/flash_attn* ${CONDA_SITE_PACKAGES}/
 
 
 ## Final Inference Server image ################################################
 FROM cuda-runtime as server-release
-ARG SITE_PACKAGES=/opt/miniconda/lib/python3.11/site-packages
+ARG CONDA_SITE_PACKAGES
 
 # Install C++ compiler (required at runtime when PT2_COMPILE is enabled)
 RUN dnf install -y gcc-c++ && dnf clean all \
@@ -304,20 +323,18 @@ ENV PATH=/opt/miniconda/bin:$PATH
 # These could instead come from explicitly cached images
 
 # Copy build artifacts from flash attention builder
-# TODO: site-packages
-COPY --from=flash-att-cache /opt/miniconda/lib/python3.9/site-packages/flash_attn* /opt/miniconda/lib/python3.9/site-packages/
-COPY --from=flash-att-cache /opt/miniconda/lib/python3.9/site-packages/dropout* /opt/miniconda/lib/python3.9/site-packages/
-COPY --from=flash-att-cache /opt/miniconda/lib/python3.9/site-packages/rotary* /opt/miniconda/lib/python3.9/site-packages/
+COPY --from=flash-att-cache ${CONDA_SITE_PACKAGES}/flash_attn* ${CONDA_SITE_PACKAGES}/
+COPY --from=flash-att-cache ${CONDA_SITE_PACKAGES}/dropout*    ${CONDA_SITE_PACKAGES}/
+COPY --from=flash-att-cache ${CONDA_SITE_PACKAGES}/rotary*     ${CONDA_SITE_PACKAGES}/
 
 # Copy build artifacts from flash attention v2 builder
-# TODO: site-packages
-COPY --from=flash-att-v2-cache /opt/miniconda/lib/python3.9/site-packages/flash_attn* /opt/miniconda/lib/python3.9/site-packages/
+COPY --from=flash-att-v2-cache ${CONDA_SITE_PACKAGES}/flash_attn* ${CONDA_SITE_PACKAGES}/
 
 # Copy build artifacts from exllama kernels builder
-COPY --from=exllama-kernels-builder /usr/src/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
+COPY --from=exllama-kernels-builder /usr/src/build/lib.linux-x86_64-cpython-* ${CONDA_SITE_PACKAGES}
 
 # Copy build artifacts from exllamav2 kernels builder
-COPY --from=exllamav2-kernels-builder /usr/src/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
+COPY --from=exllamav2-kernels-builder /usr/src/build/lib.linux-x86_64-cpython-* ${CONDA_SITE_PACKAGES}
 
 # Install server
 COPY proto proto
@@ -325,7 +342,7 @@ COPY server server
 RUN cd server && make gen-server && pip install ".[accelerate, onnx-gpu, quantize]" --no-cache-dir
 
 # Patch codegen model changes into transformers 4.35
-RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py
+RUN cp server/transformers_patch/modeling_codegen.py ${CONDA_SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py
 
 # Install router
 COPY --from=router-builder /usr/local/cargo/bin/text-generation-router /usr/local/bin/text-generation-router
@@ -340,7 +357,7 @@ ENV PORT=3000 \
 RUN chmod -R g+rwx ${HOME}
 
 # Temporary for dev
-RUN chmod -R g+w ${SITE_PACKAGES}/text_generation_server /usr/src /usr/local/bin
+RUN chmod -R g+w ${CONDA_SITE_PACKAGES}/text_generation_server /usr/src /usr/local/bin
 
 # Run as non-root user by default
 USER tgis
