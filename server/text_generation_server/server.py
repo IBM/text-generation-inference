@@ -262,7 +262,7 @@ def serve(
             print(f"Using device {device}, dtype {dtype_str}, quantize {quantize}")
             print(model.config.__str__())
 
-        if quantize == "gptq":
+        if quantize == "gptq" and deployment_framework == "hf_custom_tp":
             from text_generation_server.utils.layers import HAS_EXLLAMA, EXLLAMA_VERSION
             if HAS_EXLLAMA:
                 try:
@@ -272,27 +272,16 @@ def serve(
 
                     if EXLLAMA_VERSION == "1":
                         from text_generation_server.utils.gptq.exllama import (
-                            create_exllama_buffers,
-                            set_device,
+                            create_exllama_buffers, set_device,
                         )
-                    else:
-                        from text_generation_server.utils.gptq.exllamav2 import (
-                            create_exllama_buffers,
-                            set_device,
-                            Ex4bitLinearV2,
-                        )
-
-                    set_device(device)
-
-                    if EXLLAMA_VERSION == "1":
+                        set_device(device)
                         create_exllama_buffers(max_sequence_length)
-                    elif EXLLAMA_VERSION == "2":
-                        # NOTE: We're assuming that in this case, max_batch_weight == max_batch_tokens
-                        # This will likely need to change soon when we rework the batching parameters
-                        max_batch_tokens = max_batch_weight if max_batch_weight is not None else (
-                            max_batch_size * max_sequence_length
+                    else:
+                        assert EXLLAMA_VERSION == "2"
+                        from text_generation_server.utils.gptq.exllamav2 import (
+                            set_device, Ex4bitLinearV2,
                         )
-                        create_exllama_buffers(max_batch_tokens)
+                        set_device(device)
                         for _, submodule in model.model.named_modules():
                             if isinstance(submodule, Ex4bitLinearV2):
                                 submodule.post_init()  # make q matrix and set scratch space

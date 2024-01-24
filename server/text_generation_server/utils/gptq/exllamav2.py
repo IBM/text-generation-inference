@@ -19,6 +19,7 @@ def ext_gemm_half_q_half(x, q_handle, q4_width, force_cuda):
     gemm_half_q_half(x, q_handle, output, force_cuda)
     return output.view(output_shape)
 
+
 def ext_make_q_matrix(w: dict, temp_dq, key: str = None):
     """
     Create Q matrix 
@@ -60,63 +61,46 @@ def ext_make_q_matrix(w: dict, temp_dq, key: str = None):
             temp_dq,
         )
 
+
 def temp_dq_size(inout_product):
     return inout_product * 2 + 128
 
-def temp_fwd_size(outfeatures, max_batch_tokens):
-    return outfeatures * max_batch_tokens * 4 + 128
 
-def scratch_space_fixed(inout_product, outfeatures, max_batch_tokens):
-    return temp_dq_size(inout_product) + temp_fwd_size(outfeatures, max_batch_tokens)
+def _elements(size_bytes):
+    size_bytes = (size_bytes + 127) & -128  # round up to nearest multiple of 128
+    return size_bytes // 2
 
-class ExLlamaV2DeviceTensors:
+
+class ExLlamaV2DeviceTensor:
     def __init__(self, device, scratch_bytes):
         self.device = device
-        self.scratch_bytes = scratch_bytes
-        self.scratch = None
-    
-    def prepare(self):
-        print_rank_n(f"Allocating {self.scratch_bytes // (1024 * 1024)} MiB for exllama v2 scratch space")
-        self.scratch = torch.empty((self.scratch_bytes // 2,), dtype=torch.half, device=self.device)
+        print_rank_n(f"Allocating {scratch_bytes // (1024 * 1024)} MiB for exllama v2 scratch space")
+        self.scratch = torch.empty(
+            _elements(scratch_bytes), dtype=torch.half, device=self.device
+        )
 
     def get_scratch_slice(self, size_bytes):
-        if self.scratch is None:
-            self.prepare()
+        size_half = _elements(size_bytes)
+        return self.scratch[:size_half]
 
-        size_bytes = ((size_bytes + 127) // 128) * 128
-        size_half = size_bytes // 2
-        scratch_slice = self.scratch.narrow(0, 0, size_half)
-        return scratch_slice
 
-# Max number of output features, used by temp_fwd_size calculation
-MAX_OUT_FEATURES = 1
-# Max of (infeatures * outfeatures), used by temp_dq_size calculation
-MAX_INOUT_PRODUCT = 1
 # DEVICE_TENSOR is a cuda buffer used by cublas gemm when M > 50
 DEVICE_TENSOR = None
 DEVICE = None
+# Max of (infeatures * outfeatures), used by temp_dq_size calculation
+MAX_INOUT_PRODUCT = 1
+
 
 def set_device(device):
-    global DEVICE
+    global DEVICE, DEVICE_TENSOR, MAX_INOUT_PRODUCT
     DEVICE = device
+    DEVICE_TENSOR = ExLlamaV2DeviceTensor(DEVICE, temp_dq_size(MAX_INOUT_PRODUCT))
 
-def create_exllama_buffers(max_batch_tokens: int):
-    global DEVICE, DEVICE_TENSOR, MAX_OUT_FEATURES, MAX_INOUT_PRODUCT
-
-    assert DEVICE is not None, "call set_device first"
-
-    DEVICE_TENSOR = ExLlamaV2DeviceTensors(
-        DEVICE,
-        scratch_space_fixed(
-            MAX_INOUT_PRODUCT,
-            MAX_OUT_FEATURES,
-            max_batch_tokens,
-        ))
 
 class Ex4bitLinearV2(nn.Module):
     """Linear layer implementation with per-group 4-bit quantization of the weights"""
     def __init__(self, qweight, qzeros, scales, g_idx, bias, bits, groupsize):
-        global MAX_OUT_FEATURES, MAX_INOUT_PRODUCT
+        global MAX_INOUT_PRODUCT
         super().__init__()
         assert bits == 4
 
@@ -134,9 +118,8 @@ class Ex4bitLinearV2(nn.Module):
         assert self.height % 32 == 0
         assert self.width  % 32 == 0
 
-        # Update max outfeatures & inout_product so far for later call to create_exllama_buffers
-        MAX_OUT_FEATURES = max(MAX_OUT_FEATURES, self.width)
-        MAX_INOUT_PRODUCT = max(MAX_INOUT_PRODUCT, self.width*self.height)
+        # Update max outfeatures & inout_product so far for later call to set_device
+        MAX_INOUT_PRODUCT = max(MAX_INOUT_PRODUCT, self.width * self.height)
     
     def post_init(self):
         global DEVICE_TENSOR
