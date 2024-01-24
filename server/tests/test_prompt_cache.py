@@ -24,6 +24,7 @@ def temp_prompt_cache_enc_dec_meta():
         dtype=dtype,
         max_length=16,
         encoder_decoder=True,
+        return_zero=False,
         decoder_start_tok_embedding=torch.rand((1, 8), dtype=dtype, device='meta')
     )
 
@@ -35,6 +36,7 @@ def temp_prompt_cache():
         dtype=torch.float32,
         max_length=8,
         encoder_decoder=False,
+        return_zero=False,
         decoder_start_tok_embedding=None
     )
 
