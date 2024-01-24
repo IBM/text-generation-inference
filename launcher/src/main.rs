@@ -1,8 +1,10 @@
 use clap::Parser;
+use nix::sys::signal::{self, Signal};
+use nix::unistd::Pid;
 use std::env;
 use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::path::Path;
-use std::process::ExitCode;
+use std::process::{Command, ExitCode, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::TryRecvError;
 use std::sync::Arc;
@@ -13,7 +15,7 @@ use std::time::{Duration, Instant};
 use std::{fs, io};
 use std::env::VarError;
 use std::ffi::OsString;
-use subprocess::{Popen, PopenConfig, PopenError, Redirection};
+use std::os::unix::process::CommandExt;
 use tracing::info;
 
 // In most cases this gives the best performance for inferencing
@@ -191,8 +193,7 @@ fn main() -> ExitCode {
             Err(TryRecvError::Empty) => {
                 sleep(Duration::from_millis(100));
             }
-            Ok(ShardStatus::Failed((rank, err))) => {
-                tracing::error!("Shard {rank} failed to start:\n{err}");
+            Ok(ShardStatus::Failed) => {
                 shutdown_shards(shutdown, shutdown_receiver);
                 return ExitCode::FAILURE;
             }
@@ -214,7 +215,6 @@ fn main() -> ExitCode {
     // Start webserver
     info!("Starting Router");
     let mut argv = vec![
-        "text-generation-router".to_string(),
         "--max-concurrent-requests".to_string(),
         args.max_concurrent_requests.to_string(),
         "--max-sequence-length".to_string(),
@@ -271,27 +271,20 @@ fn main() -> ExitCode {
         argv.push("--default-include-stop-seqs".into());
     }
 
-    let mut webserver = match Popen::create(
-        &argv,
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            // Needed for the shutdown procedure
-            setpgid: true,
-            // env: Some(vec![("RUST_BACKTRACE".into(), "1".into())]),
-            ..Default::default()
-        },
-    ) {
+    let mut webserver = match Command::new("text-generation-router")
+        .args(argv)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0)
+        .spawn()
+    {
         Ok(p) => p,
         Err(err) => {
-            tracing::error!("Failed to start webserver: {err}");
-            if let PopenError::IoError(err) = err {
-                if err.kind() == io::ErrorKind::NotFound {
-                    tracing::error!("text-generation-router not found in PATH");
-                    tracing::error!("Please install it with `make install-router`")
-                }
+            if err.kind() == ErrorKind::NotFound {
+                tracing::error!("text-generation-router not found in PATH");
+                tracing::error!("Please install it with `make install-router`")
             } else {
-                tracing::error!("{err}");
+                tracing::error!("Failed to start webserver: {err}");
             }
 
             shutdown_shards(shutdown, &shutdown_receiver);
@@ -318,28 +311,25 @@ fn main() -> ExitCode {
     let mut exit_code = ExitCode::SUCCESS;
 
     while running.load(Ordering::SeqCst) {
-        if let Ok(ShardStatus::Failed((rank, err))) = status_receiver.try_recv() {
-            tracing::error!("Shard {rank} failed: {err}");
+        if let Ok(ShardStatus::Failed) = status_receiver.try_recv() {
             exit_code = ExitCode::FAILURE;
             break;
         };
 
-        match webserver.poll() {
+        match webserver.try_wait().expect("Error polling status of router process") {
             Some(_) => {
                 tracing::error!("Webserver Crashed");
                 shutdown_shards(shutdown, &shutdown_receiver);
                 return ExitCode::FAILURE;
-            }
-            None => {
-                sleep(Duration::from_millis(100));
-            }
+            },
+            None => sleep(Duration::from_millis(100)),
         };
     }
 
     // Graceful termination
-    webserver.terminate().unwrap();
+    signal::kill(Pid::from_raw(webserver.id() as i32), Signal::SIGTERM).unwrap();
     info!("Waiting for router to gracefully shutdown");
-    webserver.wait_timeout(Duration::from_secs(120)).unwrap();
+    webserver.wait().unwrap();
     info!("Router terminated");
     shutdown_shards(shutdown, &shutdown_receiver);
 
@@ -392,7 +382,7 @@ fn find_num_shards(num_shard: Option<usize>) -> usize {
 #[derive(Debug)]
 enum ShardStatus {
     Ready,
-    Failed((usize, String)),
+    Failed,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -421,11 +411,12 @@ fn shard_manager(
     let uds_string = format!("{uds_path}-{rank}");
     let uds = Path::new(&uds_string);
     // Clean previous runs
-    fs::remove_file(uds).unwrap_or_default();
+    if uds.exists() {
+        fs::remove_file(uds).unwrap_or_default();
+    }
 
     // Process args
     let mut shard_argv = vec![
-        "text-generation-server".to_string(),
         "serve".to_string(),
         model_name,
         deployment_framework,
@@ -517,30 +508,24 @@ fn shard_manager(
 
     // Start process
     info!("Starting shard {rank}");
-    let mut p = match Popen::create(
-        &shard_argv,
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            // Needed for the shutdown procedure
-            setpgid: true,
-            // NCCL env vars
-            env: Some(env),
-            ..Default::default()
-        },
-    ) {
+    let mut p = match Command::new("text-generation-server")
+        .args(shard_argv)
+        .envs(env)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0)
+        .spawn()
+    {
         Ok(p) => p,
         Err(err) => {
-            if let PopenError::IoError(ref err) = err {
-                if err.kind() == io::ErrorKind::NotFound {
-                    tracing::error!("text-generation-server not found in PATH");
-                    tracing::error!("Please install it with `make install-server`")
-                }
+            if err.kind() == ErrorKind::NotFound {
+                tracing::error!("text-generation-server not found in PATH");
+                tracing::error!("Please install it with `make install-server`")
+            } else {
+                tracing::error!("Shard {rank} failed to start:\n{err}");
             }
-            status_sender
-                .send(ShardStatus::Failed((rank, err.to_string())))
-                .unwrap();
-            return;
+            status_sender.send(ShardStatus::Failed).unwrap();
+            return
         }
     };
 
@@ -563,20 +548,26 @@ fn shard_manager(
     let mut wait_time = Instant::now();
     loop {
         // Process exited
-        if let Some(status) = p.poll() {
-            // Ensure we finish propagating any final stdout/stderr from the shard
-            stdout_thread.join().unwrap_or_default();
-            io::stdout().flush().unwrap_or_default();
-            stderr_thread.join().unwrap_or_default();
-            io::stderr().flush().unwrap_or_default();
-            status_sender.send(ShardStatus::Failed((rank, format!("{status:?}")))).unwrap();
+        if let Some(status) = p.try_wait()
+                .expect(&*format!("Error polling status of shard {rank}")) {
+            if *shutdown.lock().unwrap() {
+                info!("Shard {rank} terminated");
+            } else {
+                tracing::error!("Shard {rank} failed: {status:?}");
+                // Ensure we finish propagating any final stdout/stderr from the shard
+                stdout_thread.join().unwrap_or_default();
+                io::stdout().flush().unwrap_or_default();
+                stderr_thread.join().unwrap_or_default();
+                io::stderr().flush().unwrap_or_default();
+                status_sender.send(ShardStatus::Failed).unwrap();
+            }
             return
         }
 
         // We received a shutdown signal
         if *shutdown.lock().unwrap() {
-            p.terminate().unwrap();
-            let _ = p.wait_timeout(Duration::from_secs(90));
+            p.kill().unwrap();
+            let _ = p.wait().unwrap();
             info!("Shard {rank} terminated");
             return
         }
