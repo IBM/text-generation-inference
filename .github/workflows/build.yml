@@ -83,8 +83,8 @@ jobs:
     - name: "Docker build flash-att-v2-cache"
       run: docker build --target=flash-att-v2-cache -t flash-att-v2-cache .
 
-    - name: "Docker build build"
-      run: docker build --target=build -t build .
+    - name: "Docker build cuda-runtime"
+      run: docker build --target=cuda-runtime -t cuda-runtime .
 
     - name: "Docker build rust-builder"
       run: docker build --target=rust-builder -t rust-builder .
@@ -101,8 +101,14 @@ jobs:
     - name: "Docker build cpu-tests"
       run: docker build --target=cpu-tests -t cpu-tests .
 
-    - name: "Docker build cuda-runtime"
-      run: docker build --target=cuda-runtime -t cuda-runtime .
+    - name: "Docker build build"
+      run: docker build --target=build -t build .
+
+    - name: "Docker build exllama-kernels-builder"
+      run: docker build --target=exllama-kernels-builder -t exllama-kernels-builder .
+
+    - name: "Docker build exllamav2-kernels-builder"
+      run: docker build --target=exllamav2-kernels-builder -t exllamav2-kernels-builder .
 
     - name: "Docker build server-release"
       run: docker build --target=server-release -t server-release .
