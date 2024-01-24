@@ -154,7 +154,7 @@ RUN dnf install -y make unzip python${PYTHON_VERSION} python${PYTHON_VERSION}-pi
     dnf clean all && \
     ln -fs /usr/bin/python${PYTHON_VERSION} /usr/bin/python3 && \
     ln -s /usr/bin/python${PYTHON_VERSION} /usr/local/bin/python && \
-    ln -s /usr/bin/python${PYTHON_VERSION} /usr/local/bin/pip
+    ln -s /usr/bin/pip${PYTHON_VERSION} /usr/local/bin/pip
 
 RUN pip install --upgrade pip --no-cache-dir && \
     pip install pytest --no-cache-dir && \
