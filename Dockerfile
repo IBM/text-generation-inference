@@ -8,8 +8,8 @@ ARG PROTOC_VERSION=25.1
 
 #ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
 ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
-#ARG PYTORCH_VERSION=2.3.0.dev20231221
-ARG PYTORCH_VERSION=2.2.0.dev20231213
+ARG PYTORCH_VERSION=2.3.0.dev20231221
+#ARG PYTORCH_VERSION=2.2.0.dev20231213
 
 ARG PYTHON_VERSION=3.11
 ARG PYTHON_SITE_PACKAGES=/usr/local/lib/python${PYTHON_VERSION}/site-packages
@@ -230,7 +230,7 @@ WORKDIR /usr/src
 # SKIP_CUDA_BUILD: Intended to allow CI to use a simple `python setup.py sdist` run to copy over raw files, without any cuda compilation
 # CXX11_ABI: For CI, we want the option to build with C++11 ABI since the nvcr images use C++11 ABI
 # FORCE_SINGLE_THREAD: For CI, we want the option to not add "--threads 4" to nvcc, since the runner can OOM
-RUN MAX_JOBS=1 pip install flash-attn==${FLASH_ATTN_V2_VERSION} --no-build-isolation
+RUN MAX_JOBS=1 FLASH_ATTENTION_SKIP_CUDA_BUILD="TRUE" pip install flash-attn==${FLASH_ATTN_V2_VERSION} --no-build-isolation
 
 
 ## Build flash attention  ######################################################
