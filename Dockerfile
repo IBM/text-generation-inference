@@ -3,7 +3,7 @@ ARG BASE_UBI_IMAGE_TAG=9.3-1476
 ARG PROTOC_VERSION=25.1
 #ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
 ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
-ARG PYTORCH_VERSION=2.3.0.dev20231221
+ARG PYTORCH_VERSION=2.3.0.dev20240125
 ARG PYTHON_VERSION=3.11
 
 ## Base Layer ##################################################################
