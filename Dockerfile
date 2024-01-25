@@ -221,6 +221,15 @@ WORKDIR /usr/src
 COPY server/Makefile-flash-att Makefile
 RUN make build-flash-attention
 
+## Install auto-gptq ###########################################################
+FROM python-builder as auto-gptq-installer
+ARG AUTO_GPTQ_REF=ccb6386ebfde63c17c45807d38779a93cd25846f
+
+WORKDIR /usr/src/auto-gptq-wheel
+
+# numpy is required to run auto-gptq's setup.py
+RUN pip install numpy
+RUN DISABLE_QIGEN=1 pip wheel git+https://github.com/AutoGPTQ/AutoGPTQ@${AUTO_GPTQ_REF} --no-cache-dir --no-deps --verbose
 
 ## Build libraries #############################################################
 FROM python-builder as build
@@ -257,6 +266,11 @@ COPY --from=flash-att-builder /usr/src/flash-attention/csrc/rotary/build /usr/sr
 FROM base as flash-att-v2-cache
 COPY --from=flash-att-v2-builder /usr/src/flash-attention-v2 /usr/src/flash-attention-v2
 
+## Auto gptq cached build image
+FROM base as auto-gptq-cache
+
+# Cache just the wheel we built for auto-gptq
+COPY --from=auto-gptq-installer /usr/src/auto-gptq-wheel /usr/src/auto-gptq-wheel
 
 ## Final Inference Server image ################################################
 FROM cuda-runtime as server-release
@@ -289,6 +303,10 @@ COPY --from=exllama-kernels-builder /usr/src/build/lib.linux-x86_64-cpython-* ${
 
 # Copy build artifacts from exllamav2 kernels builder
 COPY --from=exllamav2-kernels-builder /usr/src/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
+
+# Copy over the auto-gptq wheel and install it
+RUN --mount=type=bind,from=auto-gptq-cache,src=/usr/src/auto-gptq-wheel,target=/usr/src/auto-gptq-wheel \
+    pip install /usr/src/auto-gptq-wheel/*.whl --no-cache-dir
 
 # Install server
 COPY proto proto
