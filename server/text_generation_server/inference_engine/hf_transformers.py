@@ -24,6 +24,10 @@ class InferenceEngine(BaseInferenceEngine):
             "trust_remote_code": TRUST_REMOTE_CODE,
         }
 
+        # TODO: consider if Flash Attention should be enabled based on FLASH_ATTENTION=True
+        if attn_impl := os.getenv("TRANSFORMERS_ATTN_IMPL"):
+            kwargs["attn_implementation"] = attn_impl
+
         if model_config.model_type == "mpt":
             model_config.init_device = str(self.device)
             kwargs["config"] = model_config
