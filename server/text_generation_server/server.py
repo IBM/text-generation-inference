@@ -252,7 +252,9 @@ def serve(
         if cuda_available and cuda_process_memory_fraction < 1:
             torch.cuda.set_per_process_memory_fraction(cuda_process_memory_fraction)
 
-        model = get_model(model_name, revision, deployment_framework, dtype_str, quantize)
+        model = get_model(
+            model_name, revision, deployment_framework, dtype_str, quantize, max_sequence_length
+        )
 
         device = model.engine.get_device()
         if local_rank == 0:

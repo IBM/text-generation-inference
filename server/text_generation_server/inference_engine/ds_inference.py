@@ -21,7 +21,8 @@ class InferenceEngine(BaseInferenceEngine):
         model_class: type[_BaseAutoModelClass],
         dtype: torch.dtype,
         quantize: Optional[str],
-        model_config: Optional[Any]
+        model_config: Optional[Any],
+        max_sequence_length: Optional[int],
     ) -> None:
         super().__init__(model_path, model_config)
 
