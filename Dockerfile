@@ -205,11 +205,13 @@ RUN pip install torch==$PYTORCH_VERSION+cu118 --index-url "${PYTORCH_INDEX}/cu11
 
 ## Build flash attention v2 ####################################################
 FROM python-builder as flash-att-v2-builder
+ARG FLASH_ATT_VERSION=v2.3.6
 
-WORKDIR /usr/src
+WORKDIR /usr/src/flash-attention-v2
 
-COPY server/Makefile-flash-att-v2 Makefile
-RUN MAX_JOBS=4 make build-flash-attention-v2
+# Download the wheel or build it if a pre-compiled release doesn't exist
+RUN MAX_JOBS=4 pip --verbose wheel flash-attn==${FLASH_ATT_VERSION} \
+    --no-build-isolation --no-deps --no-cache-dir
 
 ## Build flash attention  ######################################################
 FROM python-builder as flash-att-builder
@@ -253,7 +255,7 @@ COPY --from=flash-att-builder /usr/src/flash-attention/csrc/rotary/build /usr/sr
 
 ## Flash attention v2 cached build image #######################################
 FROM base as flash-att-v2-cache
-COPY --from=flash-att-v2-builder /usr/src/flash-attention-v2/build /usr/src/flash-attention-v2/build
+COPY --from=flash-att-v2-builder /usr/src/flash-attention-v2 /usr/src/flash-attention-v2
 
 
 ## Final Inference Server image ################################################
@@ -278,8 +280,9 @@ COPY --from=flash-att-cache /usr/src/flash-attention/build/lib.linux-x86_64-cpyt
 COPY --from=flash-att-cache /usr/src/flash-attention/csrc/layer_norm/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
 COPY --from=flash-att-cache /usr/src/flash-attention/csrc/rotary/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
 
-# Copy build artifacts from flash attention v2 builder
-COPY --from=flash-att-v2-cache /usr/src/flash-attention-v2/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
+# Install flash attention v2 from the cache build
+RUN --mount=type=bind,from=flash-att-v2-cache,src=/usr/src/flash-attention-v2,target=/usr/src/flash-attention-v2 \
+    pip install /usr/src/flash-attention-v2/*.whl --no-cache-dir
 
 # Copy build artifacts from exllama kernels builder
 COPY --from=exllama-kernels-builder /usr/src/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
