@@ -30,9 +30,6 @@ patchesStrategicMerge:
              - name: DEPLOYMENT_FRAMEWORK
                value: hf_custom_tp
                
-             # Measurements showed incremental mem usage to actually be linear
-             # So these could be improved if we change the logic in the code to
-             # support that kind of relationship
              - name: MAX_BATCH_SIZE
                value: "16"
              - name: MAX_CONCURRENT_REQUESTS
@@ -41,8 +38,3 @@ patchesStrategicMerge:
                value: "4096"
              - name: MAX_NEW_TOKENS
                value: "1536"
-             - name: MAX_PREFILL_WEIGHT
-             #  value: "420000"
-               value: "320000"
-             - name: MAX_BATCH_WEIGHT
-               value: "80000000"

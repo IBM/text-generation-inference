@@ -38,7 +38,4 @@ patchesStrategicMerge:
                value: "100"
              - name: MAX_NEW_TOKENS
                value: "1024"
-             - name: MAX_PREFILL_WEIGHT
-               value: "2000000"
-             - name: MAX_BATCH_WEIGHT
-               value: "200000000"
+

@@ -26,5 +26,3 @@ patchesStrategicMerge:
              env:
              - name: MODEL_NAME
                value: google/flan-t5-xxl
-             - name: MAX_BATCH_WEIGHT
-               value: "47458400"

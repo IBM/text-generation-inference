@@ -26,5 +26,3 @@ patchesStrategicMerge:
              env:
              - name: MODEL_NAME
                value: google/ul2
-             - name: MAX_BATCH_WEIGHT
-               value: "34543200"
