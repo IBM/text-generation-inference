@@ -16,7 +16,7 @@ use std::{fs, io};
 use std::env::VarError;
 use std::ffi::OsString;
 use std::os::unix::process::CommandExt;
-use tracing::info;
+use tracing::{info, warn};
 
 // In most cases this gives the best performance for inferencing
 const DEFAULT_PYTORCH_CUDA_ALLOC_CONF: &'static str = "expandable_segments:True";
@@ -47,12 +47,10 @@ struct Args {
     max_new_tokens: usize,
     #[clap(default_value = "12", long, env)]
     max_batch_size: usize,
-    #[clap(default_value = None, long, env)]
-    max_batch_weight: Option<usize>,
-    #[clap(default_value = None, long, env)]
-    max_prefill_weight: Option<usize>,
     #[clap(default_value = "0.2", long, env)]
     max_prefill_padding: f32,
+    #[clap(default_value = "20", long, env)]
+    batch_safety_margin: usize,
     #[clap(default_value = "24", long, env)]
     max_waiting_tokens: usize,
     #[clap(default_value = "3000", long, short, env)]
@@ -112,6 +110,20 @@ fn main() -> ExitCode {
         &args.model_name, args.revision.as_deref()
     ).expect("Could not find tokenizer for model");
 
+    match env::var("MAX_BATCH_WEIGHT") {
+        Ok(max_batch_weight) if !max_batch_weight.trim().is_empty() => {
+            warn!("MAX_BATCH_WEIGHT is set to {max_batch_weight} but this parameter will be ignored.");
+        }
+        _ => {}
+    }
+
+    match env::var("MAX_PREFILL_WEIGHT") {
+        Ok(max_prefill_weight) if !max_prefill_weight.trim().is_empty() => {
+            warn!("MAX_PREFILL_WEIGHT is set to {max_prefill_weight} but this parameter will be ignored.");
+        }
+        _ => {}
+    }
+
     // Set PYTORCH_CUDA_ALLOC_CONF to default value if it's not set in the environment
     let cuda_alloc_conf = match env::var("PYTORCH_CUDA_ALLOC_CONF") {
         Err(VarError::NotPresent) if DEFAULT_PYTORCH_CUDA_ALLOC_CONF == "" => None,
@@ -164,7 +176,7 @@ fn main() -> ExitCode {
                 args.max_sequence_length,
                 args.max_new_tokens,
                 args.max_batch_size,
-                args.max_batch_weight,
+                args.batch_safety_margin,
                 args.shard_uds_path,
                 args.cuda_process_memory_fraction,
                 cuda_alloc_conf,
@@ -236,15 +248,6 @@ fn main() -> ExitCode {
         "--tokenizer-path".to_string(),
         tokenizer_path,
     ];
-
-    if let Some(max_batch_weight) = args.max_batch_weight {
-        argv.push("--max-batch-weight".to_string());
-        argv.push(max_batch_weight.to_string());
-    }
-    if let Some(max_prefill_weight) = args.max_prefill_weight {
-        argv.push("--max-prefill-weight".to_string());
-        argv.push(max_prefill_weight.to_string());
-    }
 
     if let Some(path) = args.tls_key_path {
         argv.push("--tls-key-path".to_string());
@@ -395,7 +398,7 @@ fn shard_manager(
     max_sequence_length: usize,
     max_new_tokens: usize,
     max_batch_size: usize,
-    max_batch_weight: Option<usize>,
+    batch_safety_margin: usize,
     uds_path: String,
     cuda_process_memory_fraction: f32,
     cuda_alloc_conf: Option<&str>,
@@ -428,6 +431,8 @@ fn shard_manager(
         max_new_tokens.to_string(),
         "--max-batch-size".to_string(),
         max_batch_size.to_string(),
+        "--batch-safety-margin".to_string(),
+        batch_safety_margin.to_string(),
         "--uds-path".to_string(),
         uds_path,
         "--cuda-process-memory-fraction".to_string(),
@@ -453,12 +458,6 @@ fn shard_manager(
     if let Some(revision) = revision {
         shard_argv.push("--revision".to_string());
         shard_argv.push(revision);
-    }
-
-    // Maximum batch weight - used only for PT2 compile
-    if let Some(max_batch_weight) = max_batch_weight {
-        shard_argv.push("--max-batch-weight".to_string());
-        shard_argv.push(max_batch_weight.to_string());
     }
 
     // Copy current process env

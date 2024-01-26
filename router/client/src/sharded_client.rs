@@ -7,6 +7,7 @@ use tonic::transport::Uri;
 use crate::client::GenerateTokenResponse;
 use crate::pb::generate::v1::CachedBatch;
 use crate::pb::generate::v1::model_info_response::ModelType;
+use crate::pb::generate::v1::MemoryScalingModel;
 use crate::sharded_client::Request::{NextToken, Prefill};
 
 #[derive(Clone, Debug)]
@@ -138,8 +139,8 @@ impl ShardedClient {
     }
 
     /// Get shard model info
-    pub async fn model_info(&mut self) -> Result<(bool, u32, bool)> {
+    pub async fn model_info(&mut self) -> Result<(bool, u32, bool, MemoryScalingModel)> {
         self.clients[0].model_info().await
-            .map(|(mt, eos, bpad)| (mt == ModelType::Seq2seqLm, eos, bpad))
+            .map(|(mt, eos, bpad, mem_model)| (mt == ModelType::Seq2seqLm, eos, bpad, mem_model))
     }
 }

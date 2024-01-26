@@ -19,10 +19,6 @@ struct Args {
     max_new_tokens: usize,
     #[clap(default_value = "12", long, env)]
     max_batch_size: usize,
-    #[clap(default_value = None, long, env)]
-    max_batch_weight: Option<usize>,
-    #[clap(default_value = None, long, env)]
-    max_prefill_weight: Option<usize>,
     #[clap(default_value = "0.2", long, env)]
     max_prefill_padding: f32,
     #[clap(default_value = "24", long, env)]
@@ -129,8 +125,6 @@ fn main() -> Result<(), std::io::Error> {
                 max_sequence_length: args.max_sequence_length,
                 max_new_tokens: args.max_new_tokens,
                 max_batch_size: args.max_batch_size,
-                max_batch_weight: args.max_batch_weight,
-                max_prefill_weight: args.max_prefill_weight,
                 max_prefill_padding: args.max_prefill_padding,
                 max_waiting_tokens: args.max_waiting_tokens,
                 client: sharded_client,

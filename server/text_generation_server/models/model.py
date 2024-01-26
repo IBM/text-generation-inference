@@ -130,14 +130,17 @@ class Model(ABC):
                 kwargs = parse_kwargs(kwargs)
                 return run_forward(*args, **kwargs)
 
-            self.model.forward = types.MethodType(override_forward_with_compile, self.model)
+            self.model.compile_forward = types.MethodType(override_forward_with_compile, self.model)
             self.model.run_forward = types.MethodType(override_forward_with_run, self.model)
 
             # pt2 compile still seems to have some issue with torch.inference_mode
             self.context_manager = torch.no_grad
 
-    def freeze_compile(self):
+    def stop_compile(self):
         self.model.forward = self.model.run_forward
+
+    def start_compile(self):
+        self.model.forward = self.model.compile_forward
 
     @property
     @abstractmethod

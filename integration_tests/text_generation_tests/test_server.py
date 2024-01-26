@@ -61,7 +61,6 @@ def start_server(
         # Reduce this so we can more easily test limit behaviour
         "--max-sequence-length", "200",
         "--max-new-tokens", "169",
-        "--max-batch-weight", "80000",
     ]
 
     if output_special_tokens:
@@ -69,6 +68,7 @@ def start_server(
 
     env = os.environ.copy()
     env["RUST_BACKTRACE"] = "full"
+    env["ESTIMATE_MEMORY"] = "manual"
     env["PREFIX_STORE_PATH"] = os.path.join(TESTS_DIR, "prompt_prefixes")
     if not include_cache_env_vars:
         env.pop("TRANSFORMERS_CACHE", None)

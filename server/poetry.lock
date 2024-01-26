@@ -826,7 +826,7 @@ name = "scipy"
 version = "1.11.4"
 description = "Fundamental algorithms for scientific computing in Python"
 category = "main"
-optional = true
+optional = false
 python-versions = ">=3.9"
 
 [package.dependencies]
@@ -1085,7 +1085,7 @@ multidict = ">=4.0"
 
 [extras]
 accelerate = ["accelerate"]
-bnb = ["bitsandbytes", "scipy"]
+bnb = ["bitsandbytes"]
 onnx = ["optimum", "onnxruntime", "onnx"]
 onnx-gpu = ["optimum", "onnxruntime-gpu", "onnx"]
 quantize = ["datasets", "texttable"]
@@ -1093,7 +1093,7 @@ quantize = ["datasets", "texttable"]
 [metadata]
 lock-version = "1.1"
 python-versions = ">=3.11.0,<3.13"
-content-hash = "9211a622589bad32e8d0128559f05a44926754b203d5d777cb7095c8145e2652"
+content-hash = "d968a07f2c04b57dc3cc6aa30a6b2f92a8cf7015b5de347638189376b949891e"
 
 [metadata.files]
 accelerate = [

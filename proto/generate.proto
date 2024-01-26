@@ -41,16 +41,26 @@ message ClearCacheResponse {}
 /// Empty request
 message ModelInfoRequest {}
 
+message MemoryScalingModel {
+    float prefill_linear_coef0 = 1;
+    float prefill_quadratic_coef0 = 2;
+    float prefill_quadratic_coef1 = 3;
+    float nexttoken_linear_coef0 = 4;
+    float nexttoken_linear_coef1 = 5;
+    uint64 weight_limit = 6;
+}
+
 message ModelInfoResponse {
     enum ModelType {
         CAUSAL_LM = 0;
         SEQ2SEQ_LM = 1;
     }
-
     ModelType model_type = 1;
     uint32 eos_token = 2;
     /// Whether batches are rectangular/padded (false for flash attention)
     bool batch_padding = 3;
+    /// Memory scaling model
+    MemoryScalingModel memory_scaling_model = 4;
 }
 
 message NextTokenChooserParameters {

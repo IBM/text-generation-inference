@@ -25,6 +25,18 @@ from text_generation_server.utils.tokens import (
     get_input_tokens_info,
 )
 from text_generation_server.utils.warmup import pt2_compile_warmup
+from text_generation_server.utils.memory_characterizer import (
+    Estimator,
+    MemoryScalingModel,
+    ESTIMATE_MEMORY,
+    ESTIMATE_MEMORY_BATCH_SIZE,
+    ESTIMATE_MEMORY_MIN_SAMPLES,
+    ESTIMATE_MEMORY_START_SEQ_LEN,
+    ESTIMATE_MEMORY_STOP_SEQ_LEN,
+    ESTIMATE_MEMORY_FIT_THRESHOLD,
+    ESTIMATE_MEMORY_NEW_TOKENS,
+    ESTIMATE_MEMORY_NEW_TOKEN_SAMPLES
+)
 
 __all__ = [
     "convert_file",
@@ -49,4 +61,14 @@ __all__ = [
     "get_input_tokens_info",
     "pt2_compile_warmup",
     "Weights",
+    "Estimator",
+    "MemoryScalingModel",
+    "ESTIMATE_MEMORY",
+    "ESTIMATE_MEMORY_BATCH_SIZE",
+    "ESTIMATE_MEMORY_MIN_SAMPLES",
+    "ESTIMATE_MEMORY_START_SEQ_LEN",
+    "ESTIMATE_MEMORY_STOP_SEQ_LEN",
+    "ESTIMATE_MEMORY_FIT_THRESHOLD",
+    "ESTIMATE_MEMORY_NEW_TOKENS",
+    "ESTIMATE_MEMORY_NEW_TOKEN_SAMPLES"
 ]

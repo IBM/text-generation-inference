@@ -1,15 +1,13 @@
-from typing import Optional
 from text_generation_server.pb import generate_pb2
 import numpy as np
 import torch
 
-
 def pt2_compile_warmup(
     model: 'Model',
+    memory_scaling_model: 'MemoryScalingModel',
     max_batch_size: int,
     max_new_tokens: int,
     max_sequence_length: int,
-    max_batch_weight: Optional[int] = None,
     n_samples: int = 10,
     verbose: bool = False
 ):
@@ -27,22 +25,13 @@ def pt2_compile_warmup(
             )
         )
 
-    def __force_contiguous(x):
-        # Update tensors in place so that memory can be freed incrementally
-        x.data = x.data.contiguous()
-        strides = list(x.stride())
-        if strides != sorted(strides, reverse=True):
-            x.data = x.data.contiguous(memory_format=torch.channels_last).contiguous()
-        return x
+    def __eval_shape(batch_size: int, input_length: int, num_new_tokens: int):
 
-    def __eval_shape(batch_size: int, sequence_length: int, num_new_tokens: int):
         if verbose:
             print(
-                ">> evaluating shape (batch_size: %d, sequence_length: %d, num_new_tokens: %d)"
-                % (batch_size, sequence_length, num_new_tokens)
+                ">> evaluating shape (batch_size: %3d, input_length: %4d, num_new_tokens: %4d)"
+                % (batch_size, input_length, num_new_tokens)
             )
-
-        input_length = sequence_length - num_new_tokens
 
         # prefill
         request = __generate_prefill_request(batch_size, input_length, num_new_tokens)
@@ -62,64 +51,97 @@ def pt2_compile_warmup(
         for i in range(num_new_tokens - 1):
             model.generate_token(batch)
 
-    def __safe_eval_shape(batch_size: int, sequence_length: int, num_new_tokens: int):
+    def __safe_eval_shape(batch_size: int, input_length: int, num_new_tokens: int):
         try:
-            __eval_shape(batch_size, sequence_length, num_new_tokens)
+            __eval_shape(batch_size, input_length, num_new_tokens)
         except torch.cuda.OutOfMemoryError as e:
             print(">> caught OOM error: ", e)
 
-    def __max_sequence_length_for_batch_size(batch_size: int):
-        return max_sequence_length if max_batch_weight is None else min(
-            max_sequence_length, int(np.floor(np.sqrt(max_batch_weight/batch_size)))
-        )
-
-    def __max_new_tokens_for_sequence_length(sequence_length: int):
-        return min(max_new_tokens, sequence_length - 1)
+    def __get_n_kernels():
+        return model.n_kernels if hasattr(model, 'n_kernels') else 0
 
     if verbose:
-        print("[Phase 1] Probing boundaries.")
+        print("[Phase 1] Probing PREFILL boundaries")
 
     for batch_size in [1, max_batch_size]:
-        max_sequence_length_for_batch_size = __max_sequence_length_for_batch_size(batch_size)
-        for sequence_length in [2, 3, max_sequence_length_for_batch_size]:
-            __safe_eval_shape(
-                batch_size=batch_size,
-                sequence_length=sequence_length,
-                num_new_tokens=1,
-            )
-            if sequence_length > 2:
-                __safe_eval_shape(
-                    batch_size=batch_size,
-                    sequence_length=sequence_length,
-                    num_new_tokens=2,
-                )
-            if sequence_length > 3:
-                __safe_eval_shape(
-                    batch_size=batch_size,
-                    sequence_length=sequence_length,
-                    num_new_tokens=__max_new_tokens_for_sequence_length(sequence_length),
-                )
+        __safe_eval_shape(
+            batch_size=batch_size,
+            input_length=1,
+            num_new_tokens=1,
+        )
+
+        max_input_len = memory_scaling_model.max_input_len_for_prefill(batch_size, max_sequence_length-1)
+        __safe_eval_shape(
+            batch_size=batch_size,
+            input_length=max_input_len,
+            num_new_tokens=1,
+        )
 
     if verbose:
-        print("[Phase 2] Probing random valid tensor shapes.")
+        print("[Phase 2] Probing NEXT_TOKEN boundaries")
 
-    n_compiles = model.n_kernels
+    for batch_size in [1, max_batch_size]:
+        __safe_eval_shape(
+            batch_size=batch_size,
+            input_length=1,
+            num_new_tokens=2,
+        )
 
-    valid_shapes = []
-    for batch_size in range(1, 1 + max_batch_size):
-        this_max_sequence_length = __max_sequence_length_for_batch_size(batch_size)
-        for sequence_length in range(1, 1 + this_max_sequence_length):
-            this_max_new_tokens = __max_new_tokens_for_sequence_length(sequence_length)
-            for new_tokens in range(1, 1 + this_max_new_tokens):
-                valid_shapes.append((batch_size, sequence_length, new_tokens))
+        max_input_len = memory_scaling_model.max_input_len_for_nt(batch_size, 2, max_sequence_length-2)
+        __safe_eval_shape(
+            batch_size=batch_size,
+            input_length=max_input_len,
+            num_new_tokens=2,
+        )
+
+        max_output_len = memory_scaling_model.max_output_len_for_nt(batch_size, 1, max_new_tokens)
+        __safe_eval_shape(
+            batch_size=batch_size,
+            input_length=1,
+            num_new_tokens=max_output_len,
+        )
+
+        if max_output_len == max_new_tokens:
+            max_input_len = memory_scaling_model.max_input_len_for_nt(batch_size, max_new_tokens, max_sequence_length-max_new_tokens)
+
+            __safe_eval_shape(
+                batch_size=batch_size,
+                input_length=max_input_len,
+                num_new_tokens=max_new_tokens,
+            )
+        else:
+            mid_output_len = max_output_len // 2
+
+            max_input_len = memory_scaling_model.max_input_len_for_nt(batch_size, mid_output_len, max_sequence_length-mid_output_len)
+            __safe_eval_shape(
+                batch_size=batch_size,
+                input_length=max_input_len,
+                num_new_tokens=mid_output_len,
+            )
+
+    if verbose:
+        print("[Phase 3] Probing random valid shapes")
+
+    n_kernels_init = __get_n_kernels()
 
     rs = np.random.RandomState(seed=42)
     for i in range(n_samples):
-        shape = valid_shapes[rs.randint(low=0, high=len(valid_shapes))]
+        batch_size = rs.randint(low=1, high=(max_batch_size+1))
+        max_input_len = memory_scaling_model.max_input_len_for_prefill(batch_size, max_sequence_length-1)
+        input_len = rs.randint(low=1, high=(max_input_len+1))
+        try:
+            max_output_len = np.minimum(max_sequence_length-input_len, max_new_tokens)
+            max_output_len_ = memory_scaling_model.max_output_len_for_nt(batch_size, input_len, max_output_len)
+            output_len = rs.randint(low=1, high=(max_output_len_+1))
+        except:
+            output_len = 1
+
         __safe_eval_shape(
-            batch_size=shape[0],
-            sequence_length=shape[1],
-            num_new_tokens=shape[2],
+            batch_size=batch_size,
+            input_length=input_len,
+            num_new_tokens=output_len,
         )
+
         if verbose:
-            print(">> n_samples: %3d, n_new_compiles: %3d" % (i+1, model.n_kernels-n_compiles))
+            n_kernels = __get_n_kernels()
+            print(">> n_samples: %3d, n_new_compiles: %3d" % (i+1, n_kernels-n_kernels_init))

@@ -19,10 +19,19 @@ from text_generation_server.models import Model, get_model, Seq2SeqLM, PT2_COMPI
 from text_generation_server.models.flash_causal_lm import FlashCausalLM
 from text_generation_server.pb import generate_pb2_grpc, generate_pb2
 from text_generation_server.pb.generate_pb2 import ModelInfoResponse
+from text_generation_server.pb.generate_pb2 import MemoryScalingModel as MemoryScalingModelPB
 from text_generation_server.prompt_cache import PrefixNotFound
-from text_generation_server.utils import pt2_compile_warmup, print_rank_n
+from text_generation_server.utils import (
+    pt2_compile_warmup,
+    print_rank_n,
+    Estimator,
+    MemoryScalingModel,
+    ESTIMATE_MEMORY
+)
+from text_generation_server.utils.tensor import clean_attribute
 
 COMPACT_BEFORE_PREFILL = os.getenv("COMPACT_BEFORE_PREFILL", "true") != "false"
+
 
 HEALTHCHECK_BATCH_ID = (1 << 64) - 1
 
@@ -46,10 +55,11 @@ def log_rpc_handler_errors(func):
 
 
 class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
-    def __init__(self, model: Model, cache: Cache, server_urls: List[str]):
+    def __init__(self, model: Model, cache: Cache, server_urls: List[str], memory_scaling_model: MemoryScalingModelPB):
         self.cache = cache
         self.model = model
         self.server_urls = server_urls
+        self.memory_scaling_model = memory_scaling_model
 
     async def ServiceDiscovery(
         self, request: generate_pb2.ServiceDiscoveryRequest, context
@@ -70,6 +80,7 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
                 if isinstance(self.model, Seq2SeqLM) else ModelInfoResponse.ModelType.CAUSAL_LM,
             eos_token=self.model.config.eos_token_id,
             batch_padding=not isinstance(self.model, FlashCausalLM),
+            memory_scaling_model=self.memory_scaling_model,
         )
 
     @log_rpc_handler_errors
@@ -129,6 +140,7 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
                 output_tokens, input_token_info, decode_errors, forward_time_ns = self.model.generate_token(
                     batch, first=True, for_concat=for_concat,
                 )
+                clean_attribute("past_key_values", batch.past_key_values)
                 if not is_healthcheck:
                     self.cache.set(batch)
                 batch_id = batch.get_id()
@@ -206,7 +218,7 @@ def serve(
     max_sequence_length: int,
     max_new_tokens: int,
     max_batch_size: int,
-    max_batch_weight: Optional[int],
+    batch_safety_margin: int,
     sharded: bool,
     cuda_process_memory_fraction: float,
     uds_path: Path,
@@ -220,7 +232,7 @@ def serve(
         max_sequence_length: int,
         max_new_tokens: int,
         max_batch_size: int,
-        max_batch_weight: Optional[int],
+        batch_safety_margin: int,
         sharded: bool = False,
     ):
         unix_socket_template = "unix://{}-{}"
@@ -301,28 +313,54 @@ def serve(
                 t = threading.Thread(target=partial(log_gpu_stats, device, interval))
                 t.start()
 
-        if PT2_COMPILE:
+        def compile():
+            # start compiling
+            model.start_compile()
+
             # trigger pt2 compile for variety of tensor shapes
             print("Warming up PyTorch 2 compile...")
             warmup_t0 = time.time()
             pt2_compile_warmup(
                 model=model,
+                memory_scaling_model=memory_scaling_model,
                 max_batch_size=max_batch_size,
                 max_new_tokens=max_new_tokens,
                 max_sequence_length=max_sequence_length,
-                max_batch_weight=max_batch_weight,
                 n_samples=10,
                 verbose=True,
             )
-            warmup_t_elap = (time.time()-warmup_t0)/60.0
+            warmup_t_elap = (time.time() - warmup_t0) / 60.0
             print(f"Time spent during compile warmup: {warmup_t_elap:.2f} minutes")
-
             # no more compilations can occur after this
-            model.freeze_compile()
+            model.stop_compile()
+
+
+        def estimate_memory():
+            return Estimator.build_from_env(
+                model,
+                batch_safety_margin,
+            ).run()
+
+        run_estimate = PT2_COMPILE or ESTIMATE_MEMORY == "auto"
+        memory_scaling_model = MemoryScalingModel.disabled()
+
+        if run_estimate:
+            memory_scaling_model = estimate_memory()
+
+            if PT2_COMPILE:
+                compile()
+                memory_scaling_model = estimate_memory()
+                compile()
+        elif ESTIMATE_MEMORY == "manual":
+            batch_padding = not isinstance(model, FlashCausalLM)
+            if batch_padding:
+                memory_scaling_model = MemoryScalingModel.manual_quadratic(batch_safety_margin, max_sequence_length, max_batch_size)
+            else:
+                memory_scaling_model = MemoryScalingModel.manual_linear(batch_safety_margin, max_sequence_length, max_batch_size)
 
         server = aio.server()
         generate_pb2_grpc.add_TextGenerationServiceServicer_to_server(
-            TextGenerationService(model, Cache(), server_urls), server
+            TextGenerationService(model, Cache(), server_urls, memory_scaling_model.as_pb()), server
         )
         # SERVICE_NAMES = (
         #     generate_pb2.DESCRIPTOR.services_by_name["TextGenerationService"].full_name,
@@ -348,7 +386,7 @@ def serve(
             max_sequence_length,
             max_new_tokens,
             max_batch_size,
-            max_batch_weight,
+            batch_safety_margin,
         )
     )
 
