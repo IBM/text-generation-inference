@@ -28,6 +28,7 @@ class InferenceEngine(BaseInferenceEngine):
 
         # TODO: consider if Flash Attention should be enabled based on FLASH_ATTENTION=True
         if attn_impl := os.getenv("TRANSFORMERS_ATTN_IMPL"):
+            logger.info(f"Setting attn_implementation to {attn_impl}")
             kwargs["attn_implementation"] = attn_impl
 
         if model_config.model_type == "mpt":
