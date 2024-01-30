@@ -20,7 +20,11 @@ class BaseInferenceEngine(ABC):
         self.rank = int(os.getenv("RANK", "0"))
         self.world_size = int(os.getenv("WORLD_SIZE", "1"))
         if torch.cuda.is_available():
-            assert self.world_size <= torch.cuda.device_count(), "Each process is one gpu"
+            gpu_count = torch.cuda.device_count()
+            assert (
+                self.world_size <= gpu_count,
+                f"{self.world_size} shards configured but only {gpu_count} GPUs detected"
+            )
             device_index = self.rank % torch.cuda.device_count()
             torch.cuda.set_device(device_index)
             self.device = torch.device("cuda", device_index)

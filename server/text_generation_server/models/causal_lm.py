@@ -551,11 +551,12 @@ class CausalLM(Model):
         dtype: torch.dtype,
         quantize: Optional[str],
         model_config: Union[Any] = None,
+        max_sequence_length: Optional[int] = None,
     ):
         model_path = get_model_path(model_name, revision)
 
         inference_engine = get_inference_engine_class(deployment_framework)(
-            model_path, AutoModelForCausalLM, dtype, quantize, model_config,
+            model_path, AutoModelForCausalLM, dtype, quantize, model_config, max_sequence_length
         )
 
         super(CausalLM, self).__init__(inference_engine, dtype)

@@ -9,26 +9,27 @@ text-generation-server = 'text_generation_server.cli:app'
 
 [tool.poetry.dependencies]
 python = ">=3.11.0,<3.13"
-protobuf = "^4.25.1"
+protobuf = "^4.25.2"
 grpcio = "^1.60.0"
 grpcio-reflection = "^1.60.0"
 loguru = "^0.7.2"
 typer = "^0.9.0"
-accelerate = { version = "0.25.0", optional = true }
-bitsandbytes = { version = "^0.41.3", optional = true }
-scipy = { version = "^1.11.4", optional = true }
-safetensors = "^0.4.1"
+accelerate = { version = "0.26.1", optional = true }
+bitsandbytes = { version = "^0.42.0", optional = true }
+scipy = "^1.11.4"
+safetensors = "^0.4.2"
 sentencepiece = "^0.1.99"
 datasets = { version = "^2.15.0", optional = true }
 texttable = { version = "^1.7.0", optional = true }
-transformers = "4.36.2"
-optimum = { version = "^1.16.1", extras = ["onnxruntime-gpu"], optional = true }
+transformers = "4.37.1"
+optimum = { version = "^1.16.2", extras = ["onnxruntime-gpu"], optional = true }
 onnxruntime = { version = "^1.16.3", optional = true }
 onnxruntime-gpu = { version = "^1.16.3", optional = true }
 onnx = { version = "^1.15.0", optional = true }
 einops = "^0.7.0"
 
 # Explicitly install some transitive dependencies to avoid CVEs
+jinja2 = ">=3.1.3"
 aiohttp = ">=3.9.1"
 mpmath = ">=1.3.0"
 requests = ">=2.31.0"
@@ -37,8 +38,7 @@ cryptography = ">=41.0.7"
 
 [tool.poetry.extras]
 accelerate = ["accelerate"]
-# BNB doesn't declare a dep on scipy https://github.com/TimDettmers/bitsandbytes/pull/525
-bnb = ["bitsandbytes", "scipy"]
+bnb = ["bitsandbytes"]
 onnx = ["optimum", "onnxruntime", "onnx"]
 onnx-gpu = ["optimum", "onnxruntime-gpu", "onnx"]
 # These are only required if using the quantize cli command
@@ -46,7 +46,7 @@ quantize = ["datasets", "texttable"]
 
 [tool.poetry.group.dev.dependencies]
 grpcio-tools = "^1.60.0"
-pytest = "^7.4.3"
+pytest = "^7.4.4"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

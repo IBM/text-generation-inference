@@ -9,12 +9,13 @@ from typing import Any, Optional
 
 class InferenceEngine(BaseInferenceEngine):
     def __init__(
-            self,
-            model_path: str,
-            model_class: type[_BaseAutoModelClass],
-            dtype: torch.dtype,
-            quantize: Optional[str],
-            model_config: Optional[Any]
+        self,
+        model_path: str,
+        model_class: type[_BaseAutoModelClass],
+        dtype: torch.dtype,
+        quantize: Optional[str],
+        model_config: Optional[Any],
+        max_sequence_length: Optional[int],
     ) -> None:
         super().__init__(model_path, model_config)
 
@@ -32,7 +33,7 @@ class InferenceEngine(BaseInferenceEngine):
             # using LLM.int8()
             kwargs["load_in_8bit"] = True
         elif quantize is not None:
-            raise ValueError(f"{quantize} quantization not supported by hf_transformers engine")
+            raise ValueError(f"{quantize} quantization not supported by hf_accelerate engine")
         else:
             kwargs["torch_dtype"] = dtype
 

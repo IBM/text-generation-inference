@@ -2,9 +2,13 @@
 it does LRU eviction in a thread safe way correctly.
 """
 import gc
+import os
+from pathlib import Path
+
 import pytest
 from unittest.mock import patch
 import torch
+import safetensors.torch
 from threading import Lock
 from text_generation_server import prompt_cache
 
@@ -13,6 +17,32 @@ if torch.cuda.is_available():
     torch.set_default_device(DEVICE)
 else:
     DEVICE = None
+
+TESTS_DIR = os.path.dirname(__file__)
+REPO_ROOT = os.path.dirname(os.path.dirname(TESTS_DIR))
+INTEGRATION_TESTS_DIR = os.path.join(REPO_ROOT, "integration_tests")
+
+
+@pytest.fixture()
+def temp_prompt_store():
+    with patch("text_generation_server.prompt_cache.PREFIX_STORE_PATH", Path(os.path.join(INTEGRATION_TESTS_DIR, "prompt_prefixes"))):
+        yield
+
+
+@pytest.fixture()
+def tiny_starcoder_decoder_prompt(temp_prompt_store):
+    return "tiny_starcoder"
+
+
+@pytest.fixture()
+def tiny_raw_llama_peft_adapter_prompt(temp_prompt_store):
+    return "tinyllama_peft_adapter_raw"
+
+
+@pytest.fixture()
+def tiny_llama_peft_adapter_prompt(temp_prompt_store):
+    return "tinyllama_peft_adapter"
+
 
 @pytest.fixture()
 def temp_prompt_cache_enc_dec_meta():
@@ -24,8 +54,8 @@ def temp_prompt_cache_enc_dec_meta():
         dtype=dtype,
         max_length=16,
         encoder_decoder=True,
-        return_zero=False,
-        decoder_start_tok_embedding=torch.rand((1, 8), dtype=dtype, device='meta')
+        decoder_start_tok_embedding=torch.rand((1, 8), dtype=dtype, device='meta'),
+        return_zero=None,
     )
 
 @pytest.fixture()
@@ -36,8 +66,8 @@ def temp_prompt_cache():
         dtype=torch.float32,
         max_length=8,
         encoder_decoder=False,
-        return_zero=False,
-        decoder_start_tok_embedding=None
+        decoder_start_tok_embedding=None,
+        return_zero=None,
     )
 
 ### Tests for linked list operations
@@ -226,12 +256,12 @@ def test_get_prompt_cache_no_eviction(mock_load_tensors, temp_prompt_cache):
     assert len(temp_prompt_cache) == 1
     assert t1 is t2
 
-@patch("text_generation_server.prompt_cache.PromptCacheNode._get_prompt_size_mb")
+@patch("text_generation_server.prompt_cache.PromptCacheNode._get_prompt_stats")
 @patch("text_generation_server.prompt_cache.PrefixCache._load_embedding_tensors")
 def test_get_prompt_cache_with_eviction(mock_load_tensors, mock_get_prompt_size, temp_prompt_cache):
     """Ensure that if we need to make space, we evicted the least recently used tensor."""
     mock_load_tensors.return_value = torch.ones((3, 3))
-    mock_get_prompt_size.return_value = (prompt_cache.PROMPT_CACHE_SIZE_MB / 2) - 1
+    mock_get_prompt_size.return_value = (None, (prompt_cache.PROMPT_CACHE_SIZE_MB / 2) - 1)
     temp_prompt_cache.get("prompt1")
     temp_prompt_cache.get("prompt2")
     # Evicts lru prompt ID (prompt1)
@@ -245,12 +275,12 @@ def test_get_prompt_cache_with_eviction(mock_load_tensors, mock_get_prompt_size,
     assert len(temp_prompt_cache) == 2
     assert set(temp_prompt_cache.keys()) == set(["prompt2", "prompt4"])
 
-@patch("text_generation_server.prompt_cache.PromptCacheNode._get_prompt_size_mb")
+@patch("text_generation_server.prompt_cache.PromptCacheNode._get_prompt_stats")
 @patch("text_generation_server.prompt_cache.PrefixCache._load_embedding_tensors")
 def test_get_prompt_cache_tensor_too_large(mock_load_tensors, mock_get_prompt_size, temp_prompt_cache):
     """Ensure that an error is raised if a tensor greater than the cache size is found."""
     mock_load_tensors.return_value = torch.ones((3, 3))
-    mock_get_prompt_size.return_value = prompt_cache.PROMPT_CACHE_SIZE_MB + 1
+    mock_get_prompt_size.return_value = (None, prompt_cache.PROMPT_CACHE_SIZE_MB + 1)
     with pytest.raises(ValueError):
         temp_prompt_cache.get("prompt1")
 
@@ -285,11 +315,11 @@ def test_get_cache_len(mock_load_tensors, temp_prompt_cache):
 
 ### Test code paths for encoder decoder model
 # TODO: add more tests here!
-@patch("text_generation_server.prompt_cache.PrefixCache._load_embedding_tensor")
+@patch("text_generation_server.prompt_cache.PrefixCache._load_torch_file")
 def test_prompt_model_device_diff(mock_load, temp_prompt_cache_enc_dec_meta):
     # create prefix tensor on CPU which should be converted to the 'meta' device
     # before the decoder_start_tok_embedding is added to it
-    mock_load.return_value = torch.ones((3,8), device='cpu')
+    mock_load.return_value = torch.ones((4,8), device='cpu')
     temp_prompt_cache_enc_dec_meta.get("bad_prompt")
 
 ### Test cases for invalid prompts
@@ -360,3 +390,36 @@ def test_prompt_with_nan(mock_is_file, mock_torch_load, temp_prompt_cache):
     with pytest.raises(Exception):
         temp_prompt_cache.get("bad_prompt")
     assert len(temp_prompt_cache) == 0
+
+
+def test_prompt_cache_decoder_only_load(temp_prompt_cache, tiny_starcoder_decoder_prompt):
+    """Simple test that we can load a prompt with a decoder.pt file"""
+    # The cache should load this without raising
+    prompt = temp_prompt_cache.get(tiny_starcoder_decoder_prompt)
+
+    # Assert this is the same tensor that's in decoder.pt
+    decoder_pt_path = os.path.join(prompt_cache.PREFIX_STORE_PATH, tiny_starcoder_decoder_prompt, "decoder.pt")
+    decoder = torch.load(decoder_pt_path)
+    assert decoder.equal(prompt)
+
+
+def test_prompt_cache_peft_decoder_load(temp_prompt_cache, tiny_raw_llama_peft_adapter_prompt):
+    """Simple test that we can load a prompt for a decoder-only model saved with PEFT directly in adapter_model.bin format"""
+    # The cache should load this without raising
+    prompt = temp_prompt_cache.get(tiny_raw_llama_peft_adapter_prompt)
+
+    # Assert this is the same tensor that's in adapter_model.bin
+    adapter_model_path = os.path.join(prompt_cache.PREFIX_STORE_PATH, tiny_raw_llama_peft_adapter_prompt, "adapter_model.bin")
+    adapter_model = torch.load(adapter_model_path, map_location=torch.device('cpu'))
+    assert adapter_model["prompt_embeddings"].equal(prompt)
+
+
+def test_prompt_cache_safetensors_load(temp_prompt_cache, tiny_llama_peft_adapter_prompt):
+    """Simple test that we can load a prompt for a decoder-only model saved with PEFT directly in adapter_model.safetensors format"""
+    # The cache should load this without raising
+    prompt = temp_prompt_cache.get(tiny_llama_peft_adapter_prompt)
+
+    # Assert this is the same tensor that's in adapter_model.safetensors
+    adapter_model_path = os.path.join(prompt_cache.PREFIX_STORE_PATH, tiny_llama_peft_adapter_prompt, "adapter_model.safetensors")
+    adapter_model = safetensors.torch.load_file(adapter_model_path)
+    assert adapter_model["prompt_embeddings"].equal(prompt)

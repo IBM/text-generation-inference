@@ -29,5 +29,4 @@ patchesStrategicMerge:
                value: google/flan-ul2
              - name: DEPLOYMENT_FRAMEWORK
                value: hf_custom_tp
-             - name: MAX_BATCH_WEIGHT
-               value: "34543200"
+

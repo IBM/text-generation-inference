@@ -8,9 +8,6 @@ spec:
       containers:
         - name: server
           env:
-            # These values are based on the batch_size*seq_len^2 scaling
-            # Whereas in recent experiments the scaling appears to mostly
-            # more like batch_size*seq_len, so this should be revisited
             - name: MAX_SEQUENCE_LENGTH
               value: "2048"
             - name: MAX_NEW_TOKENS
@@ -19,7 +16,3 @@ spec:
               value: "32"
             - name: MAX_CONCURRENT_REQUESTS
               value: "64"
-            - name: MAX_BATCH_WEIGHT
-              value: "12000000"
-            - name: MAX_PREFILL_WEIGHT
-              value: "300000"

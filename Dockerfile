@@ -9,9 +9,10 @@ ARG PROTOC_VERSION=25.1
 #ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
 ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
 #ARG PYTORCH_VERSION=2.3.0.dev20231221
-ARG PYTORCH_VERSION=2.2.0.dev20231213
+ARG PYTORCH_VERSION=2.2.0.dev20231127
 
 ARG PYTHON_VERSION=3.11
+
 ARG PYTHON_SITE_PACKAGES=/usr/local/lib/python${PYTHON_VERSION}/site-packages
 ARG CONDA_SITE_PACKAGES=/opt/miniconda/lib/python${PYTHON_VERSION}/site-packages
 
@@ -22,6 +23,8 @@ FROM registry.access.redhat.com/ubi9/ubi:${BASE_UBI_IMAGE_TAG} as base
 ARG PYTHON_VERSION
 
 WORKDIR /app
+
+ARG PYTHON_VERSION
 
 RUN dnf remove -y --disableplugin=subscription-manager \
         subscription-manager \
@@ -203,15 +206,23 @@ RUN cd integration_tests && make install
 FROM cuda-devel as python-builder
 ARG PYTORCH_INDEX
 ARG PYTORCH_VERSION
+ARG PYTHON_VERSION
+ARG MINIFORGE_VERSION=23.3.1-1
+
+# consistent arch support anywhere we compile CUDA code
+ENV TORCH_CUDA_ARCH_LIST="8.0;8.6+PTX;8.9"
 
 RUN dnf install -y unzip git ninja-build && dnf clean all
 
-RUN cd ~ && \
-    curl -L -O https://repo.anaconda.com/miniconda/Miniconda3-py311_23.10.0-1-Linux-x86_64.sh && \
-    chmod +x Miniconda3-*-Linux-x86_64.sh && \
-    bash ./Miniconda3-*-Linux-x86_64.sh -bf -p /opt/miniconda
+RUN curl -fsSL -v -o ~/miniforge3.sh -O  "https://github.com/conda-forge/miniforge/releases/download/${MINIFORGE_VERSION}/Miniforge3-$(uname)-$(uname -m).sh" && \
+    chmod +x ~/miniforge3.sh && \
+    bash ~/miniforge3.sh -b -p /opt/conda && \
+    source "/opt/conda/etc/profile.d/conda.sh" && \
+    conda create -y -p /opt/tgis python=${PYTHON_VERSION} && \
+    conda activate /opt/tgis && \
+    rm ~/miniforge3.sh
 
-ENV PATH=/opt/miniconda/bin:$PATH
+ENV PATH=/opt/tgis/bin/:$PATH
 
 # Install specific version of torch
 RUN pip install ninja==1.11.1.1 --no-cache-dir
@@ -220,6 +231,7 @@ RUN pip install torch==$PYTORCH_VERSION+cu118 --index-url "${PYTORCH_INDEX}/cu11
 
 ## Build flash attention v2 ####################################################
 FROM python-builder as flash-att-v2-builder
+ARG FLASH_ATT_VERSION=v2.3.6
 
 ARG FLASH_ATTN_V2_VERSION
 
@@ -262,6 +274,15 @@ WORKDIR /usr/src
 
 RUN MAX_JOBS=2 pip install "git+https://github.com/Dao-AILab/flash-attention.git@v${FLASH_ATTN_VERSION}#subdirectory=csrc/rotary"
 
+## Install auto-gptq ###########################################################
+FROM python-builder as auto-gptq-installer
+ARG AUTO_GPTQ_REF=ccb6386ebfde63c17c45807d38779a93cd25846f
+
+WORKDIR /usr/src/auto-gptq-wheel
+
+# numpy is required to run auto-gptq's setup.py
+RUN pip install numpy
+RUN DISABLE_QIGEN=1 pip wheel git+https://github.com/AutoGPTQ/AutoGPTQ@${AUTO_GPTQ_REF} --no-cache-dir --no-deps --verbose
 
 ## Build libraries #############################################################
 FROM python-builder as build
@@ -279,7 +300,7 @@ FROM python-builder as exllama-kernels-builder
 WORKDIR /usr/src
 
 COPY server/exllama_kernels/ .
-RUN TORCH_CUDA_ARCH_LIST="8.0;8.6+PTX;8.9" python setup.py build
+RUN python setup.py build
 
 
 ## Build transformers exllamav2 kernels ########################################
@@ -288,7 +309,7 @@ FROM python-builder as exllamav2-kernels-builder
 WORKDIR /usr/src
 
 COPY server/exllamav2_kernels/ .
-RUN TORCH_CUDA_ARCH_LIST="8.0;8.6+PTX;8.9" python setup.py build
+RUN python setup.py build
 
 
 ## Flash attention cached build image ##########################################
@@ -307,6 +328,12 @@ ARG CONDA_SITE_PACKAGES
 COPY --from=flash-att-v2-builder ${CONDA_SITE_PACKAGES}/flash_attn* ${CONDA_SITE_PACKAGES}/
 
 
+## Auto gptq cached build image
+FROM base as auto-gptq-cache
+
+# Cache just the wheel we built for auto-gptq
+COPY --from=auto-gptq-installer /usr/src/auto-gptq-wheel /usr/src/auto-gptq-wheel
+
 ## Final Inference Server image ################################################
 FROM cuda-runtime as server-release
 ARG CONDA_SITE_PACKAGES
@@ -317,9 +344,9 @@ RUN dnf install -y gcc-c++ && dnf clean all \
 
 SHELL ["/bin/bash", "-c"]
 
-COPY --from=build /opt/miniconda/ /opt/miniconda/
+COPY --from=build /opt/tgis /opt/tgis
 
-ENV PATH=/opt/miniconda/bin:$PATH
+ENV PATH=/opt/tgis/bin:$PATH
 
 # These could instead come from explicitly cached images
 
@@ -336,6 +363,10 @@ COPY --from=exllama-kernels-builder /usr/src/build/lib.linux-x86_64-cpython-* ${
 
 # Copy build artifacts from exllamav2 kernels builder
 COPY --from=exllamav2-kernels-builder /usr/src/build/lib.linux-x86_64-cpython-* ${CONDA_SITE_PACKAGES}
+
+# Copy over the auto-gptq wheel and install it
+RUN --mount=type=bind,from=auto-gptq-cache,src=/usr/src/auto-gptq-wheel,target=/usr/src/auto-gptq-wheel \
+    pip install /usr/src/auto-gptq-wheel/*.whl --no-cache-dir
 
 # Install server
 COPY proto proto

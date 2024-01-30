@@ -1,5 +1,4 @@
 include Makefile-flash-att
-include Makefile-flash-att-v2
 
 gen-server:
 	# Compile protos

@@ -1,8 +1,10 @@
 use clap::Parser;
+use nix::sys::signal::{self, Signal};
+use nix::unistd::Pid;
 use std::env;
 use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::path::Path;
-use std::process::ExitCode;
+use std::process::{Command, ExitCode, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::TryRecvError;
 use std::sync::Arc;
@@ -13,8 +15,8 @@ use std::time::{Duration, Instant};
 use std::{fs, io};
 use std::env::VarError;
 use std::ffi::OsString;
-use subprocess::{Popen, PopenConfig, PopenError, Redirection};
-use tracing::info;
+use std::os::unix::process::CommandExt;
+use tracing::{info, warn};
 
 // In most cases this gives the best performance for inferencing
 const DEFAULT_PYTORCH_CUDA_ALLOC_CONF: &'static str = "expandable_segments:True";
@@ -45,10 +47,10 @@ struct Args {
     max_new_tokens: usize,
     #[clap(default_value = "12", long, env)]
     max_batch_size: usize,
-    #[clap(default_value = None, long, env)]
-    max_batch_weight: Option<usize>,
-    #[clap(default_value = None, long, env)]
-    max_prefill_weight: Option<usize>,
+    #[clap(default_value = "0.2", long, env)]
+    max_prefill_padding: f32,
+    #[clap(default_value = "20", long, env)]
+    batch_safety_margin: usize,
     #[clap(default_value = "24", long, env)]
     max_waiting_tokens: usize,
     #[clap(default_value = "3000", long, short, env)]
@@ -108,6 +110,20 @@ fn main() -> ExitCode {
         &args.model_name, args.revision.as_deref()
     ).expect("Could not find tokenizer for model");
 
+    match env::var("MAX_BATCH_WEIGHT") {
+        Ok(max_batch_weight) if !max_batch_weight.trim().is_empty() => {
+            warn!("MAX_BATCH_WEIGHT is set to {max_batch_weight} but this parameter will be ignored.");
+        }
+        _ => {}
+    }
+
+    match env::var("MAX_PREFILL_WEIGHT") {
+        Ok(max_prefill_weight) if !max_prefill_weight.trim().is_empty() => {
+            warn!("MAX_PREFILL_WEIGHT is set to {max_prefill_weight} but this parameter will be ignored.");
+        }
+        _ => {}
+    }
+
     // Set PYTORCH_CUDA_ALLOC_CONF to default value if it's not set in the environment
     let cuda_alloc_conf = match env::var("PYTORCH_CUDA_ALLOC_CONF") {
         Err(VarError::NotPresent) if DEFAULT_PYTORCH_CUDA_ALLOC_CONF == "" => None,
@@ -160,7 +176,7 @@ fn main() -> ExitCode {
                 args.max_sequence_length,
                 args.max_new_tokens,
                 args.max_batch_size,
-                args.max_batch_weight,
+                args.batch_safety_margin,
                 args.shard_uds_path,
                 args.cuda_process_memory_fraction,
                 cuda_alloc_conf,
@@ -189,8 +205,7 @@ fn main() -> ExitCode {
             Err(TryRecvError::Empty) => {
                 sleep(Duration::from_millis(100));
             }
-            Ok(ShardStatus::Failed((rank, err))) => {
-                tracing::error!("Shard {rank} failed to start:\n{err}");
+            Ok(ShardStatus::Failed) => {
                 shutdown_shards(shutdown, shutdown_receiver);
                 return ExitCode::FAILURE;
             }
@@ -212,7 +227,6 @@ fn main() -> ExitCode {
     // Start webserver
     info!("Starting Router");
     let mut argv = vec![
-        "text-generation-router".to_string(),
         "--max-concurrent-requests".to_string(),
         args.max_concurrent_requests.to_string(),
         "--max-sequence-length".to_string(),
@@ -221,6 +235,8 @@ fn main() -> ExitCode {
         args.max_new_tokens.to_string(),
         "--max-batch-size".to_string(),
         args.max_batch_size.to_string(),
+        "--max-prefill-padding".to_string(),
+        args.max_prefill_padding.to_string(),
         "--max-waiting-tokens".to_string(),
         args.max_waiting_tokens.to_string(),
         "--port".to_string(),
@@ -232,15 +248,6 @@ fn main() -> ExitCode {
         "--tokenizer-path".to_string(),
         tokenizer_path,
     ];
-
-    if let Some(max_batch_weight) = args.max_batch_weight {
-        argv.push("--max-batch-weight".to_string());
-        argv.push(max_batch_weight.to_string());
-    }
-    if let Some(max_prefill_weight) = args.max_prefill_weight {
-        argv.push("--max-prefill-weight".to_string());
-        argv.push(max_prefill_weight.to_string());
-    }
 
     if let Some(path) = args.tls_key_path {
         argv.push("--tls-key-path".to_string());
@@ -267,27 +274,20 @@ fn main() -> ExitCode {
         argv.push("--default-include-stop-seqs".into());
     }
 
-    let mut webserver = match Popen::create(
-        &argv,
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            // Needed for the shutdown procedure
-            setpgid: true,
-            // env: Some(vec![("RUST_BACKTRACE".into(), "1".into())]),
-            ..Default::default()
-        },
-    ) {
+    let mut webserver = match Command::new("text-generation-router")
+        .args(argv)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0)
+        .spawn()
+    {
         Ok(p) => p,
         Err(err) => {
-            tracing::error!("Failed to start webserver: {err}");
-            if let PopenError::IoError(err) = err {
-                if err.kind() == io::ErrorKind::NotFound {
-                    tracing::error!("text-generation-router not found in PATH");
-                    tracing::error!("Please install it with `make install-router`")
-                }
+            if err.kind() == ErrorKind::NotFound {
+                tracing::error!("text-generation-router not found in PATH");
+                tracing::error!("Please install it with `make install-router`")
             } else {
-                tracing::error!("{err}");
+                tracing::error!("Failed to start webserver: {err}");
             }
 
             shutdown_shards(shutdown, &shutdown_receiver);
@@ -314,28 +314,25 @@ fn main() -> ExitCode {
     let mut exit_code = ExitCode::SUCCESS;
 
     while running.load(Ordering::SeqCst) {
-        if let Ok(ShardStatus::Failed((rank, err))) = status_receiver.try_recv() {
-            tracing::error!("Shard {rank} failed: {err}");
+        if let Ok(ShardStatus::Failed) = status_receiver.try_recv() {
             exit_code = ExitCode::FAILURE;
             break;
         };
 
-        match webserver.poll() {
+        match webserver.try_wait().expect("Error polling status of router process") {
             Some(_) => {
                 tracing::error!("Webserver Crashed");
                 shutdown_shards(shutdown, &shutdown_receiver);
                 return ExitCode::FAILURE;
-            }
-            None => {
-                sleep(Duration::from_millis(100));
-            }
+            },
+            None => sleep(Duration::from_millis(100)),
         };
     }
 
     // Graceful termination
-    webserver.terminate().unwrap();
+    signal::kill(Pid::from_raw(webserver.id() as i32), Signal::SIGTERM).unwrap();
     info!("Waiting for router to gracefully shutdown");
-    webserver.wait_timeout(Duration::from_secs(120)).unwrap();
+    webserver.wait().unwrap();
     info!("Router terminated");
     shutdown_shards(shutdown, &shutdown_receiver);
 
@@ -388,7 +385,7 @@ fn find_num_shards(num_shard: Option<usize>) -> usize {
 #[derive(Debug)]
 enum ShardStatus {
     Ready,
-    Failed((usize, String)),
+    Failed,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -401,7 +398,7 @@ fn shard_manager(
     max_sequence_length: usize,
     max_new_tokens: usize,
     max_batch_size: usize,
-    max_batch_weight: Option<usize>,
+    batch_safety_margin: usize,
     uds_path: String,
     cuda_process_memory_fraction: f32,
     cuda_alloc_conf: Option<&str>,
@@ -417,11 +414,12 @@ fn shard_manager(
     let uds_string = format!("{uds_path}-{rank}");
     let uds = Path::new(&uds_string);
     // Clean previous runs
-    fs::remove_file(uds).unwrap_or_default();
+    if uds.exists() {
+        fs::remove_file(uds).unwrap_or_default();
+    }
 
     // Process args
     let mut shard_argv = vec![
-        "text-generation-server".to_string(),
         "serve".to_string(),
         model_name,
         deployment_framework,
@@ -433,6 +431,8 @@ fn shard_manager(
         max_new_tokens.to_string(),
         "--max-batch-size".to_string(),
         max_batch_size.to_string(),
+        "--batch-safety-margin".to_string(),
+        batch_safety_margin.to_string(),
         "--uds-path".to_string(),
         uds_path,
         "--cuda-process-memory-fraction".to_string(),
@@ -458,12 +458,6 @@ fn shard_manager(
     if let Some(revision) = revision {
         shard_argv.push("--revision".to_string());
         shard_argv.push(revision);
-    }
-
-    // Maximum batch weight - used only for PT2 compile
-    if let Some(max_batch_weight) = max_batch_weight {
-        shard_argv.push("--max-batch-weight".to_string());
-        shard_argv.push(max_batch_weight.to_string());
     }
 
     // Copy current process env
@@ -513,30 +507,24 @@ fn shard_manager(
 
     // Start process
     info!("Starting shard {rank}");
-    let mut p = match Popen::create(
-        &shard_argv,
-        PopenConfig {
-            stdout: Redirection::Pipe,
-            stderr: Redirection::Pipe,
-            // Needed for the shutdown procedure
-            setpgid: true,
-            // NCCL env vars
-            env: Some(env),
-            ..Default::default()
-        },
-    ) {
+    let mut p = match Command::new("text-generation-server")
+        .args(shard_argv)
+        .envs(env)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0)
+        .spawn()
+    {
         Ok(p) => p,
         Err(err) => {
-            if let PopenError::IoError(ref err) = err {
-                if err.kind() == io::ErrorKind::NotFound {
-                    tracing::error!("text-generation-server not found in PATH");
-                    tracing::error!("Please install it with `make install-server`")
-                }
+            if err.kind() == ErrorKind::NotFound {
+                tracing::error!("text-generation-server not found in PATH");
+                tracing::error!("Please install it with `make install-server`")
+            } else {
+                tracing::error!("Shard {rank} failed to start:\n{err}");
             }
-            status_sender
-                .send(ShardStatus::Failed((rank, err.to_string())))
-                .unwrap();
-            return;
+            status_sender.send(ShardStatus::Failed).unwrap();
+            return
         }
     };
 
@@ -559,20 +547,26 @@ fn shard_manager(
     let mut wait_time = Instant::now();
     loop {
         // Process exited
-        if let Some(status) = p.poll() {
-            // Ensure we finish propagating any final stdout/stderr from the shard
-            stdout_thread.join().unwrap_or_default();
-            io::stdout().flush().unwrap_or_default();
-            stderr_thread.join().unwrap_or_default();
-            io::stderr().flush().unwrap_or_default();
-            status_sender.send(ShardStatus::Failed((rank, format!("{status:?}")))).unwrap();
+        if let Some(status) = p.try_wait()
+                .expect(&*format!("Error polling status of shard {rank}")) {
+            if *shutdown.lock().unwrap() {
+                info!("Shard {rank} terminated");
+            } else {
+                tracing::error!("Shard {rank} failed: {status:?}");
+                // Ensure we finish propagating any final stdout/stderr from the shard
+                stdout_thread.join().unwrap_or_default();
+                io::stdout().flush().unwrap_or_default();
+                stderr_thread.join().unwrap_or_default();
+                io::stderr().flush().unwrap_or_default();
+                status_sender.send(ShardStatus::Failed).unwrap();
+            }
             return
         }
 
         // We received a shutdown signal
         if *shutdown.lock().unwrap() {
-            p.terminate().unwrap();
-            let _ = p.wait_timeout(Duration::from_secs(90));
+            p.kill().unwrap();
+            let _ = p.wait().unwrap();
             info!("Shard {rank} terminated");
             return
         }

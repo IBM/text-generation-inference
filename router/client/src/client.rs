@@ -76,7 +76,7 @@ impl Client {
 
     /// Get shard model info
     #[instrument(skip(self))]
-    pub async fn model_info(&mut self) -> Result<(ModelType, u32, bool)> {
+    pub async fn model_info(&mut self) -> Result<(ModelType, u32, bool, MemoryScalingModel)> {
         let request = tonic::Request::new(ModelInfoRequest {});
         let response = self.stub
             .model_info(request)
@@ -84,7 +84,12 @@ impl Client {
             .await?
             .into_inner();
         ModelType::try_from(response.model_type)
-            .map(|mt| (mt, response.eos_token, response.batch_padding))
+            .map(|mt| (
+                mt,
+                response.eos_token,
+                response.batch_padding,
+                response.memory_scaling_model.unwrap(),
+            ))
             .map_err(|_| ClientError::Generation("Unrecognized model type".to_string()))
     }
 

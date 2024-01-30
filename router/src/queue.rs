@@ -1,6 +1,5 @@
 use crate::{GenerateParameters, GenerateRequest};
 use std::collections::{BTreeSet, VecDeque};
-use std::marker::PhantomData;
 use std::mem::take;
 use std::ops::Add;
 use std::time::Duration;
@@ -103,8 +102,8 @@ pub(crate) struct BatchingConfig {
     pub(crate) size_limit: usize,
     /// Maximum batch "weight" at any point of time (takes sequence lengths into account)
     pub(crate) weight_limit: usize,
-    /// Maximum weight of individual prefill batches
-    pub(crate) prefill_weight_limit: usize,
+    /// Maximum percentage of pad tokens in prefill batches. In range [0, 1]
+    pub(crate) prefill_padding_limit: f32,
 }
 
 /// Request Queue
@@ -112,8 +111,8 @@ pub(crate) struct BatchingConfig {
 pub(crate) struct Queue<B: BatchType> {
     /// Batching config
     config: BatchingConfig,
-    /// Just for type inference
-    batch_type: PhantomData<B>,
+    /// Batch type
+    batch_type: B,
 
     receiver: Receiver<Vec<Entry>>,
     // Staging buffer, filled until max_size is reached
@@ -141,7 +140,7 @@ impl<B: BatchType> Queue<B> {
             buffer: VecDeque::new(),
             next_id: 0,
             next_batch_id: 1,
-            batch_type: PhantomData,
+            batch_type: _batch_type,
             last_logged: None,
             empty_map: IntMap::default(),
         }
@@ -242,16 +241,22 @@ impl<B: BatchType> Queue<B> {
 
         // Compute the effective prefill weight limit, taking into account space already consumed
         // by the in-progress batch
-        let effective_prefill_weight_limit = match self.config.prefill_weight_limit {
+        let effective_prefill_weight_limit = match self.config.weight_limit {
             prefill_limit if prefill_limit == 0 || total_count == 0 => prefill_limit,
             prefill_limit => {
-                let current_batch_weight = <B>::batch_initial_weight(&batch_stats, total_count);
+                let current_batch_weight = self.batch_type.batch_initial_weight(&batch_stats, total_count);
                 let pct_space_free = 1.0 - (
                     current_batch_weight as f64 / self.config.weight_limit as f64
                 );
-                (pct_space_free * prefill_limit as f64) as usize
+                let limit = (pct_space_free * prefill_limit as f64) as usize;
+                if limit == 0 {
+                    return None
+                }
+                limit
             },
         };
+        let max_prefill_padding = self.config.prefill_padding_limit;
+
         // We first do a read-only pass over the queue to allow skipping over large entries
         // that don't fit in the current batch to reach smaller entries that do
         for (index, entry) in self.buffer.iter().enumerate() {
@@ -267,7 +272,7 @@ impl<B: BatchType> Queue<B> {
             );
 
             // Avoid more granular analysis if possible
-            if <B>::batch_max_weight(&next_stats, total_count + 1) > config.weight_limit {
+            if self.batch_type.batch_max_weight(&next_stats, total_count + 1) > config.weight_limit {
                 // We aren't sure whether this next request will fit, so populate
                 // a btree with the current batch of requests, the set of
                 // requests already evaluated, and this one, and perform more
@@ -294,7 +299,7 @@ impl<B: BatchType> Queue<B> {
                 tree.insert((output_len, input_len, tree.len()));
 
                 // Perform analysis
-                if <B>::exceeds_weight(tree, config.weight_limit, output_len) {
+                if self.batch_type.exceeds_weight(tree, config.weight_limit, output_len) {
                     if chosen_indices.len() + buffer_size < min_size + index + 1 {
                         // We don't have enough remaining to meet min_size
                         self.last_logged = None;
@@ -316,14 +321,31 @@ impl<B: BatchType> Queue<B> {
             }
 
             // Also check whether adding this request will breach the prefill weight limit
-            if effective_prefill_weight_limit > 0 {
+            if effective_prefill_weight_limit > 0 || max_prefill_padding < 1.0 {
                 let next_prefill_stats = <B>::update_stats(
                     &prefill_stats, input_len, 0
                 );
-                let prefill_weight = <B>::prefill_weight(
-                    &next_prefill_stats, chosen_indices.len() + 1
-                );
-                if prefill_weight > effective_prefill_weight_limit {
+                let batch_size = chosen_indices.len() + 1;
+                let mut skip = false;
+                if effective_prefill_weight_limit > 0 {
+                    let prefill_weight = self.batch_type.prefill_weight(
+                        &next_prefill_stats, batch_size
+                    );
+                    if prefill_weight > effective_prefill_weight_limit {
+                        skip = true;
+                        metrics::increment_counter!("tgi_prefill_weight_limit_exceeded");
+                    }
+                }
+                if !skip && max_prefill_padding < 1.0 {
+                    let percentage_padding = <B>::percent_padding(&next_prefill_stats, batch_size);
+                    if percentage_padding > max_prefill_padding {
+                        skip = true;
+                        //TODO if we skip due to padding and added other requests from queue,
+                        // we could consider doing another pass since the padding proportion may have decreased
+                        metrics::increment_counter!("tgi_prefill_padding_limit_exceeded");
+                    }
+                }
+                if skip {
                     if let Some(tree) = btree.as_mut() {
                         // Remove our tuple from the set
                         tree.remove(&(output_len, input_len, tree.len() - 1));

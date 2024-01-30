@@ -25,7 +25,7 @@ def serve(
     max_sequence_length: int = 2048,
     max_new_tokens: int = 1024,
     max_batch_size: int = 12,
-    max_batch_weight: Optional[int] = None,
+    batch_safety_margin: int = 20,
     revision: Optional[str] = None,
     sharded: bool = False,
     cuda_process_memory_fraction: float = 1.0,
@@ -57,7 +57,7 @@ def serve(
         max_sequence_length,
         max_new_tokens,
         max_batch_size,
-        max_batch_weight,
+        batch_safety_margin,
         sharded,
         cuda_process_memory_fraction,
         uds_path

@@ -1,4 +1,3 @@
-use std::marker::PhantomData;
 use crate::{
     Batcher, Details, ErrorResponse, GenerateRequest, GeneratedText, Validation,
 };
@@ -177,64 +176,41 @@ async fn generate(
 }
 
 
-struct BatchConfigValidator<B: BatchType> {
-    batch_type: PhantomData<B>
+struct BatchConfigValidator<'a, B: BatchType> {
+    batch_type: &'a B
 }
 
-impl<B: BatchType> BatchConfigValidator<B> {
+impl<'a, B: BatchType> BatchConfigValidator<'a, B> {
     fn validate_batch_config(
         &self,
         max_sequence_length: usize,
         max_batch_size: usize,
-        max_batch_weight: Option<usize>,
-        max_prefill_weight: Option<usize>,
-    ) -> (usize, usize) {
+        max_batch_weight: usize,
+    ) {
         let single_request_stats = <B>::update_stats(
             &B::Stats::default(), max_sequence_length, 0
         );
-        let single_request_weight = <B>::batch_initial_weight(
+
+        let single_request_prefill_weight = self.batch_type.prefill_weight(
             &single_request_stats, 1
         );
-        let weight_upper_bound = single_request_weight * max_batch_size;
-
-        let max_prefill_weight = max_prefill_weight.unwrap_or(
-            <B>::default_max_prefill_weight()
-        );
-
-        // 0 means no max
-        if max_prefill_weight > 0 {
-            let single_request_prefill_weight = <B>::prefill_weight(
-                &single_request_stats, 1
-            );
-            if max_prefill_weight < single_request_prefill_weight {
-                panic!(
-                    "max_prefill_weight ({}) not large enough for max_sequence_length ({})",
-                    max_prefill_weight, max_sequence_length
-                )
-            }
+        if max_batch_weight < single_request_prefill_weight {
+            panic!(
+                "max_batch_weight ({}) not large enough for (prefill) max_sequence_length ({})",
+                max_batch_weight, max_sequence_length
+            )
         }
 
-        let max_batch_weight = if let Some(mut max_batch_weight) = max_batch_weight {
-            if max_batch_weight < single_request_weight {
-                panic!(
-                    "max_batch_weight ({}) not large enough for max_sequence_length ({})",
-                    max_batch_weight, max_sequence_length
-                )
-            }
-            if max_batch_weight > weight_upper_bound {
-                warn!(
-                    "Reducing specified max_batch_weight ({}) to ({}) which is an \
-                    upper bound based on max_sequence_length ({}) and max_batch_size ({})",
-                    max_batch_weight, weight_upper_bound, max_sequence_length, max_batch_size
-                );
-                max_batch_weight = weight_upper_bound
-            }
-            max_batch_weight
-        } else {
-            weight_upper_bound
-        };
+        let single_request_nexttoken_weight = self.batch_type.batch_initial_weight(
+            &single_request_stats, 1
+        );
+        if max_batch_weight < single_request_nexttoken_weight {
+            panic!(
+                "max_batch_weight ({}) not large enough for (next-token) max_sequence_length ({})",
+                max_batch_weight, max_sequence_length
+            )
+        }
 
-        (max_batch_weight, max_prefill_weight)
     }
 }
 
@@ -243,8 +219,7 @@ pub struct ServerRunArgs {
     pub max_sequence_length: usize,
     pub max_new_tokens: usize,
     pub max_batch_size: usize,
-    pub max_batch_weight: Option<usize>,
-    pub max_prefill_weight: Option<usize>,
+    pub max_prefill_padding: f32,
     pub max_waiting_tokens: usize,
     pub client: ShardedClient,
     pub tokenizer: Tokenizer,
@@ -265,15 +240,30 @@ async fn metrics(prom_handle: Extension<PrometheusHandle>) -> String {
 #[allow(clippy::too_many_arguments)]
 pub async fn run(mut args: ServerRunArgs) {
     // Query shard for model info
-    let (seq2seq, eos_token_id, use_padding) = args.client.model_info().await
+    let (seq2seq, eos_token_id, use_padding, model) = args.client.model_info().await
         .expect("Error contacting model shard");
     tracing::info!("Shard model info: is_seq2seq = {seq2seq}, eos_token_id = {eos_token_id}, \
         use_padding = {use_padding}");
 
     if use_padding {
-        do_run(args, seq2seq, eos_token_id, PaddedBatch{}).await
+        // For now, we are not tracking the batch encoder and decoder input tokens separately
+        // in the encoder-decoder model case, so we use the worst-case coefficient.
+        // A more precise weight estimate would be given by:
+        //     (coef0 * encoder_input_len + coef1 * decoder_input_len) * batch_size
+        let nexttoken_gradient = f32::max(model.nexttoken_linear_coef0, model.nexttoken_linear_coef1) as f64;
+
+        do_run(args, seq2seq, eos_token_id, model.weight_limit as usize, PaddedBatch{
+            prefill_linear_coef1: model.prefill_linear_coef0 as f64,
+            prefill_quadratic_coef1: model.prefill_quadratic_coef0 as f64,
+            prefill_quadratic_coef2: model.prefill_quadratic_coef1 as f64,
+            nexttoken_gradient,
+        }).await
     } else {
-        do_run(args, seq2seq, eos_token_id, FlashBatch{}).await
+        args.max_prefill_padding = 1.0; // There's no padding so disable checking for this
+        do_run(args, seq2seq, eos_token_id, model.weight_limit as usize, FlashBatch {
+            prefill_gradient: model.prefill_linear_coef0 as f64,
+            nexttoken_gradient: model.nexttoken_linear_coef1 as f64, // decoder coefficient
+        }).await
     }
 }
 
@@ -281,18 +271,23 @@ pub async fn run(mut args: ServerRunArgs) {
 /// Serving method
 #[allow(clippy::too_many_arguments)]
 async fn do_run<B: BatchType>(
-    args: ServerRunArgs, seq2seq: bool, eos_token_id: u32, batch_type: B
+    args: ServerRunArgs, seq2seq: bool, eos_token_id: u32, batch_weight_limit: usize, batch_scaling: B,
 ) {
-    let batch_config_validator = BatchConfigValidator::<B>{batch_type: PhantomData};
+    let batch_config_validator = BatchConfigValidator::<B>{batch_type: &batch_scaling};
+
+    tracing::info!("Using batch weight limit: {}", batch_weight_limit);
 
     // If max batch weight is not set, infer from max batch size and max seq length
-    let (max_batch_weight, max_prefill_weight) = batch_config_validator
-        .validate_batch_config(
-            args.max_sequence_length,
-            args.max_batch_size,
-            args.max_batch_weight,
-            args.max_prefill_weight,
-        );
+    batch_config_validator.validate_batch_config(
+        args.max_sequence_length,
+        args.max_batch_size,
+        batch_weight_limit,
+    );
+
+    let max_prefill_padding = args.max_prefill_padding;
+    if max_prefill_padding < 0.0 || max_prefill_padding > 1.0 {
+        panic!("max_prefill_padding ({}) must be a percentage in the range [0.0, 1.0]", max_prefill_padding)
+    }
 
     let tokenizers = AsyncTokenizer::new(
         &args.tokenizer, args.tokenization_workers
@@ -310,14 +305,14 @@ async fn do_run<B: BatchType>(
         args.client.clone(),
         BatchingConfig {
             size_limit: args.max_batch_size,
-            weight_limit: max_batch_weight,
-            prefill_weight_limit: max_prefill_weight,
+            weight_limit: batch_weight_limit,
+            prefill_padding_limit: max_prefill_padding,
         },
         args.max_waiting_tokens,
         args.max_concurrent_requests,
         decoder,
         generation_health,
-        batch_type,
+        batch_scaling,
     );
     let validation = Validation::new(
         tokenizers.clone(),
