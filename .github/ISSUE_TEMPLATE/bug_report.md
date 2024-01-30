@@ -11,12 +11,22 @@ assignees: ""
 <!-- A clear and concise description of what the bug is. -->
 
 **To Reproduce**
-Steps to reproduce the behavior:
 
-1. Go to '...'
-2. Click on '....'
-3. Scroll down to '....'
-4. See error
+Script that can be used to send a request that reproduced the behavior (preferably using `grpcurl`):
+```
+  grpcurl -plaintext -proto proto/generation.proto -d \
+    '{
+      "model_id": "",
+      "requests": [
+        {
+          "text": "<Text that causes the bad behavior>"
+        }
+      ],
+      "params":{
+      }
+    }' \
+    localhost:8033 fmaas.GenerationService/Generate
+```
 
 **Expected behavior**
 
@@ -28,9 +38,9 @@ Steps to reproduce the behavior:
 
 **Environment (please complete the following information):**
 
-- OS: [e.g. iOS]
-- Browser [e.g. chrome, safari]
-- Version [e.g. 22]
+- OS/Architecture [e.g. linux amd64]
+- Version [e.g. git commit short-hash 5f67482]
+- Model [e.g. bigscience/bloom]
 
 **Additional context**
 
