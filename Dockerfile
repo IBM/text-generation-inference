@@ -6,15 +6,16 @@ ARG FLASH_ATTN_V2_VERSION=2.3.6
 
 ARG PROTOC_VERSION=25.1
 
-#ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
-ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
-ARG PYTORCH_VERSION=2.2.0.dev20231213
+ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
+#ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
+ARG PYTORCH_VERSION=2.2.0
 #ARG PYTORCH_VERSION=2.3.0.dev20231221
 
 ARG PYTHON_VERSION=3.11
 
 ARG PYTHON_SITE_PACKAGES=/usr/local/lib/python${PYTHON_VERSION}/site-packages
-ARG CONDA_SITE_PACKAGES=/opt/miniconda/lib/python${PYTHON_VERSION}/site-packages
+ARG CONDA_ENV=/opt/tgis
+ARG CONDA_SITE_PACKAGES=${CONDA_ENV}/lib/python${PYTHON_VERSION}/site-packages
 
 
 ## Base Layer ##################################################################
@@ -208,6 +209,7 @@ ARG PYTORCH_INDEX
 ARG PYTORCH_VERSION
 ARG PYTHON_VERSION
 ARG MINIFORGE_VERSION=23.3.1-1
+ARG CONDA_ENV
 
 # consistent arch support anywhere we compile CUDA code
 ENV TORCH_CUDA_ARCH_LIST="8.0;8.6+PTX;8.9"
@@ -218,11 +220,11 @@ RUN curl -fsSL -v -o ~/miniforge3.sh -O  "https://github.com/conda-forge/minifor
     chmod +x ~/miniforge3.sh && \
     bash ~/miniforge3.sh -b -p /opt/conda && \
     source "/opt/conda/etc/profile.d/conda.sh" && \
-    conda create -y -p /opt/tgis python=${PYTHON_VERSION} && \
-    conda activate /opt/tgis && \
+    conda create -y -p ${CONDA_ENV} python=${PYTHON_VERSION} && \
+    conda activate ${CONDA_ENV} && \
     rm ~/miniforge3.sh
 
-ENV PATH=/opt/tgis/bin/:$PATH
+ENV PATH=${CONDA_ENV}/bin/:$PATH
 
 # Install specific version of torch
 RUN pip install ninja==1.11.1.1 --no-cache-dir
@@ -336,6 +338,7 @@ COPY --from=auto-gptq-installer /usr/src/auto-gptq-wheel /usr/src/auto-gptq-whee
 
 ## Final Inference Server image ################################################
 FROM cuda-runtime as server-release
+ARG CONDA_ENV
 ARG CONDA_SITE_PACKAGES
 
 # Install C++ compiler (required at runtime when PT2_COMPILE is enabled)
@@ -344,9 +347,9 @@ RUN dnf install -y gcc-c++ && dnf clean all \
 
 SHELL ["/bin/bash", "-c"]
 
-COPY --from=build /opt/tgis /opt/tgis
+COPY --from=build ${CONDA_ENV} ${CONDA_ENV}
 
-ENV PATH=/opt/tgis/bin:$PATH
+ENV PATH=${CONDA_ENV}/bin:$PATH
 
 # These could instead come from explicitly cached images
 
