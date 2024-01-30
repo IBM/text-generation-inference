@@ -228,6 +228,7 @@ ENV PATH=${CONDA_ENV}/bin/:$PATH
 
 # Install specific version of torch
 RUN pip install ninja==1.11.1.1 --no-cache-dir
+RUN pip install packaging --no-cache-dir
 RUN pip install torch==$PYTORCH_VERSION+cu118 --index-url "${PYTORCH_INDEX}/cu118" --no-cache-dir
 
 
@@ -238,8 +239,6 @@ ARG FLASH_ATT_VERSION=v2.3.6
 ARG FLASH_ATTN_V2_VERSION
 
 WORKDIR /usr/src
-
-RUN pip install packaging --no-cache-dir
 
 # MAX_JOBS: For CI, limit number of parallel compilation threads otherwise the github runner goes OOM
 # FORCE_BUILD: Force a fresh build locally, instead of attempting to find prebuilt wheels
@@ -255,8 +254,6 @@ FROM python-builder as flash-att-builder
 ARG FLASH_ATTN_VERSION
 
 WORKDIR /usr/src
-
-RUN pip install packaging --no-cache-dir
 
 RUN MAX_JOBS=2 pip install flash-attn==${FLASH_ATTN_VERSION} --no-cache-dir
 
