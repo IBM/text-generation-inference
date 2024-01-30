@@ -239,12 +239,14 @@ ARG FLASH_ATTN_V2_VERSION
 
 WORKDIR /usr/src
 
+RUN pip install packaging --no-cache-dir
+
 # MAX_JOBS: For CI, limit number of parallel compilation threads otherwise the github runner goes OOM
 # FORCE_BUILD: Force a fresh build locally, instead of attempting to find prebuilt wheels
 # SKIP_CUDA_BUILD: Intended to allow CI to use a simple `python setup.py sdist` run to copy over raw files, without any cuda compilation
 # CXX11_ABI: For CI, we want the option to build with C++11 ABI since the nvcr images use C++11 ABI
 # FORCE_SINGLE_THREAD: For CI, we want the option to not add "--threads 4" to nvcc, since the runner can OOM
-RUN MAX_JOBS=1 pip install flash-attn==${FLASH_ATTN_V2_VERSION} --no-build-isolation
+RUN MAX_JOBS=1 pip install flash-attn==${FLASH_ATTN_V2_VERSION} --no-build-isolation --no-cache-dir
 
 
 ## Build flash attention  ######################################################
@@ -254,7 +256,7 @@ ARG FLASH_ATTN_VERSION
 
 WORKDIR /usr/src
 
-RUN MAX_JOBS=2 pip install flash-attn==${FLASH_ATTN_VERSION}
+RUN MAX_JOBS=2 pip install flash-attn==${FLASH_ATTN_VERSION} --no-cache-dir
 
 
 ## Build flash-attention dropout-layer-norm  ###################################
@@ -276,6 +278,7 @@ WORKDIR /usr/src
 
 RUN MAX_JOBS=2 pip install "git+https://github.com/Dao-AILab/flash-attention.git@v${FLASH_ATTN_VERSION}#subdirectory=csrc/rotary"
 
+
 ## Install auto-gptq ###########################################################
 FROM python-builder as auto-gptq-installer
 ARG AUTO_GPTQ_REF=ccb6386ebfde63c17c45807d38779a93cd25846f
@@ -285,6 +288,7 @@ WORKDIR /usr/src/auto-gptq-wheel
 # numpy is required to run auto-gptq's setup.py
 RUN pip install numpy
 RUN DISABLE_QIGEN=1 pip wheel git+https://github.com/AutoGPTQ/AutoGPTQ@${AUTO_GPTQ_REF} --no-cache-dir --no-deps --verbose
+
 
 ## Build libraries #############################################################
 FROM python-builder as build
@@ -335,6 +339,7 @@ FROM base as auto-gptq-cache
 
 # Cache just the wheel we built for auto-gptq
 COPY --from=auto-gptq-installer /usr/src/auto-gptq-wheel /usr/src/auto-gptq-wheel
+
 
 ## Final Inference Server image ################################################
 FROM cuda-runtime as server-release
