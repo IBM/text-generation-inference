@@ -6,10 +6,10 @@ ARG FLASH_ATTN_V2_VERSION=2.3.6
 
 ARG PROTOC_VERSION=25.1
 
-#ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
-ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
+ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
+#ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
+ARG PYTORCH_VERSION=2.2.0
 #ARG PYTORCH_VERSION=2.3.0.dev20231221
-ARG PYTORCH_VERSION=2.2.0.dev20231127
 
 ARG PYTHON_VERSION=3.11
 
