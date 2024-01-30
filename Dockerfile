@@ -256,6 +256,8 @@ ARG FLASH_ATTN_VERSION
 
 WORKDIR /usr/src
 
+RUN pip install packaging --no-cache-dir
+
 RUN MAX_JOBS=2 pip install flash-attn==${FLASH_ATTN_VERSION} --no-cache-dir
 
 
