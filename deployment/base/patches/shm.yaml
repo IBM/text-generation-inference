@@ -10,7 +10,7 @@ spec:
         - name: server
 
           volumeMounts:
-            - mountPath: /shm
+            - mountPath: /dev/shm
               name: shm
 
       volumes:
