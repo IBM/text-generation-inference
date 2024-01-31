@@ -14,6 +14,7 @@ class InferenceEngine(BaseInferenceEngine):
         model_path: str,
         model_class: type[_BaseAutoModelClass],
         dtype: torch.dtype,
+        quantize: Optional[str],
         model_config: Optional[Any]
     ) -> None:
         super().__init__(model_path, model_config)
