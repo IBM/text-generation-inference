@@ -125,6 +125,10 @@ class MemoryScalingModel:
         return cls(TOTAL_MEMORY, safety_margin, [linear_param], [0, 0], [linear_param, linear_param])
 
 
+def is_oom(e: BaseException):
+    # type: ignore
+    return isinstance(e, torch.cuda.OutOfMemoryError) or \
+           isinstance(e, RuntimeError) and "Failed to allocate memory" in str(e)
 
 
 class Estimator:
@@ -225,6 +229,7 @@ class Estimator:
     def needs_nt(self):
         return self.remaining_new_token_samples > 0 and self.enable_nt_sampling
 
+
     def _run_prefill_test(self, seq_length, min_max_tokens):
         try:
             gc.collect()
@@ -241,8 +246,10 @@ class Estimator:
             batch = self.model.batch_type.concatenate([batch])
             mem_used = torch.cuda.max_memory_allocated(self.model.device)
             return False, mem_used, batch
-        except torch.cuda.OutOfMemoryError: # type: ignore
-            return True, None, None
+        except BaseException as e:
+            if is_oom(e):
+                return True, None, None
+            raise
 
     def _run_next_token_test(self, batch, out_seq):
         ret = []
@@ -254,9 +261,9 @@ class Estimator:
                 batch = self.model.batch_type.concatenate([batch])
                 mem_used = torch.cuda.max_memory_allocated(self.model.device)
                 ret.append(mem_used)
-        except torch.cuda.OutOfMemoryError: # type: ignore
-            pass
-
+        except BaseException as e:
+            if not is_oom(e):
+                raise
         return ret
 
     def sample_next_token(self, batch, input_seq_len):
