@@ -1,19 +1,27 @@
 ## Global Args #################################################################
 ARG BASE_UBI_IMAGE_TAG=9.3-1476
 
-ARG FLASH_ATTN_VERSION=1.0.9
-ARG FLASH_ATTN_V2_VERSION=2.3.6
-
 ARG PROTOC_VERSION=25.1
 
-ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
-#ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
-ARG PYTORCH_VERSION=2.2.0
-#ARG PYTORCH_VERSION=2.3.0.dev20231221
+ARG FLASH_ATTN_VERSION=1.0.9
+ARG FLASH_ATTN_V2_VERSION=2.5.2
+
+ARG TORCH_CUDA_VERSION=118
+
+# match PyTorch version that was used to compile flash-attention v2 pre-built wheels
+# e.g. flash-attn v2.5.2 => torch ['1.12.1', '1.13.1', '2.0.1', '2.1.2', '2.2.0', '2.3.0.dev20240126']
+# https://github.com/Dao-AILab/flash-attention/blob/v2.5.2/.github/workflows/publish.yml#L47
+# use nightly build index for torch .dev pre-release versions, based on the Cuda version used
+# to compile PyTorch, e.g. "https://download.pytorch.org/whl/nightly/cu${TORCH_CUDA_VERSION}"
+
+#ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
+ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
+#ARG PYTORCH_VERSION=2.2.0
+ARG PYTORCH_VERSION=2.3.0.dev20240126
 
 ARG PYTHON_VERSION=3.11
-
 ARG PYTHON_SITE_PACKAGES=/usr/local/lib/python${PYTHON_VERSION}/site-packages
+
 ARG CONDA_ENV=/opt/tgis
 ARG CONDA_SITE_PACKAGES=${CONDA_ENV}/lib/python${PYTHON_VERSION}/site-packages
 
@@ -207,6 +215,7 @@ RUN cd integration_tests && make install
 FROM cuda-devel as python-builder
 ARG PYTORCH_INDEX
 ARG PYTORCH_VERSION
+ARG TORCH_CUDA_VERSION
 ARG PYTHON_VERSION
 ARG MINIFORGE_VERSION=23.3.1-1
 ARG CONDA_ENV
@@ -229,7 +238,7 @@ ENV PATH=${CONDA_ENV}/bin/:$PATH
 # Install specific version of torch
 RUN pip install ninja==1.11.1.1 --no-cache-dir
 RUN pip install packaging --no-cache-dir
-RUN pip install torch==$PYTORCH_VERSION+cu118 --index-url "${PYTORCH_INDEX}/cu118" --no-cache-dir
+RUN pip install torch==$PYTORCH_VERSION+cu$TORCH_CUDA_VERSION --index-url "${PYTORCH_INDEX}/cu${TORCH_CUDA_VERSION}" --no-cache-dir
 
 
 ## Build flash attention v2 ####################################################
