@@ -51,11 +51,13 @@ class InferenceEngine(BaseInferenceEngine):
         dtype: torch.dtype,
         quantize: Optional[str],  # not used by OpenVINO
         model_config: Optional[Any],
+        max_sequence_length: Optional[int],
     ) -> None:
         super().__init__(model_path, model_config)
         print(f"Optimum Intel version: {__version__}")
         print(f"OpenVINO version: {get_version()}")
         print("model_path:", model_path)
+        os.environ["OPENVINO_LOG_LEVEL"] = "4"
 
         if model_class == AutoModelForCausalLM:
             model_class = OVModelForCausalLM
@@ -68,13 +70,13 @@ class InferenceEngine(BaseInferenceEngine):
         if ov_config_file is not None:
             ov_config = json.loads(Path(ov_config_file).read_text())
         else:
-            ov_config = {"CACHE_DIR": ""}
+            ov_config = {}
 
         # Set good default options for latency-optimized workflow
         if "PERFORMANCE_HINT" not in ov_config:
             ov_config["PERFORMANCE_HINT"] = "LATENCY"
-        if "NUM_STREAMS" not in ov_config and "PERFORMANCE_HINT_NUM_REQUESTS" not in ov_config:
-            ov_config["PERFORMANCE_HINT_NUM_REQUESTS"] = 1
+        if "NUM_STREAMS" not in ov_config:
+            ov_config["NUM_STREAMS"] = 1
 
         print(f"ov_config: {ov_config}")
 

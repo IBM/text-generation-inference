@@ -571,16 +571,19 @@ class CausalLM(Model):
             else:
                 self.tokenizer.add_special_tokens({"pad_token": "[PAD]"})
 
-        # Perform a forward pass to determine the structure of the past_key_values
-        one_token = torch.tensor([[1]], device=inference_engine.get_device())
-        _, past_key_values, _ = self.forward(input_ids=one_token, attention_mask=one_token)
-        if torch.is_tensor(past_key_values[0]):
-            self.batch_type = CombinedKVCausalLMBatch
+        if deployment_framework == "hf_optimum_ov" and self.model.stateful:
+            self.batch_type = CausalLMBatch
         else:
-            # check the ordering of the key tensor dimensions
-            key_past, value_past = past_key_values[0]
-            keys_head_dim_last = key_past.shape[-1] == value_past.shape[-1]
-            self.batch_type = CausalLMBatch if keys_head_dim_last else KeysDimTransposedCausalLMBatch
+            # Perform a forward pass to determine the structure of the past_key_values
+            one_token = torch.tensor([[1]], device=inference_engine.get_device())
+            _, past_key_values, _ = self.forward(input_ids=one_token, attention_mask=one_token)
+            if torch.is_tensor(past_key_values[0]):
+                self.batch_type = CombinedKVCausalLMBatch
+            else:
+                # check the ordering of the key tensor dimensions
+                key_past, value_past = past_key_values[0]
+                keys_head_dim_last = key_past.shape[-1] == value_past.shape[-1]
+                self.batch_type = CausalLMBatch if keys_head_dim_last else KeysDimTransposedCausalLMBatch
 
     @property
     def batch_type(self) -> Type[CausalLMBatch]:

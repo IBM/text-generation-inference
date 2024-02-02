@@ -1341,6 +1341,35 @@ quality = ["black (>=23.1,<24.0)", "ruff (==0.1.5)"]
 tests = ["Pillow", "accelerate", "diffusers (>=0.17.0)", "einops", "invisible-watermark", "parameterized", "pytest", "pytest-xdist", "requests", "sacremoses", "torchaudio", "torchvision"]
 
 [[package]]
+name = "optimum-intel"
+version = "1.14.0"
+description = "Optimum Library is an extension of the Hugging Face Transformers library, providing a framework to integrate third-party libraries from Hardware Partners and interface with their specific functionality."
+optional = true
+python-versions = "*"
+files = [
+    {file = "optimum-intel-1.14.0.tar.gz", hash = "sha256:77e0fbd0bfb804e112755523bba13ab09cff039caa22ccaac493285ad0be3387"},
+    {file = "optimum_intel-1.14.0-py3-none-any.whl", hash = "sha256:050ba8a17ec86329a4dd0c1263421e11f65e792c43d00ab172e58652e3bd3875"},
+]
+
+[package.dependencies]
+accelerate = "*"
+datasets = ">=1.4.0"
+optimum = ">=1.14.0"
+scipy = "*"
+sentencepiece = "*"
+torch = ">=1.11"
+transformers = ">=4.20.0"
+
+[package.extras]
+diffusers = ["diffusers"]
+ipex = ["intel-extension-for-pytorch", "onnx"]
+neural-compressor = ["neural-compressor (>=2.2.0)", "onnx", "onnxruntime (<1.15.0)", "transformers (>=4.34.0)"]
+nncf = ["nncf (>=2.7.0)"]
+openvino = ["onnx", "onnxruntime", "openvino (>=2023.2)", "optimum (>=1.16.1)", "transformers (>=4.36.0)"]
+quality = ["black (>=23.1,<24.0)", "ruff (>=0.0.241)"]
+tests = ["Pillow", "diffusers", "evaluate", "invisible-watermark (>=0.2.0)", "parameterized", "py-cpuinfo", "pytest", "rjieba", "sacremoses", "timm", "torchaudio"]
+
+[[package]]
 name = "packaging"
 version = "23.2"
 description = "Core utilities for Python packages"
@@ -2610,9 +2639,10 @@ accelerate = ["accelerate"]
 bnb = ["bitsandbytes"]
 onnx = ["onnx", "onnxruntime", "optimum"]
 onnx-gpu = ["onnx", "onnxruntime-gpu", "optimum"]
+openvino = ["optimum-intel"]
 quantize = ["datasets", "texttable"]
 
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.11.0,<3.13"
-content-hash = "d968a07f2c04b57dc3cc6aa30a6b2f92a8cf7015b5de347638189376b949891e"
+content-hash = "538b2c46193948faef6cc812c6de5600ab23ea7693b1dcddf49e197aaebc9ea1"
