@@ -1,5 +1,8 @@
 /// Text Generation Inference external gRPC server entrypoint
 use clap::Parser;
+use std::fs::File;
+use std::io;
+use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use text_generation_client::ShardedClient;
 use text_generation_router::server;
@@ -48,6 +51,19 @@ struct Args {
 }
 
 fn main() -> Result<(), std::io::Error> {
+    // Register a panic handler up-front to write to /dev/termination-log
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        if let Some(&s) = panic_info.payload().downcast_ref::<&str>() {
+            _ = write_termination_log(s);
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            _ = write_termination_log(s);
+        }
+        // No else case: If we cannot get good panic info, we won't write anything to the
+        // termination log. The system logs should contain better information.
+        default_hook(panic_info);
+    }));
+
     // Get args
     let args = Args::parse();
 
@@ -140,4 +156,12 @@ fn main() -> Result<(), std::io::Error> {
             .await;
             Ok(())
         })
+}
+
+fn write_termination_log(msg: &str) -> Result<(), io::Error> {
+    // Writes a message to the termination log.
+    // Creates the logfile if it doesn't exist.
+    let mut f = File::options().write(true).create(true).open("/dev/termination-log")?;
+    writeln!(f, "{}", msg)?;
+    Ok(())
 }

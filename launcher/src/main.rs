@@ -13,9 +13,11 @@ use std::thread;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 use std::{fs, io};
+use std::fs::File;
 use std::env::VarError;
 use std::ffi::OsString;
 use std::os::unix::process::CommandExt;
+use String;
 use tracing::{info, warn};
 
 // In most cases this gives the best performance for inferencing
@@ -81,6 +83,20 @@ struct Args {
 }
 
 fn main() -> ExitCode {
+    // Register a panic handler up-front to write to /dev/termination-log
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        if let Some(&s) = panic_info.payload().downcast_ref::<&str>() {
+            _ = write_termination_log(s);
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            _ = write_termination_log(s);
+        }
+        // No else case: If we cannot get good panic info, we won't write anything to the
+        // termination log. The system logs should contain better information.
+        default_hook(panic_info);
+    }));
+
+
     // Pattern match configuration
     let args = Args::parse();
 
@@ -646,4 +662,12 @@ fn resolve_tokenizer_path(model_name: &str, revision: Option<&str>) -> Result<St
             Err(io::Error::new(ErrorKind::NotFound, message))
         }
     }
+}
+
+fn write_termination_log(msg: &str) -> Result<(), io::Error> {
+    // Writes a message to the termination log.
+    // Creates the logfile if it doesn't exist.
+    let mut f = File::options().write(true).create(true).open("/dev/termination-log")?;
+    writeln!(f, "{}", msg)?;
+    Ok(())
 }

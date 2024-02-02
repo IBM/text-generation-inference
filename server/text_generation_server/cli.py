@@ -32,36 +32,47 @@ def serve(
     uds_path: Path = "/tmp/text-generation",
 ):
     from text_generation_server import server
+    from text_generation_server.utils.termination import write_termination_log
 
     if sharded:
-        assert (
-            os.getenv("RANK", None) is not None
-        ), "RANK must be set when sharded is True"
-        assert (
-            os.getenv("WORLD_SIZE", None) is not None
-        ), "WORLD_SIZE must be set when sharded is True"
-        assert (
-            os.getenv("MASTER_ADDR", None) is not None
-        ), "MASTER_ADDR must be set when sharded is True"
-        assert (
-            os.getenv("MASTER_PORT", None) is not None
-        ), "MASTER_PORT must be set when sharded is True"
+        try:
+            assert (
+                os.getenv("RANK", None) is not None
+            ), "RANK must be set when sharded is True"
+            assert (
+                os.getenv("WORLD_SIZE", None) is not None
+            ), "WORLD_SIZE must be set when sharded is True"
+            assert (
+                os.getenv("MASTER_ADDR", None) is not None
+            ), "MASTER_ADDR must be set when sharded is True"
+            assert (
+                os.getenv("MASTER_PORT", None) is not None
+            ), "MASTER_PORT must be set when sharded is True"
+        except AssertionError as e:
+            write_termination_log(str(e))
+            raise e
 
-    server.serve(
-        model_name,
-        revision,
-        deployment_framework,
-        dtype,
-        # Downgrade enum into str for easier management later on
-        None if quantize is None else quantize.value,
-        max_sequence_length,
-        max_new_tokens,
-        max_batch_size,
-        batch_safety_margin,
-        sharded,
-        cuda_process_memory_fraction,
-        uds_path
-    )
+    try:
+        server.serve(
+            model_name,
+            revision,
+            deployment_framework,
+            dtype,
+            # Downgrade enum into str for easier management later on
+            None if quantize is None else quantize.value,
+            max_sequence_length,
+            max_new_tokens,
+            max_batch_size,
+            batch_safety_margin,
+            sharded,
+            cuda_process_memory_fraction,
+            uds_path
+        )
+    except Exception as e:
+        # Any exceptions in the blocking server thread here should mean that
+        # the server terminated due to an error
+        write_termination_log(str(e))
+        raise e
 
 
 @app.command()
