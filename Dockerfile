@@ -160,9 +160,8 @@ COPY server/Makefile server/Makefile
 # Install server
 COPY proto proto
 COPY server server
-RUN cd server && \
-    make gen-server && \
-    pip install ".[accelerate]" --no-cache-dir
+# RUN --mount=type=cache,target=/root/.cache/pip cd server && make gen-server && pip install ".[accelerate, openvino]"
+RUN cd server && make gen-server && pip install ".[accelerate, openvino]" --no-cache-dir
 
 # Patch codegen model changes into transformers 4.35
 RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py
@@ -311,7 +310,8 @@ RUN --mount=type=bind,from=auto-gptq-cache,src=/usr/src/auto-gptq-wheel,target=/
 # Install server
 COPY proto proto
 COPY server server
-RUN cd server && make gen-server && pip install ".[accelerate, onnx-gpu, quantize]" --no-cache-dir
+# RUN --mount=type=cache,target=/root/.cache/pip cd server && make gen-server && pip install ".[accelerate, onnx-gpu, openvino, quantize]"
+RUN cd server && make gen-server && pip install ".[accelerate, onnx-gpu, openvino, quantize]" --no-cache-dir
 
 # Patch codegen model changes into transformers 4.35
 RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py
