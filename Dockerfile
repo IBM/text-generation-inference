@@ -1,6 +1,6 @@
 ## Global Args #################################################################
-ARG BASE_UBI_IMAGE_TAG=9.3-1476
-ARG PROTOC_VERSION=25.1
+ARG BASE_UBI_IMAGE_TAG=9.3-1552
+ARG PROTOC_VERSION=25.2
 #ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
 ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
 ARG PYTORCH_VERSION=2.3.0.dev20240125
@@ -181,7 +181,7 @@ FROM cuda-devel as python-builder
 ARG PYTORCH_INDEX
 ARG PYTORCH_VERSION
 ARG PYTHON_VERSION
-ARG MINIFORGE_VERSION=23.3.1-1
+ARG MINIFORGE_VERSION=23.11.0-0
 
 # consistent arch support anywhere we compile CUDA code
 ENV TORCH_CUDA_ARCH_LIST="8.0;8.6+PTX;8.9"
