@@ -3,7 +3,12 @@ ARG BASE_UBI_IMAGE_TAG=9.3-1476
 ARG PROTOC_VERSION=25.1
 #ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
 ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
-ARG PYTORCH_VERSION=2.3.0.dev20240125
+# match PyTorch version that was used to compile flash-attention v2 pre-built wheels
+# e.g. flash-attn v2.5.2 => torch ['1.12.1', '1.13.1', '2.0.1', '2.1.2', '2.2.0', '2.3.0.dev20240126']
+# https://github.com/Dao-AILab/flash-attention/blob/v2.5.2/.github/workflows/publish.yml#L47
+# use nightly build index for torch .dev pre-release versions
+ARG PYTORCH_VERSION=2.3.0.dev20240126
+
 ARG PYTHON_VERSION=3.11
 
 ## Base Layer ##################################################################
@@ -205,12 +210,13 @@ RUN pip install torch==$PYTORCH_VERSION+cu118 --index-url "${PYTORCH_INDEX}/cu11
 
 ## Build flash attention v2 ####################################################
 FROM python-builder as flash-att-v2-builder
-ARG FLASH_ATT_VERSION=v2.3.6
+ARG FLASH_ATT_VERSION=v2.5.2
 
 WORKDIR /usr/src/flash-attention-v2
 
 # Download the wheel or build it if a pre-compiled release doesn't exist
-RUN MAX_JOBS=4 pip --verbose wheel flash-attn==${FLASH_ATT_VERSION} \
+# MAX_JOBS: For CI, limit number of parallel compilation threads otherwise the github runner goes OOM
+RUN MAX_JOBS=2 pip --verbose wheel flash-attn==${FLASH_ATT_VERSION} \
     --no-build-isolation --no-deps --no-cache-dir
 
 ## Build flash attention  ######################################################
@@ -219,6 +225,10 @@ FROM python-builder as flash-att-builder
 WORKDIR /usr/src
 
 COPY server/Makefile-flash-att Makefile
+
+# For CI, limit number of parallel compilation threads otherwise the github runner goes OOM
+ENV MAX_JOBS=2
+
 RUN make build-flash-attention
 
 ## Install auto-gptq ###########################################################
