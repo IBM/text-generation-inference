@@ -205,6 +205,7 @@ ENV PATH=/opt/tgis/bin/:$PATH
 
 # Install specific version of torch
 RUN pip install ninja==1.11.1.1 --no-cache-dir
+RUN pip install packaging --no-cache-dir
 RUN pip install torch==$PYTORCH_VERSION+cu118 --index-url "${PYTORCH_INDEX}/cu118" --no-cache-dir
 
 
