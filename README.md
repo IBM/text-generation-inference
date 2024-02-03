@@ -1,3 +1,5 @@
+[![Build](https://github.com/IBM/text-generation-inference/actions/workflows/build.yml/badge.svg)](https://github.com/IBM/text-generation-inference/actions/workflows/build.yml)
+
 ## Text Generation Inference Server
 
 This repo is an early fork of https://github.com/huggingface/text-generation-inference.
