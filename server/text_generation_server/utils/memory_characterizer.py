@@ -57,32 +57,45 @@ class MemoryScalingModel:
             nexttoken_linear_coef1=self.next_token_params[1],
         )
 
-    def __prefill_memory_usage(self, batch_size, input_len):
+    def prefill_memory_usage(self, batch_size, input_len):
         out1 = batch_size * self.linear_fit_params[0] * input_len
         bs_seq = input_len * batch_size
         out2 = self.quadratic_fit_params[0] * bs_seq + input_len * self.quadratic_fit_params[1] * bs_seq
         return np.maximum(out1, out2)
 
-    def __nt_memory_usage(self, batch_size, input_len, output_len):
+    def inverse_linear_prefill(self, batch, mem):
+        return mem/(self.linear_fit_params[0]*batch)
+
+    def inverse_quadratic_prefill(self, batch, mem):
+        c0, c1 = self.quadratic_fit_params
+        return (np.sqrt(c0**2 + 4*c1*(mem/batch)) - c0)/(2*c1)
+
+    def inverse_prefill(self,batch, mem):
+        linear = self.inverse_linear_prefill(batch,mem)
+        quad   = self.inverse_quadratic_prefill(batch, mem)
+        return min(linear, quad)
+
+    def nt_memory_usage(self, batch_size, input_len, output_len):
         return batch_size * self.next_token_params[0] * input_len + batch_size * self.next_token_params[1] * output_len
 
+    def inverse_next_token_output(self, batch, in_seq, mem):
+        return (mem - self.next_token_params[0]*batch*in_seq)/(batch*self.next_token_params[1])
+
+    def inverse_next_token_input(self, batch, out_seq, mem):
+        return (mem - self.next_token_params[1]*batch*out_seq)/(batch*self.next_token_params[0])
+    
     def max_input_len_for_prefill(self, batch_size, max_input_len):
-        x = np.arange(1, 1+max_input_len)
-        mem_usage = self.__prefill_memory_usage(batch_size, x)
-        ind = np.argwhere(mem_usage < self.weight_limit)[-1][0]
-        return x[ind]
+        mem_max = np.floor(self.inverse_prefill(batch_size, self.weight_limit))
+        return int(min(mem_max, max_input_len))
 
     def max_input_len_for_nt(self, batch_size, output_len, max_input_len):
-        x = np.arange(1, 1+max_input_len)
-        mem_usage = self.__nt_memory_usage(batch_size, x, output_len)
-        ind = np.argwhere(mem_usage < self.weight_limit)[-1][0]
-        return np.minimum(x[ind], self.max_input_len_for_prefill(batch_size, max_input_len))
+        nt = max(0, np.floor(self.inverse_next_token_input(batch_size, output_len, self.weight_limit)))
+        prefill = self.max_input_len_for_prefill(batch_size, max_input_len)
+        return int(min(nt,prefill,max_input_len))
 
     def max_output_len_for_nt(self, batch_size, input_len, max_output_len):
-        x = np.arange(1, 1+max_output_len)
-        mem_usage = self.__nt_memory_usage(batch_size, input_len, x)
-        ind = np.argwhere(mem_usage < self.weight_limit)[-1][0]
-        return x[ind]
+        nt = max(0, np.floor(self.inverse_next_token_output(batch_size, input_len, self.weight_limit)))
+        return int(min(nt, max_output_len))
     
     @classmethod
     def disabled(cls):
