@@ -44,7 +44,6 @@ def attention(
     q,
     k,
     v,
-    out,
     cu_seqlens,
     max_s,
     softmax_scale,
@@ -61,9 +60,10 @@ def attention(
             q,
             k,
             v,
-            out,
+            None,
             cu_seqlens_q,
             cu_seqlens,
+            None,
             None,
             max_s_q,
             max_s,
@@ -75,7 +75,7 @@ def attention(
             -1,
             False,
             None,
-        )
+        )[0]
 
     if HAS_FLASH_ATTN:
         # Flash attention v1 requires q, k and v to have the same number of heads
@@ -104,7 +104,8 @@ def attention(
                     .reshape(original_shape[0], -1, original_shape[2])
                 )
 
-        return flash_attn_cuda.fwd(
+        out = torch.empty_like(q)
+        flash_attn_cuda.fwd(
             q,
             k,
             v,
@@ -121,5 +122,6 @@ def attention(
             0,
             None,
         )
+        return out
 
     raise NotImplementedError("flash attention is not installed")

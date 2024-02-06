@@ -1,9 +1,9 @@
 ## Global Args #################################################################
 ARG BASE_UBI_IMAGE_TAG=9.3-1552
 ARG PROTOC_VERSION=25.2
-#ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
-ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
-ARG PYTORCH_VERSION=2.3.0.dev20240125
+ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
+# ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
+ARG PYTORCH_VERSION=2.2.0
 ARG PYTHON_VERSION=3.11
 
 ## Base Layer ##################################################################
@@ -205,7 +205,7 @@ RUN pip install torch==$PYTORCH_VERSION+cu118 --index-url "${PYTORCH_INDEX}/cu11
 
 ## Build flash attention v2 ####################################################
 FROM python-builder as flash-att-v2-builder
-ARG FLASH_ATT_VERSION=v2.3.6
+ARG FLASH_ATT_VERSION=v2.5.2
 
 WORKDIR /usr/src/flash-attention-v2
 

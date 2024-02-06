@@ -243,20 +243,16 @@ class FlashLlamaAttention(torch.nn.Module):
         self.rotary_emb(query, cos, sin)
         self.rotary_emb(torch.select(kv, dim=1, index=0), cos, sin)
 
-        # output tensor
-        attn_output = torch.empty_like(query)
-
         # Prefill
         if layer_past_present_indices is None:
             # Copy to layer past
             layer_past[...] = kv
 
             # flash attention
-            attention(
+            attn_output = attention(
                 query,
                 torch.select(kv, dim=1, index=0),
                 torch.select(kv, dim=1, index=1),
-                attn_output,
                 cu_seqlens,
                 max_s,
                 self.softmax_scale,
@@ -267,11 +263,10 @@ class FlashLlamaAttention(torch.nn.Module):
             layer_past[layer_past_present_indices] = kv
 
             # flash attention
-            attention(
+            attn_output = attention(
                 query,
                 layer_past[:, 0],
                 layer_past[:, 1],
-                attn_output,
                 cu_seqlens,
                 max_s,
                 self.softmax_scale,
@@ -280,7 +275,7 @@ class FlashLlamaAttention(torch.nn.Module):
                 False,
             )
 
-        return self.o_proj(attn_output.view(-1, self.num_heads * self.head_size))
+        return self.o_proj(attn_output.reshape(-1, self.num_heads * self.head_size))
 
 
 class LlamaMLP(nn.Module):
