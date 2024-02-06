@@ -2019,6 +2019,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "nix",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
 ]
