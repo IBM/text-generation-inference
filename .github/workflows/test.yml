@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: "Checkout"
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: "Free up disk space"
       uses: ./.github/actions/free-up-disk-space
@@ -44,7 +44,7 @@ jobs:
         outputs: type=docker,dest=/tmp/test_image.tar
 
     - name: "Upload test image"
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: "test-image"
         path: /tmp/test_image.tar
