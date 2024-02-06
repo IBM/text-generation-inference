@@ -289,6 +289,26 @@ async fn do_run<B: BatchType>(
         panic!("max_prefill_padding ({}) must be a percentage in the range [0.0, 1.0]", max_prefill_padding)
     }
 
+    if args.max_new_tokens < 1 {
+        panic!("max_new_tokens ({}) at least 1", args.max_new_tokens)
+    }
+
+    if args.max_sequence_length < 2 {
+        panic!("max_sequence_length ({}) must be at least 2 (1 input + 1 output)", args.max_sequence_length)
+    }
+
+    let max_new_tokens = if args.max_new_tokens < args.max_sequence_length {
+        args.max_new_tokens
+    } else {
+        tracing::warn!(
+            "adjusting max_new_tokens ({}) down to max_sequence_length - 1 ({})",
+            args.max_new_tokens,
+            args.max_sequence_length-1
+        );
+        args.max_sequence_length - 1
+    };
+    
+
     let tokenizers = AsyncTokenizer::new(
         &args.tokenizer, args.tokenization_workers
     );
@@ -318,14 +338,14 @@ async fn do_run<B: BatchType>(
         tokenizers.clone(),
         args.client,
         args.max_sequence_length,
-        args.max_new_tokens,
+        max_new_tokens,
     );
     let shared_state = ServerState {
         validation,
         batcher,
         limit_concurrent_requests: Arc::new(Semaphore::new(args.max_concurrent_requests)),
         max_sequence_length: args.max_sequence_length,
-        max_new_tokens: args.max_new_tokens,
+        max_new_tokens: max_new_tokens,
         seq2seq,
         default_include_stop_seqs: args.default_include_stop_seqs,
     };
@@ -353,7 +373,7 @@ async fn do_run<B: BatchType>(
     // Generated tokens buckets
     let generated_tokens_matcher = Matcher::Full(String::from("tgi_request_generated_tokens"));
     let max_new_tokens_buckets: Vec<f64> = (0..64)
-        .map(|x| (args.max_new_tokens as f64 / 64.0) * (x + 1) as f64)
+        .map(|x| (max_new_tokens as f64 / 64.0) * (x + 1) as f64)
         .collect();
     // Max new tokens buckets
     let max_new_tokens_matcher = Matcher::Full(String::from("tgi_request_max_new_tokens"));

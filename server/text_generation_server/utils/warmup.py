@@ -53,6 +53,11 @@ def pt2_compile_warmup(
 
     def __safe_eval_shape(batch_size: int, input_length: int, num_new_tokens: int):
         try:
+            if batch_size == 0 or input_length == 0 or num_new_tokens == 0:
+                # If input or output is 0, this means that max_input_len_for_nt or max_output_len_for_nt
+                # couldn't find a safe sequence length
+                print(f">> skipping __eval_shape({batch_size}, {input_length}, {num_new_tokens}) due to zero argument")
+                return
             __eval_shape(batch_size, input_length, num_new_tokens)
         except torch.cuda.OutOfMemoryError as e:
             print(">> caught OOM error: ", e)
