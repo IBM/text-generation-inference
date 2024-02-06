@@ -65,7 +65,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: "Download test image"
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: "test-image"
           path: /tmp
@@ -106,7 +106,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: "Download test image"
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: "test-image"
           path: /tmp
