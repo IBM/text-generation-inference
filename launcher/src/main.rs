@@ -41,7 +41,7 @@ struct Args {
     quantize: Option<String>,
     #[clap(long, env)]
     num_shard: Option<usize>,
-    #[clap(default_value = "96", long, env)]
+    #[clap(default_value = "512", long, env)]
     max_concurrent_requests: usize,
     #[clap(default_value = None, long, env)]
     max_sequence_length: Option<usize>,

@@ -184,7 +184,7 @@ impl<'a, B: BatchType> BatchConfigValidator<'a, B> {
     fn validate_batch_config(
         &self,
         max_sequence_length: usize,
-        max_batch_size: usize,
+        _max_batch_size: usize,
         max_batch_weight: usize,
     ) {
         let single_request_stats = <B>::update_stats(
@@ -284,30 +284,17 @@ async fn do_run<B: BatchType>(
         batch_weight_limit,
     );
 
-    let max_prefill_padding = args.max_prefill_padding;
-    if max_prefill_padding < 0.0 || max_prefill_padding > 1.0 {
-        panic!("max_prefill_padding ({}) must be a percentage in the range [0.0, 1.0]", max_prefill_padding)
-    }
-
-    if args.max_new_tokens < 1 {
-        panic!("max_new_tokens ({}) at least 1", args.max_new_tokens)
-    }
-
-    if args.max_sequence_length < 2 {
-        panic!("max_sequence_length ({}) must be at least 2 (1 input + 1 output)", args.max_sequence_length)
-    }
-
     let max_new_tokens = if args.max_new_tokens < args.max_sequence_length {
         args.max_new_tokens
     } else {
-        tracing::warn!(
+        warn!(
             "adjusting max_new_tokens ({}) down to max_sequence_length - 1 ({})",
             args.max_new_tokens,
             args.max_sequence_length-1
         );
         args.max_sequence_length - 1
     };
-    
+
 
     let tokenizers = AsyncTokenizer::new(
         &args.tokenizer, args.tokenization_workers
@@ -326,7 +313,7 @@ async fn do_run<B: BatchType>(
         BatchingConfig {
             size_limit: args.max_batch_size,
             weight_limit: batch_weight_limit,
-            prefill_padding_limit: max_prefill_padding,
+            prefill_padding_limit: args.max_prefill_padding,
         },
         args.max_waiting_tokens,
         args.max_concurrent_requests,

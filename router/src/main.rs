@@ -14,7 +14,7 @@ use text_generation_router::server::ServerRunArgs;
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    #[clap(default_value = "96", long, env)]
+    #[clap(default_value = "512", long, env)]
     max_concurrent_requests: usize,
     #[clap(default_value = "2048", long, env)]
     max_sequence_length: usize,
@@ -73,17 +73,8 @@ fn main() -> Result<(), std::io::Error> {
         tracing_subscriber::fmt().compact().init();
     }
 
-    if args.tokenization_workers == Some(0) {
-        panic!("tokenization_workers must be > 0");
-    }
-
-    if args.tls_key_path.is_some() != args.tls_cert_path.is_some() {
-        panic!("tls: must provide both cert and key")
-    }
-
-    if args.tls_client_ca_cert_path.is_some() && args.tls_cert_path.is_none() {
-        panic!("tls: cannot provide client ca cert without keypair")
-    }
+    // Validate args
+    validate_args(&args);
 
     // Instantiate tokenizer
     let mut tokenizer = Tokenizer::from_file(args.tokenizer_path)
@@ -156,6 +147,42 @@ fn main() -> Result<(), std::io::Error> {
             .await;
             Ok(())
         })
+}
+
+fn validate_args(args: &Args) {
+    if args.tokenization_workers == Some(0) {
+        panic!("tokenization_workers must be > 0");
+    }
+
+    if args.max_concurrent_requests == 0 {
+        panic!("max_concurrent_requests must be > 0");
+    }
+
+    if args.tls_key_path.is_some() != args.tls_cert_path.is_some() {
+        panic!("tls: must provide both cert and key")
+    }
+
+    if args.tls_client_ca_cert_path.is_some() && args.tls_cert_path.is_none() {
+        panic!("tls: cannot provide client ca cert without keypair")
+    }
+
+    if args.max_prefill_padding < 0.0 || args.max_prefill_padding > 1.0 {
+        panic!(
+            "max_prefill_padding ({}) must be a percentage in the range [0.0, 1.0]",
+            args.max_prefill_padding,
+        )
+    }
+
+    if args.max_new_tokens < 1 {
+        panic!("max_new_tokens ({}) at least 1", args.max_new_tokens)
+    }
+
+    if args.max_sequence_length < 2 {
+        panic!(
+            "max_sequence_length ({}) must be at least 2 (1 input + 1 output)",
+            args.max_sequence_length,
+        )
+    }
 }
 
 fn write_termination_log(msg: &str) -> Result<(), io::Error> {
