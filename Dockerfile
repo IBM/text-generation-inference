@@ -121,12 +121,13 @@ RUN cargo install --path .
 ## Launcher builder ############################################################
 FROM rust-builder as launcher-builder
 
+ARG GIT_COMMIT_HASH
 COPY launcher launcher
 
 WORKDIR /usr/src/launcher
 
 #RUN --mount=type=cache,target=/root/.cargo --mount=type=cache,target=/usr/src/launcher/target cargo install --path .
-RUN cargo install --path .
+RUN env GIT_COMMIT_HASH=${GIT_COMMIT_HASH} cargo install --path .
 
 ## Tests base ##################################################################
 FROM base as test-base

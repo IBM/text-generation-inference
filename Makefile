@@ -1,7 +1,9 @@
 SHELL := /bin/bash
 
+GIT_COMMIT_HASH := $(shell git rev-parse --short HEAD)
+
 build:
-	DOCKER_BUILDKIT=1 docker build --progress=plain --target=server-release -t text-gen-server:0 .
+	DOCKER_BUILDKIT=1 docker build --progress=plain --target=server-release --build-arg GIT_COMMIT_HASH=$(GIT_COMMIT_HASH) -t text-gen-server:0 .
 	docker images
 
 all: help
@@ -16,7 +18,7 @@ install-router:
 	cd router && cargo install --path .
 
 install-launcher:
-	cd launcher && cargo install --path .
+	cd launcher && env GIT_COMMIT_HASH=$(GIT_COMMIT_HASH) cargo install --path .
 
 install: install-server install-router install-launcher install-custom-kernels
 

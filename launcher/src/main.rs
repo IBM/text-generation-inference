@@ -105,6 +105,10 @@ fn main() -> ExitCode {
     } else {
         tracing_subscriber::fmt().compact().init();
     }
+    // log TGIS commit hash
+    if let Some(commit_hash) = option_env!("GIT_COMMIT_HASH") {
+        info!("TGIS Commit hash: {commit_hash}");
+    }
 
     info!("Launcher args: {:?}", args);
     if args.cuda_process_memory_fraction <= 0.0 || args.cuda_process_memory_fraction > 1.0 {
