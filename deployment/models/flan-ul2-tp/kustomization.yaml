@@ -28,5 +28,5 @@ patchesStrategicMerge:
              - name: MODEL_NAME
                value: google/flan-ul2
              - name: DEPLOYMENT_FRAMEWORK
-               value: hf_custom_tp
+               value: tgis_native
 

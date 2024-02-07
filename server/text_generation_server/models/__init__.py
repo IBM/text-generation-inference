@@ -45,12 +45,12 @@ def get_model(
         import text_generation_server.utils.flash_attn as flash_attn
         print(f"Using Flash Attention V2: {flash_attn.HAS_FLASH_ATTN_V2}")
 
-        if deployment_framework != "hf_custom_tp":
+        if deployment_framework != "tgis_native":
             print_rank_n(
-                f"WARNING: Using deployment engine hf_custom_tp rather than {deployment_framework} "
+                f"WARNING: Using deployment engine tgis_native rather than {deployment_framework} "
                 "because FLASH_ATTENTION is enabled"
             )
-            deployment_framework = "hf_custom_tp"
+            deployment_framework = "tgis_native"
 
         if model_type in ["RefinedWeb", "RefinedWebModel", "falcon"]:
             # Custom config type for RW models
@@ -75,10 +75,10 @@ def get_model(
 
     elif deployment_framework == "hf_transformers" and int(os.getenv("WORLD_SIZE", "1")) > 1:
         print_rank_n(
-            f"WARNING: Using deployment engine hf_custom_tp rather than {deployment_framework} "
+            f"WARNING: Using deployment engine tgis_native rather than {deployment_framework} "
             "because more than one shard is configured"
         )
-        deployment_framework = "hf_custom_tp"
+        deployment_framework = "tgis_native"
 
     supports_causal_lm = model_type in modeling_auto.MODEL_FOR_CAUSAL_LM_MAPPING_NAMES \
         or type(model_config) in AutoModelForCausalLM._model_mapping \
@@ -95,9 +95,9 @@ def get_model(
     if supports_seq2seq_lm and model_type == "bart":
         supports_causal_lm = False
 
-    if deployment_framework != "hf_custom_tp" and (model_type == "bloom" or model_type == "t5"):
+    if deployment_framework != "tgis_native" and (model_type == "bloom" or model_type == "t5"):
         print_rank_n(
-            "WARNING: It's recommended to use the hf_custom_tp engine with safetensors weights for T5 and BLOOM models"
+            "WARNING: It's recommended to use the tgis_native engine with safetensors weights for T5 and BLOOM models"
         )
 
     if supports_causal_lm:

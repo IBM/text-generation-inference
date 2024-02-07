@@ -114,7 +114,7 @@ The following model types can currently be run in sharded mode where the weights
 
 1. Ensure that the model weights are in `safetensors format (see above)
 2. Ensure that the `CUDA_VISIBLE_DEVICES` environment variable is set appropriately (e.g. "0,1" to use the first two GPUs). The number of GPUs to use will be inferred from this or else can be set explicitly with the `NUM_GPUS` environment variable.
-3. Set the environment variable `DEPLOYMENT_FRAMEWORK=hf_custom_tp`
+3. Set the environment variable `DEPLOYMENT_FRAMEWORK=tgis_native`
 
 ### TLS configuration
 

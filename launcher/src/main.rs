@@ -162,6 +162,14 @@ fn main() -> ExitCode {
         Err(VarError::NotUnicode(_)) => panic!("PYTORCH_CUDA_ALLOC_CONF set to non-unicode value"),
     };
 
+    // Backwards compatibility for "hf_custom_tp" deployment engine name
+    let deployment_framework = if args.deployment_framework == "hf_custom_tp" {
+        warn!("The \"hf_custom_tp\" deployment engine name is deprecated, please use \"tgis_native\"");
+        "tgis_native"
+    } else {
+        &args.deployment_framework
+    };
+
     // Signal handler
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
@@ -182,6 +190,7 @@ fn main() -> ExitCode {
     // Start shard processes
     for rank in 0..num_shard {
         let args = args.clone();
+        let deployment_framework = deployment_framework.to_string();
         let status_sender = status_sender.clone();
         let shutdown = shutdown.clone();
         let shutdown_sender = shutdown_sender.clone();
@@ -190,7 +199,7 @@ fn main() -> ExitCode {
             shard_manager(
                 args.model_name,
                 args.revision,
-                args.deployment_framework,
+                deployment_framework,
                 args.dtype.or(args.dtype_str),
                 args.quantize,
                 max_sequence_length,

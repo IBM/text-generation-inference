@@ -53,7 +53,7 @@ class InferenceEngine(BaseInferenceEngine):
                     f"Flash attention currently only supported by the following model types: {NONTP_FLASH_TYPES}"
                 )
         elif model_type not in NONTP_NONFLASH_TYPES:
-            raise ValueError("hf_custom_tp engine must be used with FLASH_ATTENTION, num_shards > 1 and/or BLOOM or T5")
+            raise ValueError("tgis_native engine must be used with FLASH_ATTENTION, num_shards > 1 and/or BLOOM or T5")
 
         aliases = None
 
@@ -105,7 +105,7 @@ class InferenceEngine(BaseInferenceEngine):
         torch.distributed.barrier(group=self.process_group)
         filenames = local_weight_files(model_path, extension=".safetensors")
         if not filenames:
-            raise ValueError("No safetensors weights found - required for hf_custom_tp engine")
+            raise ValueError("No safetensors weights found - required for tgis_native engine")
 
         weights = Weights(
             filenames, device=self.device, dtype=dtype, process_group=self.process_group, aliases=aliases

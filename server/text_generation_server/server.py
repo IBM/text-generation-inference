@@ -276,7 +276,7 @@ def serve(
             print(f"Using device {device}, dtype {dtype_str}, quantize {quantize}")
             print(model.config.__str__())
 
-        if quantize == "gptq" and deployment_framework == "hf_custom_tp":
+        if quantize == "gptq" and deployment_framework == "tgis_native":
             from text_generation_server.utils.layers import HAS_EXLLAMA, EXLLAMA_VERSION
             if HAS_EXLLAMA:
                 try:
