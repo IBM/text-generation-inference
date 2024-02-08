@@ -50,7 +50,6 @@ jobs:
         path: /tmp/test_image.tar
         retention-days: 1
 
-
   test-python:
     runs-on: ubuntu-latest
     needs: build
@@ -77,20 +76,7 @@ jobs:
 
       - name: "Run Python tests"
         run: |
-          #make python-tests
-          docker run --rm \
-            -v /tmp/transformers_cache:/transformers_cache \
-            -e HUGGINGFACE_HUB_CACHE=/transformers_cache \
-            -e TRANSFORMERS_CACHE=/transformers_cache \
-            $TEST_IMAGE_NAME pytest -sv \
-              --ignore=server/tests/test_utils.py \
-              --ignore=server/tests/models/test_bloom.py \
-              --ignore=server/tests/models/test_causal_lm.py \
-              --ignore=server/tests/models/test_seq2seq_lm.py \
-              --ignore=server/tests/utils/test_convert.py \
-              -k "not cache_with_eviction and not tensor_too_large" \
-              server/tests
-
+          make python-tests
 
   integration-tests:
     runs-on: ubuntu-latest

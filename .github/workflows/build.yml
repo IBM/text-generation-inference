@@ -28,7 +28,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      # BUILDKIT_PROGRESS: plain
       BUILDKIT_INLINE_CACHE: 1
 
     steps:
