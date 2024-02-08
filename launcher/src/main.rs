@@ -15,11 +15,13 @@ use std::time::{Duration, Instant};
 use std::{fs, io};
 use std::env::VarError;
 use std::ffi::OsString;
+use std::fs::File;
 use std::os::unix::process::CommandExt;
 use tracing::{info, warn};
 
 // In most cases this gives the best performance for inferencing
 const DEFAULT_PYTORCH_CUDA_ALLOC_CONF: &'static str = "expandable_segments:True";
+const DEFAULT_MAX_SEQUENCE_LENGTH: usize = 2048;
 
 /// App Configuration
 #[derive(Parser, Debug, Clone)]
@@ -39,10 +41,10 @@ struct Args {
     quantize: Option<String>,
     #[clap(long, env)]
     num_shard: Option<usize>,
-    #[clap(default_value = "96", long, env)]
+    #[clap(default_value = "512", long, env)]
     max_concurrent_requests: usize,
-    #[clap(default_value = "2048", long, env)]
-    max_sequence_length: usize,
+    #[clap(default_value = None, long, env)]
+    max_sequence_length: Option<usize>,
     #[clap(default_value = "1024", long, env)]
     max_new_tokens: usize,
     #[clap(default_value = "12", long, env)]
@@ -81,6 +83,20 @@ struct Args {
 }
 
 fn main() -> ExitCode {
+    // Register a panic handler up-front to write to /dev/termination-log
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        if let Some(&s) = panic_info.payload().downcast_ref::<&str>() {
+            _ = write_termination_log(s);
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            _ = write_termination_log(s);
+        }
+        // No else case: If we cannot get good panic info, we won't write anything to the
+        // termination log. The system logs should contain better information.
+        default_hook(panic_info);
+    }));
+
+
     // Pattern match configuration
     let args = Args::parse();
 
@@ -88,6 +104,10 @@ fn main() -> ExitCode {
         tracing_subscriber::fmt().json().with_current_span(false).init();
     } else {
         tracing_subscriber::fmt().compact().init();
+    }
+    // log TGIS commit hash
+    if let Some(commit_hash) = option_env!("GIT_COMMIT_HASH") {
+        info!("TGIS Commit hash: {commit_hash}");
     }
 
     info!("Launcher args: {:?}", args);
@@ -101,14 +121,18 @@ fn main() -> ExitCode {
         ),
         _ => (),
     }
-
+    
     // Determine number of shards based on command line arg and env vars
     let num_shard = find_num_shards(args.num_shard);
-
+    
     // Resolve fast tokenizer path
     let tokenizer_path = resolve_tokenizer_path(
         &args.model_name, args.revision.as_deref()
     ).expect("Could not find tokenizer for model");
+    
+    // Determine max sequence length based on command line arg and env vars
+    let config_json_path = tokenizer_path.replace("tokenizer.json", "config.json");
+    let max_sequence_length = get_max_sequence_length(args.max_sequence_length, &config_json_path);
 
     match env::var("MAX_BATCH_WEIGHT") {
         Ok(max_batch_weight) if !max_batch_weight.trim().is_empty() => {
@@ -142,6 +166,14 @@ fn main() -> ExitCode {
         Err(VarError::NotUnicode(_)) => panic!("PYTORCH_CUDA_ALLOC_CONF set to non-unicode value"),
     };
 
+    // Backwards compatibility for "hf_custom_tp" deployment engine name
+    let deployment_framework = if args.deployment_framework == "hf_custom_tp" {
+        warn!("The \"hf_custom_tp\" deployment engine name is deprecated, please use \"tgis_native\"");
+        "tgis_native"
+    } else {
+        &args.deployment_framework
+    };
+
     // Signal handler
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
@@ -162,6 +194,7 @@ fn main() -> ExitCode {
     // Start shard processes
     for rank in 0..num_shard {
         let args = args.clone();
+        let deployment_framework = deployment_framework.to_string();
         let status_sender = status_sender.clone();
         let shutdown = shutdown.clone();
         let shutdown_sender = shutdown_sender.clone();
@@ -170,10 +203,10 @@ fn main() -> ExitCode {
             shard_manager(
                 args.model_name,
                 args.revision,
-                args.deployment_framework,
+                deployment_framework,
                 args.dtype.or(args.dtype_str),
                 args.quantize,
-                args.max_sequence_length,
+                max_sequence_length,
                 args.max_new_tokens,
                 args.max_batch_size,
                 args.batch_safety_margin,
@@ -230,7 +263,7 @@ fn main() -> ExitCode {
         "--max-concurrent-requests".to_string(),
         args.max_concurrent_requests.to_string(),
         "--max-sequence-length".to_string(),
-        args.max_sequence_length.to_string(),
+        max_sequence_length.to_string(),
         "--max-new-tokens".to_string(),
         args.max_new_tokens.to_string(),
         "--max-batch-size".to_string(),
@@ -347,6 +380,69 @@ fn num_cuda_devices() -> Option<usize> {
     };
     let n_devices = devices.split(',').count();
     Some(n_devices)
+}
+/// Finds a max sequence length for the model. In priority order:
+/// 1. MAX_SEQUENCE_LENGTH set by user
+/// 2. The sequence length specified in config.json
+/// 3. A default of 2048
+fn get_max_sequence_length(max_sequence_length: Option<usize>, config_json_path: &String) -> usize {
+    if let Some(max_sequence_length) = max_sequence_length {
+        info!(
+            "Using configured max_sequence_length: {}",
+            max_sequence_length
+        );
+        return max_sequence_length;
+    }
+    if let Ok(model_config) = get_config_json(config_json_path) {
+        if let Some(length) = get_max_sequence_length_from_config(&model_config) {
+            info!(
+                "Loaded max_sequence_length from model config.json: {}",
+                length
+            );
+            return length;
+        }
+    }
+    info!(
+        "Using default max_sequence_length: {}",
+        DEFAULT_MAX_SEQUENCE_LENGTH
+    );
+    DEFAULT_MAX_SEQUENCE_LENGTH
+}
+
+/// Opens the model's config.json file and reads into serde_json value
+fn get_config_json(config_path: &String) -> Result<serde_json::Value, std::io::Error> {
+    let reader = BufReader::new(File::open(config_path)?); 
+    Ok(serde_json::from_reader(reader)?)
+}
+
+/// Attempts to find a max sequence length from the model's config.
+/// There is no standard field for this, different model architectures name it differently.
+/// This checks for some well-known field names, and returns nothing if none are found.
+/// referenced from: https://github.com/vllm-project/vllm/blob/923797fea4d80a4dac4409ece3c450b84d5ba001/vllm/config.py#L557-L592
+fn get_max_sequence_length_from_config(model_config: &serde_json::Value) -> Option<usize> {
+    let possible_keys = [
+        // OPT
+        "max_position_embeddings",
+        // GPT-2
+        "n_positions",
+        // MPT
+        "max_seq_len",
+        // ChatGLM2
+        "seq_length",
+        // Others
+        "max_sequence_length",
+        "max_seq_length",
+        "seq_len",
+    ];
+
+    for key in possible_keys {
+        if let Some(value) = model_config.get(key) {
+            if let Some(value) = value.as_u64() {
+                return Some(value as usize);
+            }
+        }
+    }
+    None
 }
 
 fn find_num_shards(num_shard: Option<usize>) -> usize {
@@ -646,4 +742,12 @@ fn resolve_tokenizer_path(model_name: &str, revision: Option<&str>) -> Result<St
             Err(io::Error::new(ErrorKind::NotFound, message))
         }
     }
+}
+
+fn write_termination_log(msg: &str) -> Result<(), io::Error> {
+    // Writes a message to the termination log.
+    // Creates the logfile if it doesn't exist.
+    let mut f = File::options().write(true).create(true).open("/dev/termination-log")?;
+    writeln!(f, "{}", msg)?;
+    Ok(())
 }

@@ -11,7 +11,20 @@ A number of features here are similar/equivalent but are implemented differently
 Some upstream changes were intentionally not pulled in because they weren't required for our current usage, for example OPT/Galactica model support. And we have stopped pulling in any upstream work after TGI version 1.0, following which the Apache 2.0 OSS license doesn't apply.
 
 ---
+### Table of contents
 
+- [Some of the features in this repo not in HF TGI as of v1.0](#some-of-the-features-in-this-repo-not-in-hf-tgi-as-of-v10)
+- [Run the integration tests](#run-the-integration-tests)
+- [Build the final container image](#build-the-final-container-image)
+- [Deploy model in Kubernetes/OpenShift](#deploy-model-in-kubernetesopenshift)
+- [Model configuration](#model-configuration)
+- [Downloading model weights](#downloading-model-weights)
+- [Converting weights to `safetensors` format](#converting-weights-to-safetensors-format)
+- [Running sharded models (Tensor Parallel)](#running-sharded-models-tensor-parallel)
+- [TLS configuration](#tls-configuration)
+- [Metrics](#metrics)
+
+---
 ### Some of the features in this repo not in HF TGI as of v1.0
 - gRPC front-end interface instead of REST, different arrangement of API parameters
 - Support for batch inputs in the API
@@ -103,7 +116,7 @@ The following model types can currently be run in sharded mode where the weights
 
 1. Ensure that the model weights are in `safetensors format (see above)
 2. Ensure that the `CUDA_VISIBLE_DEVICES` environment variable is set appropriately (e.g. "0,1" to use the first two GPUs). The number of GPUs to use will be inferred from this or else can be set explicitly with the `NUM_GPUS` environment variable.
-3. Set the environment variable `DEPLOYMENT_FRAMEWORK=hf_custom_tp`
+3. Set the environment variable `DEPLOYMENT_FRAMEWORK=tgis_native`
 
 ### TLS configuration
 

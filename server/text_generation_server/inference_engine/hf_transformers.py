@@ -17,6 +17,8 @@ class InferenceEngine(BaseInferenceEngine):
         quantize: Optional[str],
         model_config: Optional[Any],
         max_sequence_length: Optional[int] = None,
+        # internal arg only for this engine
+        _use_accelerate: bool = False,
     ) -> None:
         super().__init__(model_path, model_config)
 
@@ -26,8 +28,12 @@ class InferenceEngine(BaseInferenceEngine):
             "trust_remote_code": TRUST_REMOTE_CODE,
         }
 
+        if _use_accelerate and self.device.type == "cuda":
+            kwargs["device_map"]= "balanced_low_0" if self.world_size > 1 else "auto"
+
         # TODO: consider if Flash Attention should be enabled based on FLASH_ATTENTION=True
         if attn_impl := os.getenv("TRANSFORMERS_ATTN_IMPL"):
+            logger.info(f"Setting attn_implementation to {attn_impl}")
             kwargs["attn_implementation"] = attn_impl
 
         if model_config.model_type == "mpt":

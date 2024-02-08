@@ -10,7 +10,7 @@ from text_generation_server.models.causal_lm import CausalLM
 from text_generation_server.models.seq2seq_lm import Seq2SeqLM
 from text_generation_server.utils.dist import get_torch_dtype, print_rank_n
 from text_generation_server.utils.hub import get_model_path, TRUST_REMOTE_CODE
-from transformers import AutoConfig, AutoModelForSeq2SeqLM, AutoModelForCausalLM
+from transformers import AutoConfig, AutoModelForSeq2SeqLM, AutoModelForCausalLM, PretrainedConfig
 
 FLASH_ATTENTION = os.getenv("FLASH_ATTENTION", "false").lower() == "true"
 
@@ -37,20 +37,23 @@ def get_model(
 ) -> Model:
     dtype = get_torch_dtype(dtype_str)
     model_path = get_model_path(model_name, revision)
-    model_config = AutoConfig.from_pretrained(model_path, trust_remote_code=TRUST_REMOTE_CODE)
-    model_type = model_config.model_type
+
+    # To support native config implementations and lazy registration of
+    # additional model configs (eg. for FMS), load the config as a dict
+    model_config_dict, _kwargs = PretrainedConfig.get_config_dict(model_path)
+    model_type = model_config_dict["model_type"]
 
     if FLASH_ATTENTION:
         # This will raise an exception if flash attention is not supported by the device
         import text_generation_server.utils.flash_attn as flash_attn
         print(f"Using Flash Attention V2: {flash_attn.HAS_FLASH_ATTN_V2}")
 
-        if deployment_framework != "hf_custom_tp":
+        if deployment_framework != "tgis_native":
             print_rank_n(
-                f"WARNING: Using deployment engine hf_custom_tp rather than {deployment_framework} "
+                f"WARNING: Using deployment engine tgis_native rather than {deployment_framework} "
                 "because FLASH_ATTENTION is enabled"
             )
-            deployment_framework = "hf_custom_tp"
+            deployment_framework = "tgis_native"
 
         if model_type in ["RefinedWeb", "RefinedWebModel", "falcon"]:
             # Custom config type for RW models
@@ -62,6 +65,8 @@ def get_model(
             # Custom config type for LLaMA models
             from text_generation_server.models.custom_modeling.flash_llama_modeling import LlamaConfig
             model_config = LlamaConfig.from_pretrained(model_path)
+        else:
+            model_config = AutoConfig.from_pretrained(model_path, trust_remote_code=TRUST_REMOTE_CODE)
 
         from text_generation_server.models.flash_causal_lm import FlashCausalLM
         return FlashCausalLM(
@@ -73,12 +78,29 @@ def get_model(
             max_sequence_length=max_sequence_length,
         )
 
+    elif model_type == "gpt_megatron":
+        if deployment_framework != "ibm_fms":
+            print_rank_n(
+                f"WARNING: Using deployment engine ibm_fms rather than {deployment_framework} "
+                f"for the {model_type} IBM FMS model"
+            )
+        deployment_framework = "ibm_fms"
+
+        return CausalLM(model_name, revision, deployment_framework, dtype, quantize, model_config_dict, max_sequence_length)
+
+    elif model_type.startswith('hf_adapted'):
+        # importing FMS initializes PyTorch compile and forks the process, so we delay the import
+        from fms_extras.models.hf import register_fms_models
+        register_fms_models()
+
     elif deployment_framework == "hf_transformers" and int(os.getenv("WORLD_SIZE", "1")) > 1:
         print_rank_n(
-            f"WARNING: Using deployment engine hf_custom_tp rather than {deployment_framework} "
+            f"WARNING: Using deployment engine tgis_native rather than {deployment_framework} "
             "because more than one shard is configured"
         )
-        deployment_framework = "hf_custom_tp"
+        deployment_framework = "tgis_native"
+
+    model_config = AutoConfig.from_pretrained(model_path, trust_remote_code=TRUST_REMOTE_CODE)
 
     supports_causal_lm = model_type in modeling_auto.MODEL_FOR_CAUSAL_LM_MAPPING_NAMES \
         or type(model_config) in AutoModelForCausalLM._model_mapping \
@@ -95,9 +117,9 @@ def get_model(
     if supports_seq2seq_lm and model_type == "bart":
         supports_causal_lm = False
 
-    if deployment_framework != "hf_custom_tp" and (model_type == "bloom" or model_type == "t5"):
+    if deployment_framework != "tgis_native" and (model_type == "bloom" or model_type == "t5"):
         print_rank_n(
-            "WARNING: It's recommended to use the hf_custom_tp engine with safetensors weights for T5 and BLOOM models"
+            "WARNING: It's recommended to use the tgis_native engine with safetensors weights for T5 and BLOOM models"
         )
 
     if supports_causal_lm:

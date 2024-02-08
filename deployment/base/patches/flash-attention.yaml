@@ -9,6 +9,6 @@ spec:
         - name: server
           env:
             - name: DEPLOYMENT_FRAMEWORK
-              value: hf_custom_tp
+              value: tgis_native
             - name: FLASH_ATTENTION
               value: "true"

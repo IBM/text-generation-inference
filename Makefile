@@ -3,9 +3,10 @@ SHELL := /bin/bash
 DOCKER_BUILDKIT := 1
 TEST_IMAGE_NAME ?= 'cpu-tests:0'
 SERVER_IMAGE_NAME ?= 'text-gen-server:0'
+GIT_COMMIT_HASH := $(shell git rev-parse --short HEAD)
 
 build:
-	docker build --progress=plain --target=server-release -t  $(SERVER_IMAGE_NAME) .
+	docker build --progress=plain --target=server-release --build-arg GIT_COMMIT_HASH=$(GIT_COMMIT_HASH) -t $(SERVER_IMAGE_NAME) .
 	docker images
 
 all: help
@@ -20,7 +21,7 @@ install-router:
 	cd router && cargo install --path .
 
 install-launcher:
-	cd launcher && cargo install --path .
+	cd launcher && env GIT_COMMIT_HASH=$(GIT_COMMIT_HASH) cargo install --path .
 
 install: install-server install-router install-launcher install-custom-kernels
 

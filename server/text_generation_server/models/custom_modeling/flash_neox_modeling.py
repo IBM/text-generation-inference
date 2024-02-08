@@ -135,20 +135,16 @@ class FlashNeoxAttention(torch.nn.Module):
 
         query = qkv[:, 0]
 
-        # output tensor
-        attn_output = torch.empty_like(query)
-
         # Prefill
         if layer_past_present_indices is None:
             # Copy to layer past
             layer_past[...] = qkv[:, 1:]
 
             # flash attention
-            attention(
+            attn_output = attention(
                 query,
                 qkv[:, 1],
                 qkv[:, 2],
-                attn_output,
                 cu_seqlens,
                 max_s,
                 self.softmax_scale,
@@ -159,11 +155,10 @@ class FlashNeoxAttention(torch.nn.Module):
             layer_past[layer_past_present_indices] = qkv[:, 1:]
 
             # flash attention
-            attention(
+            attn_output = attention(
                 query,
                 layer_past[:, 0],
                 layer_past[:, 1],
-                attn_output,
                 cu_seqlens,
                 max_s,
                 self.softmax_scale,
@@ -172,7 +167,7 @@ class FlashNeoxAttention(torch.nn.Module):
                 False,
             )
 
-        return self.dense(attn_output.view(-1, self.num_heads * self.head_size))
+        return self.dense(attn_output.reshape(-1, self.num_heads * self.head_size))
 
 
 class FlashMLP(nn.Module):

@@ -28,7 +28,7 @@ patchesStrategicMerge:
              - name: MODEL_NAME
                value: bigscience/bloomz
              - name: DEPLOYMENT_FRAMEWORK
-               value: hf_custom_tp
+               value: tgis_native
              - name: DTYPE_STR
                value: float16
              - name: MAX_BATCH_SIZE

@@ -1,6 +1,6 @@
 import asyncio
 import logging
-import os
+import os, sys
 import threading
 import time
 from datetime import datetime
@@ -276,7 +276,7 @@ def serve(
             print(f"Using device {device}, dtype {dtype_str}, quantize {quantize}")
             print(model.config.__str__())
 
-        if quantize == "gptq" and deployment_framework == "hf_custom_tp":
+        if quantize == "gptq" and deployment_framework == "tgis_native":
             from text_generation_server.utils.layers import HAS_EXLLAMA, EXLLAMA_VERSION
             if HAS_EXLLAMA:
                 try:
@@ -351,6 +351,16 @@ def serve(
                 compile()
                 memory_scaling_model = estimate_memory()
                 compile()
+
+            max_input = memory_scaling_model.max_input_len_for_nt(1, max_sequence_length-1, sys.maxsize)
+            max_output = memory_scaling_model.max_output_len_for_nt(1, max_sequence_length-1, sys.maxsize)
+
+            if local_rank == 0:
+                print(
+                    "Maximum possible sequence length given available memory (for batch size 1): "
+                    f"{min(max_input, max_output)}"
+                )
+
         elif ESTIMATE_MEMORY == "manual":
             batch_padding = not isinstance(model, FlashCausalLM)
             if batch_padding:

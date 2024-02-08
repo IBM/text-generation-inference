@@ -243,20 +243,16 @@ class FlashMQAttention(torch.nn.Module):
         query = query.view(-1, self.num_heads, self.head_size)
         key_value = key_value.view(-1, 2, 1, self.head_size)
 
-        # output
-        attn_output = torch.empty_like(query)
-
         # Prefill
         if layer_past_present_indices is None:
             # Copy to layer past
             layer_past[...] = key_value
 
             # flash attention
-            attention(
+            attn_output = attention(
                 query,
                 torch.select(key_value, dim=1, index=0),
                 torch.select(key_value, dim=1, index=1),
-                attn_output,
                 cu_seqlens,
                 max_s,
                 self.softmax_scale,
@@ -267,11 +263,10 @@ class FlashMQAttention(torch.nn.Module):
             layer_past[layer_past_present_indices] = key_value
 
             # flash attention
-            attention(
+            attn_output = attention(
                 query,
                 layer_past[:, 0],
                 layer_past[:, 1],
-                attn_output,
                 cu_seqlens,
                 max_s,
                 self.softmax_scale,
@@ -280,7 +275,7 @@ class FlashMQAttention(torch.nn.Module):
                 False,
             )
 
-        return self.c_proj(attn_output.view(-1, self.num_heads * self.head_size))
+        return self.c_proj(attn_output.reshape(-1, self.num_heads * self.head_size))
 
 
 class MLP(nn.Module):

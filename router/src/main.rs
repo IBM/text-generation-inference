@@ -1,5 +1,8 @@
 /// Text Generation Inference external gRPC server entrypoint
 use clap::Parser;
+use std::fs::File;
+use std::io;
+use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use text_generation_client::ShardedClient;
 use text_generation_router::server;
@@ -11,7 +14,7 @@ use text_generation_router::server::ServerRunArgs;
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    #[clap(default_value = "96", long, env)]
+    #[clap(default_value = "512", long, env)]
     max_concurrent_requests: usize,
     #[clap(default_value = "2048", long, env)]
     max_sequence_length: usize,
@@ -48,6 +51,19 @@ struct Args {
 }
 
 fn main() -> Result<(), std::io::Error> {
+    // Register a panic handler up-front to write to /dev/termination-log
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        if let Some(&s) = panic_info.payload().downcast_ref::<&str>() {
+            _ = write_termination_log(s);
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            _ = write_termination_log(s);
+        }
+        // No else case: If we cannot get good panic info, we won't write anything to the
+        // termination log. The system logs should contain better information.
+        default_hook(panic_info);
+    }));
+
     // Get args
     let args = Args::parse();
 
@@ -57,17 +73,8 @@ fn main() -> Result<(), std::io::Error> {
         tracing_subscriber::fmt().compact().init();
     }
 
-    if args.tokenization_workers == Some(0) {
-        panic!("tokenization_workers must be > 0");
-    }
-
-    if args.tls_key_path.is_some() != args.tls_cert_path.is_some() {
-        panic!("tls: must provide both cert and key")
-    }
-
-    if args.tls_client_ca_cert_path.is_some() && args.tls_cert_path.is_none() {
-        panic!("tls: cannot provide client ca cert without keypair")
-    }
+    // Validate args
+    validate_args(&args);
 
     // Instantiate tokenizer
     let mut tokenizer = Tokenizer::from_file(args.tokenizer_path)
@@ -140,4 +147,48 @@ fn main() -> Result<(), std::io::Error> {
             .await;
             Ok(())
         })
+}
+
+fn validate_args(args: &Args) {
+    if args.tokenization_workers == Some(0) {
+        panic!("tokenization_workers must be > 0");
+    }
+
+    if args.max_concurrent_requests == 0 {
+        panic!("max_concurrent_requests must be > 0");
+    }
+
+    if args.tls_key_path.is_some() != args.tls_cert_path.is_some() {
+        panic!("tls: must provide both cert and key")
+    }
+
+    if args.tls_client_ca_cert_path.is_some() && args.tls_cert_path.is_none() {
+        panic!("tls: cannot provide client ca cert without keypair")
+    }
+
+    if args.max_prefill_padding < 0.0 || args.max_prefill_padding > 1.0 {
+        panic!(
+            "max_prefill_padding ({}) must be a percentage in the range [0.0, 1.0]",
+            args.max_prefill_padding,
+        )
+    }
+
+    if args.max_new_tokens < 1 {
+        panic!("max_new_tokens ({}) at least 1", args.max_new_tokens)
+    }
+
+    if args.max_sequence_length < 2 {
+        panic!(
+            "max_sequence_length ({}) must be at least 2 (1 input + 1 output)",
+            args.max_sequence_length,
+        )
+    }
+}
+
+fn write_termination_log(msg: &str) -> Result<(), io::Error> {
+    // Writes a message to the termination log.
+    // Creates the logfile if it doesn't exist.
+    let mut f = File::options().write(true).create(true).open("/dev/termination-log")?;
+    writeln!(f, "{}", msg)?;
+    Ok(())
 }
