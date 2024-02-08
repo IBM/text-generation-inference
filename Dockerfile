@@ -1,13 +1,13 @@
 ## Global Args #################################################################
 ARG BASE_UBI_IMAGE_TAG=9.3-1476
 ARG PROTOC_VERSION=25.1
-ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
-#ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
+#ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
+ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
 # match PyTorch version that was used to compile flash-attention v2 pre-built wheels
 # e.g. flash-attn v2.5.2 => torch ['1.12.1', '1.13.1', '2.0.1', '2.1.2', '2.2.0', '2.3.0.dev20240126']
 # https://github.com/Dao-AILab/flash-attention/blob/v2.5.2/.github/workflows/publish.yml#L47
 # use nightly build index for torch .dev pre-release versions
-ARG PYTORCH_VERSION=2.2.0
+ARG PYTORCH_VERSION=2.3.0.dev20240125
 
 ARG PYTHON_VERSION=3.11
 
