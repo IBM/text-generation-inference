@@ -134,7 +134,7 @@ FROM base as test-base
 
 ARG PYTHON_VERSION
 
-RUN dnf install -y make unzip python${PYTHON_VERSION} python${PYTHON_VERSION}-pip gcc openssl-devel gcc-c++ && \
+RUN dnf install -y make unzip python${PYTHON_VERSION} python${PYTHON_VERSION}-pip gcc openssl-devel gcc-c++ git && \
     dnf clean all && \
     ln -fs /usr/bin/python${PYTHON_VERSION} /usr/bin/python3 && \
     ln -s /usr/bin/python${PYTHON_VERSION} /usr/local/bin/python && ln -s /usr/bin/pip${PYTHON_VERSION} /usr/local/bin/pip
@@ -279,7 +279,7 @@ ARG PYTHON_VERSION
 ARG SITE_PACKAGES=/opt/tgis/lib/python${PYTHON_VERSION}/site-packages
 
 # Install C++ compiler (required at runtime when PT2_COMPILE is enabled)
-RUN dnf install -y gcc-c++ && dnf clean all \
+RUN dnf install -y gcc-c++ git && dnf clean all \
     && useradd -u 2000 tgis -m -g 0
 
 SHELL ["/bin/bash", "-c"]
@@ -312,7 +312,7 @@ RUN --mount=type=bind,from=auto-gptq-cache,src=/usr/src/auto-gptq-wheel,target=/
 # Install server
 COPY proto proto
 COPY server server
-RUN cd server && make gen-server && pip install ".[accelerate, onnx-gpu, quantize]" --no-cache-dir
+RUN cd server && make gen-server && pip install ".[accelerate, ibm-fms, onnx-gpu, quantize]" --no-cache-dir
 
 # Patch codegen model changes into transformers 4.35
 RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py
