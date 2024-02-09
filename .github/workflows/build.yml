@@ -1,0 +1,122 @@
+name: "Build"
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "main"
+    paths-ignore:
+      - "**.md"
+      - "proto/**"
+  pull_request:
+    branches:
+      - "main"
+    paths-ignore:
+      - "**.md"
+      - "proto/**"
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CI: true
+  DOCKER_BUILDKIT: 1
+  SERVER_IMAGE_NAME: "text-gen-server:0"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      BUILDKIT_INLINE_CACHE: 1
+
+    steps:
+    - name: "Checkout"
+      uses: actions/checkout@v4
+
+    - name: "Free up disk space"
+      uses: ./.github/actions/free-up-disk-space
+
+    - name: "Set up QEMU"
+      uses: docker/setup-qemu-action@v3
+
+    - name: "Set up Docker Buildx"
+      uses: docker/setup-buildx-action@v3
+
+    - name: "Generate job steps to build stages sequentially"
+      run: |
+        build_targets=$(grep -iE "^FROM .+ as .*$" Dockerfile | grep -E -o "[^ ]+$")
+        for t in $build_targets; do
+          echo
+          echo "    - name: \"Docker build ${t}\""
+          echo "      run: docker build --target=$t -t $t ."
+        done
+
+    - name: "Docker build base"
+      run: docker build --target=base -t base .
+
+    - name: "Docker build cuda-base"
+      run: docker build --target=cuda-base -t cuda-base .
+
+    - name: "Docker build cuda-devel"
+      run: docker build --target=cuda-devel -t cuda-devel .
+
+    - name: "Docker build python-builder"
+      run: docker build --target=python-builder -t python-builder .
+
+    - name: "Docker build flash-att-v2-builder"
+      run: docker build --target=flash-att-v2-builder -t flash-att-v2-builder .
+
+    - name: "Docker build flash-att-builder"
+      run: docker build --target=flash-att-builder -t flash-att-builder .
+
+    - name: "Docker build flash-att-cache"
+      run: docker build --target=flash-att-cache -t flash-att-cache .
+
+    - name: "Docker build flash-att-v2-cache"
+      run: docker build --target=flash-att-v2-cache -t flash-att-v2-cache .
+
+    - name: "Docker build auto-gptq-installer"
+      run: docker build --target=auto-gptq-installer -t auto-gptq-installer .
+
+    - name: "Docker build auto-gptq-cache"
+      run: docker build --target=auto-gptq-cache -t auto-gptq-cache .
+
+    - name: "Docker build cuda-runtime"
+      run: docker build --target=cuda-runtime -t cuda-runtime .
+
+    - name: "Docker build rust-builder"
+      run: docker build --target=rust-builder -t rust-builder .
+
+    - name: "Docker build router-builder"
+      run: docker build --target=router-builder -t router-builder .
+
+    - name: "Docker build launcher-builder"
+      run: docker build --target=launcher-builder -t launcher-builder .
+
+    - name: "Docker build test-base"
+      run: docker build --target=test-base -t test-base .
+
+    - name: "Docker build cpu-tests"
+      run: docker build --target=cpu-tests -t cpu-tests .
+
+    - name: "Docker build build"
+      run: docker build --target=build -t build .
+
+    - name: "Docker build exllama-kernels-builder"
+      run: docker build --target=exllama-kernels-builder -t exllama-kernels-builder .
+
+    - name: "Docker build exllamav2-kernels-builder"
+      run: docker build --target=exllamav2-kernels-builder -t exllamav2-kernels-builder .
+
+    - name: "Docker build server-release"
+      run: docker build --target=server-release -t server-release .
+
+    - name: "List docker images"
+      run: docker images
+
+    - name: "Check disk usage"
+      shell: bash
+      run: |
+        docker system df
+        df -h
