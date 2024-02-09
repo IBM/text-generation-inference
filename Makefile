@@ -23,6 +23,10 @@ install-router:
 install-launcher:
 	cd launcher && env GIT_COMMIT_HASH=$(GIT_COMMIT_HASH) cargo install --path .
 
+.PHONY: install-launcher-linux
+install-launcher-linux:
+	cd launcher && env GIT_COMMIT_HASH=$(GIT_COMMIT_HASH) CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-unknown-linux-gnu-gcc cargo install --path . --target=x86_64-unknown-linux-gnu
+
 install: install-server install-router install-launcher install-custom-kernels
 
 server-dev:
