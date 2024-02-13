@@ -747,7 +747,7 @@ fn resolve_tokenizer_path(model_name: &str, revision: Option<&str>) -> Result<St
 fn write_termination_log(msg: &str) -> Result<(), io::Error> {
     // Writes a message to the termination log.
     // Creates the logfile if it doesn't exist.
-    let mut f = File::options().write(true).create(true).open("/dev/termination-log")?;
+    let mut f = File::options().write(true).create(true).truncate(true).open("/dev/termination-log")?;
     writeln!(f, "{}", msg)?;
     Ok(())
 }
