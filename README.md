@@ -11,8 +11,10 @@ A number of features here are similar/equivalent but are implemented differently
 Some upstream changes were intentionally not pulled in because they weren't required for our current usage, for example OPT/Galactica model support. And we have stopped pulling in any upstream work after TGI version 1.0, following which the Apache 2.0 OSS license doesn't apply.
 
 ---
+
 ### Table of contents
 
+- [Contributing](#contributing)
 - [Some of the features in this repo not in HF TGI as of v1.0](#some-of-the-features-in-this-repo-not-in-hf-tgi-as-of-v10)
 - [Run the integration tests](#run-the-integration-tests)
 - [Build the final container image](#build-the-final-container-image)
@@ -25,7 +27,25 @@ Some upstream changes were intentionally not pulled in because they weren't requ
 - [Metrics](#metrics)
 
 ---
+
+# Contributing
+
+Style and code checks are enforced using [pre-commit](https://pre-commit.com). Follow the `pre-commit` [installation guide](https://pre-commit.com/index.html#install), then install the git hooks in the repo:
+
+```bash
+pre-commit install # sets up the pre-commit hooks in the repo
+```
+
+This will run `pre-commit` before every commit. To skip this, `git commit --no-verify` can be used. To force running all hooks:
+
+```bash
+pre-commit run --all-files --show-diff
+```
+
+---
+
 ### Some of the features in this repo not in HF TGI as of v1.0
+
 - gRPC front-end interface instead of REST, different arrangement of API parameters
 - Support for batch inputs in the API
 - Independent tokenization API
