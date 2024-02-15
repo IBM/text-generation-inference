@@ -1,3 +1,7 @@
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
 [tool.poetry]
 name = "text-generation-server"
 version = "0.1.0"
@@ -50,6 +54,57 @@ quantize = ["datasets", "texttable"]
 grpcio-tools = "^1.60.1"
 pytest = "^8.0.1"
 
-[build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+output-format = "full"
+show-fixes = true
+extend-exclude = ["transformers_patch/modeling_codegen.py"]
+
+[tool.ruff.lint]
+ignore = [
+  "S101",  # assert
+  "PLR2004",  # magic-value-comparison
+  "PLW2901",  # redefined-loop-name
+  "ISC001",  # single-line-implicit-string-concatenation
+  "SIM105",  # suppressible-exception
+  "SIM108",  # if-else-block-instead-of-if-exp
+  "D203",  # one blank line before class
+  "D213",  # multi-line-summary-second-line
+  "D100",  # missing docstring in public module
+  "D101",  # missing docstring in public class
+  "D102",  # missing docstring in public method
+  "D103",  # missing docstring in public function
+  "D104",  # missing docstring in public package
+  "D105",  # missing docstring in magic method
+  "D107",  # missing docstring in method
+  "PT004",  # pytest-missing-fixture-name-underscore
+  "ANN001",  # missing type annotation (function argument)
+  "ANN002",  # missing type annotation
+  "ANN101",  # missing type annotation
+  "ANN204",  # missing return type annotation
+  "ANN201",  # missing return type annotation
+  "PTH",  # Use pathlib instead of os.path
+  "E501",  # line too long
+  "T201"  # `print` found
+]
+# "PT001"  # pytest-fixture-incorrect-parentheses-style
+# "ANN003"  # missing type kwargs
+select = ["ALL"]
+
+[tool.ruff.lint.flake8-type-checking]
+strict = true
+
+[tool.ruff.lint.isort]
+known-first-party = ["text_generation_server"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+  "S",
+  "ARG001",
+  "ARG002",
+  "ANN",
+  "D",
+  "PD011"
+]
+"path/to/something" = []
