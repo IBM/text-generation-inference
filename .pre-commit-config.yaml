@@ -1,0 +1,49 @@
+default_language_version:
+  python: python3
+exclude: |
+  (?x)^(
+  integration_tests/test_cases_bloom560m.yaml|
+  integration_tests/test_cases_common.yaml|
+  integration_tests/test_cases_gpt2.yaml|
+  integration_tests/test_cases_mt0_ost.yaml|
+  integration_tests/test_cases_mt0small.yaml|
+  integration_tests/test_cases_tinyllama.yaml|
+  integration_tests/test_cases_tinystarcoderpy.yaml
+  )$
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-case-conflict
+      - id: check-docstring-first
+      - id: check-executables-have-shebangs
+      - id: check-json
+      - id: check-merge-conflict
+        args: ["--assume-in-merge"]
+      - id: check-toml
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+      - id: sort-simple-yaml
+      - id: trailing-whitespace
+  - repo: https://github.com/doublify/pre-commit-rust
+    rev: v1.0
+    hooks:
+      - id: fmt
+      - id: cargo-check
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.2.6
+    hooks:
+      - id: codespell
+        additional_dependencies: ["tomli"]
+  - repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
+    rev: v2.12.0
+    hooks:
+      - id: pretty-format-toml
+        args: [--autofix, --no-sort]
+      - id: pretty-format-yaml
+        args: [--autofix, --indent, "2", "--offset", "2", --preserve-quotes]
+      - id: pretty-format-rust
+        args: []
