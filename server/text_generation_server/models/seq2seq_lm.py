@@ -557,7 +557,7 @@ class Seq2SeqLM(Model):
         inference_engine = get_inference_engine_class(deployment_framework)(
             model_path, AutoModelForSeq2SeqLM, dtype, quantize, model_config, max_sequence_length
         )
-        super(Seq2SeqLM, self).__init__(inference_engine, dtype)
+        super(Seq2SeqLM, self).__init__(inference_engine, dtype, max_sequence_length)
 
         bos_token_id = self.model.config.decoder_start_token_id
         if bos_token_id is None:
