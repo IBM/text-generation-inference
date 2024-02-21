@@ -25,7 +25,7 @@ INTEGRATION_TESTS_DIR = os.path.join(REPO_ROOT, "integration_tests")
 
 @pytest.fixture(autouse=True)
 def temp_prompt_store(tmp_path):
-    # Unless overriden by another fixture, sets the prefix store path to some temp dir
+    # Unless overridden by another fixture, sets the prefix store path to some temp dir
     with patch("text_generation_server.prompt_cache.PREFIX_STORE_PATH", tmp_path):
         yield
 

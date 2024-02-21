@@ -105,7 +105,7 @@ class NextTokenChooser:
         if FP32_LOGITS:
             scores = scores.to(torch.float32)
 
-        # Processs and warp logits
+        # Process and warp logits
         final_scores = self._process_logits(input_ids, scores)
 
         if self.static_warper is not None:

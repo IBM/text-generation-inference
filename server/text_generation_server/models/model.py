@@ -125,7 +125,7 @@ class Model(ABC):
             run_forward = torch._dynamo.run(compiled_forward)
 
             def parse_kwargs(kwargs):
-                # after batch concatentation the past_key_value tensor is a list of lists.
+                # after batch concatenation the past_key_value tensor is a list of lists.
                 # this will lead to guard failures unless we convert them to the typical
                 # types that we expect to be returned by forward.
                 pkv = kwargs.get("past_key_values")
