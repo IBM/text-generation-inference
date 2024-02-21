@@ -36,7 +36,7 @@ def _remove_duplicate_names(
 
         keep_name = sorted(list(complete_names))[0]
 
-        # Mecanism to preferentially select keys to keep
+        # Mechanism to preferentially select keys to keep
         # coming from the on-disk file to allow
         # loading models saved with a different choice
         # of keep_name

@@ -182,7 +182,7 @@ std::tuple<at::Tensor, std::optional<std::vector<at::Tensor>>, at::Tensor> forwa
             */
 
             /*
-            * We should split [batch_size_times_num_heads_block, q_length] in seperate blocks and [batch_size_times_num_heads_block_size, kv_length] a single block
+            * We should split [batch_size_times_num_heads_block, q_length] in separate blocks and [batch_size_times_num_heads_block_size, kv_length] a single block
             * with multiple threads as we need to `sync_threads` to run exponential sum.
             * We maximise the usage of threads within a single block
             */
