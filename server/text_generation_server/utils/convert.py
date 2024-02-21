@@ -1,6 +1,7 @@
 import datetime
 import torch
 import os
+import json
 
 from loguru import logger
 from pathlib import Path
@@ -87,12 +88,25 @@ def convert_file(pt_file: Path, sf_file: Path, discard_names: List[str]):
             raise RuntimeError(f"The output tensors do not match for key {k}")
 
 
+def convert_index_file(source_file: Path, dest_file: Path, pt_files: List[Path], sf_files: List[Path]):
+    weight_file_map = {s.name: d.name for s, d in zip(pt_files, sf_files)}
+
+    logger.info(f"Converting pytorch .bin.index.json files to .safetensors.index.json")
+    with open(source_file, "r") as f:
+        index = json.load(f)
+
+    index["weight_map"] = {k: weight_file_map[v] for k, v in index["weight_map"].items()}
+    
+    with open(dest_file, "w") as f:
+        json.dump(index, f, indent=4)
+
+
 def convert_files(pt_files: List[Path], sf_files: List[Path], discard_names: List[str] = None):
     assert len(pt_files) == len(sf_files)
 
     # Filter non-inference files
     pairs = [p for p in zip(pt_files, sf_files) if not any(
-        s in p[0].name for s in ["arguments", "args", "training", "optimizer", "scheduler"]
+        s in p[0].name for s in ["arguments", "args", "training", "optimizer", "scheduler", "index"]
     )]
 
     N = len(pairs)
