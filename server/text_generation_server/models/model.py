@@ -1,4 +1,5 @@
 import inspect
+import math
 import os
 import types
 
@@ -19,9 +20,6 @@ from text_generation_server.utils.token_types import TokenInfo, InputTokens
 
 B = TypeVar("B", bound=Batch)
 
-# TODO make configurable, possibly based on configured max seq length
-MAX_PROMPT_PREFIX_LENGTH = 256
-
 CUDA_PAD_TO_MULT_OF_8 = os.getenv("CUDA_PAD_TO_MULT_OF_8", "true").lower() != "false"
 PT2_COMPILE = os.getenv("PT2_COMPILE", "false").lower() != "false"
 
@@ -33,7 +31,7 @@ if PT2_COMPILE:
 
 
 class Model(ABC):
-    def __init__(self, engine: BaseInferenceEngine, dtype: torch.dtype):
+    def __init__(self, engine: BaseInferenceEngine, dtype: torch.dtype, max_seq_length: Optional[int] = None):
         self.engine = engine
         self.config, self.tokenizer, self.model = engine.get_components()
         self.device = engine.get_device()
@@ -50,6 +48,24 @@ class Model(ABC):
 
         if prompt_prefix_supported:
             # Set up prefix cache
+
+            if max_seq_length is None:
+                # shouldn't be None, but just in case since the parameter is passed through as Optional
+                max_seq_length = 2048
+
+            # default value to 50% of the max sequence length
+            max_prompt_prefix_length = math.ceil(max_seq_length * 0.5)
+            if (max_prompt_prefix_env_var := os.getenv("MAX_PROMPT_PREFIX_LENGTH")):
+                try:
+                    max_prompt_prefix_env_var = int(max_prompt_prefix_env_var)
+                except ValueError as exc:
+                    raise ValueError("Invalid value for MAX_PROMPT_PREFIX_LENGTH") from exc
+
+                if max_prompt_prefix_env_var > max_seq_length - 1:
+                    raise ValueError(f"Value for the MAX_PROMPT_PREFIX_LENGTH ({max_prompt_prefix_env_var}) cannot be larger than the max sequence length - 1 ({max_seq_length - 1})")
+
+                max_prompt_prefix_length = max_prompt_prefix_env_var
+
             decoder_start_token_id = self.model.config.decoder_start_token_id
             if decoder_start_token_id is None:
                 decoder_start_token_id = self.tokenizer.bos_token_id
@@ -65,7 +81,7 @@ class Model(ABC):
             self.prefix_cache = PrefixCache(
                 device=self.device,
                 dtype=dtype,
-                max_length=MAX_PROMPT_PREFIX_LENGTH,
+                max_length=max_prompt_prefix_length,
                 encoder_decoder=self.model.config.is_encoder_decoder,
                 return_zero=return_zero,
                 decoder_start_tok_embedding=self.word_embeddings(
