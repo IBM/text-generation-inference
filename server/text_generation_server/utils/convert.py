@@ -96,7 +96,7 @@ def convert_index_file(source_file: Path, dest_file: Path, pt_files: List[Path],
         index = json.load(f)
 
     index["weight_map"] = {k: weight_file_map[v] for k, v in index["weight_map"].items()}
-    
+
     with open(dest_file, "w") as f:
         json.dump(index, f, indent=4)
 

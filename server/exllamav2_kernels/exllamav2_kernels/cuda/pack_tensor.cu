@@ -265,4 +265,3 @@ void pack_columns_cuda
     if (bits == 6) pack_columns_kernel<6><<<blocks, threads>>>(input, output, out_rows, columns);
     if (bits == 8) pack_columns_kernel<8><<<blocks, threads>>>(input, output, out_rows, columns);
 }
-

@@ -1,17 +1,18 @@
 [workspace]
 resolver = "2"
 members = [
-    "router",
-    "router/client",
-    "launcher"
+  "router",
+  "router/client",
+  "launcher"
 ]
 exclude = [
-    "server/safetensors",
+  "server/safetensors"
 ]
 
 [profile.release]
 debug = 1
 incremental = true
 lto = "off"
-#lto = "fat"
-#panic = "abort"
+
+# lto = "fat"
+# panic = "abort"

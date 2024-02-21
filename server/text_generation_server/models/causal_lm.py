@@ -364,7 +364,7 @@ class CausalLMBatch(Batch):
                     start_index = end_index
 
                 past_key_values.append(padded_past)
-    
+
         else:
             # Shenanigans to get dimensions because BLOOM outputs a past with a different shape
             # BLOOM Keys:   [batch_size * num_heads, head_dim, seq_length]
@@ -502,7 +502,7 @@ class CausalLMBatch(Batch):
                 batch.past_key_values[i] = layer[keep_indices, -past_kv_length:, :]
             else:
                 batch.past_key_values[i] = update_layer(
-                    layer, size_before, keep_indices, past_kv_length, batch.keys_head_dim_last, three_dim_pkvs, 
+                    layer, size_before, keep_indices, past_kv_length, batch.keys_head_dim_last, three_dim_pkvs,
                 )
 
         batch.input_ids = batch.input_ids[keep_indices]

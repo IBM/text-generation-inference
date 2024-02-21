@@ -83,8 +83,8 @@ jobs:
           target: "cpu-tests"
           tags: ${{ env.TEST_IMAGE_NAME }}
           cache-from: |
-              type=gha
-              type=registry,ref=${{ env.CACHE_IMAGE }}
+            type=gha
+            type=registry,ref=${{ env.CACHE_IMAGE }}
           cache-to: ${{ env.CACHE_TO }}
           outputs: type=docker,dest=/tmp/test_image.tar
 

@@ -404,7 +404,7 @@ class FlashSantacoderModel(nn.Module):
             raise ValueError(
                 "You cannot specify both input_ids and inputs_embeds at the same time"
             )
-        
+
         if inputs_embeds is not None:
             hidden_states = inputs_embeds + self.wpe(position_ids)
         else:

@@ -17,14 +17,13 @@ pyyaml = "^6.0.1"
 
 [tool.pytest.ini_options]
 markers = [
-    "model",
-    "extensions",
-    "shards",
-    "output_special_tokens",
-    "test_case_file",
+  "model",
+  "extensions",
+  "shards",
+  "output_special_tokens",
+  "test_case_file"
 ]
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
-

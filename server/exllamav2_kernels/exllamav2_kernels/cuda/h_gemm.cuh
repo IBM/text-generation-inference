@@ -23,4 +23,3 @@ void h_gemm_cuda
 );
 
 #endif
-

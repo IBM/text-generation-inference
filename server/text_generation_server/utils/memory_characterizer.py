@@ -10,14 +10,14 @@ import gc, os, sys
 # Set the memory estimation method to auto, manual or off. If PT2C is used, auto will be forced.
 ESTIMATE_MEMORY                   = os.getenv("ESTIMATE_MEMORY", "auto")
 assert ESTIMATE_MEMORY in ["auto", "manual", "off"], "valid options for ESTIMATE_MEMORY are auto, manual, and off"
-# Select the batch size that is used to run the tests. The idea is to make the 
+# Select the batch size that is used to run the tests. The idea is to make the
 # batch large enough so that the measurement is more accurate, i.e. improve signal to
 # noise ratio. If set too large it could prevent the estimator from finding a quadratic
 # curve after an initial linear part.
 ESTIMATE_MEMORY_BATCH_SIZE        = int(os.getenv("ESTIMATE_MEMORY_BATCH_SIZE", "16"))
 # Select the minimum amount of samples that is required to interpolate the quadratic curve
 ESTIMATE_MEMORY_MIN_SAMPLES       = int(os.getenv("ESTIMATE_MEMORY_MIN_SAMPLES", "5"))
-# Select the shortest sequence length used in the tests. The idea is to make the 
+# Select the shortest sequence length used in the tests. The idea is to make the
 # sequence large enough so that the measurement is more accurate.
 ESTIMATE_MEMORY_START_SEQ_LEN     = int(os.getenv("ESTIMATE_MEMORY_START_SEQ_LEN", "100"))
 # Select the longest sequence length used in the tests. It is adjusted down if an OOM is detected
@@ -84,7 +84,7 @@ class MemoryScalingModel:
 
     def inverse_next_token_input(self, batch, out_seq, mem):
         return (mem - self.next_token_params[1]*batch*out_seq)/(batch*self.next_token_params[0])
-    
+
     def max_input_len_for_prefill(self, batch_size, max_input_len):
         mem_max = np.floor(self.inverse_prefill(batch_size, self.weight_limit))
         return int(min(mem_max, max_input_len))
@@ -97,7 +97,7 @@ class MemoryScalingModel:
     def max_output_len_for_nt(self, batch_size, input_len, max_output_len):
         nt = max(0, np.floor(self.inverse_next_token_output(batch_size, input_len, self.weight_limit)))
         return int(min(nt, max_output_len))
-    
+
     @classmethod
     def disabled(cls):
         return cls(sys.maxsize, 0, [0], [0, 0], [0, 0])
@@ -205,12 +205,12 @@ class Estimator:
     def __linear_f(x, a):
         batch, seq = x
         return a*batch*seq
-    
+
     @staticmethod
     def __next_token_model(X, a, b):
         batch, in_seq, out_seq = X
         return a*batch*in_seq + b*batch*out_seq
-    
+
     @staticmethod
     def __generate_batch(model, batch_size: int, in_text: str, in_tokens: int, num_new_tokens: int):
         request = generate_pb2.PrefillRequest(
@@ -290,10 +290,10 @@ class Estimator:
             print(f"got less results than expected {len(results)=}, {self.max_new_tokens=}")
             self.nt_upper_input_limit = input_seq_len
             return
-        
+
         for request, result in enumerate(results):
             out_seq = request + 1
-                                
+
             y = result - self.baseline
 
             self.nt_X = np.append(self.nt_X, [[self.batch_size], [input_seq_len], [out_seq]], axis=1)
@@ -352,7 +352,7 @@ class Estimator:
         lower = self.start_seq_len
         upper = s = self.stop_seq_len
         while (upper - lower) > STOPPING_DISTANCE:
-           
+
             is_oom, mem_allocated, _ = self._run_prefill_test(s, 1)
 
             if is_oom:
@@ -368,7 +368,7 @@ class Estimator:
             self.stop_seq_len = lower
             return True
         return False
-    
+
     def find_linear_part(self):
         print("Looking for the linear part")
 
@@ -386,7 +386,7 @@ class Estimator:
             target = int((lower_x + upper_x)/2)
 
             x_samples, y_samples = self.take_n_samples(1, target, target+1)
-            
+
             self.X = np.append(self.X, x_samples, axis=1)
             self.Y = np.append(self.Y, y_samples)
 
@@ -499,13 +499,13 @@ class Estimator:
 
         found = self.find_upper_bound()
         self.init_nt_sampling()
-        
+
         if not found:
             raise Exception(
                 f"Couldn't find prefill sequence in range {self.start_seq_len}-{self.stop_seq_len}"
                 f" that doesn't run OOM"
             )
-        
+
         longest_linear = self.find_linear_part()
         assert 0 <= longest_linear <= self.stop_seq_len
 
@@ -514,7 +514,7 @@ class Estimator:
         # If the curve is neither all linear nor all quadratic, find the inflection point
         if self.start_seq_len < longest_linear < self.stop_seq_len:
             self.inflection_point = self.find_inflection_point(longest_linear)
-        
+
         if self.inflection_point != self.stop_seq_len:
             self.estimate_quadratic(self.inflection_point)
 
