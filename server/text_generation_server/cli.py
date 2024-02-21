@@ -138,16 +138,21 @@ def convert_to_safetensors(
     # Get local pytorch file paths
     model_path = utils.get_model_path(model_name, revision)
     local_pt_files = utils.local_weight_files(model_path, ".bin")
+    local_pt_index_files = utils.local_index_files(model_path, ".bin")
+    if len(local_pt_index_files) > 1:
+        print(f"Found more than one .bin.index.json file: {local_pt_index_files}")
+        return
 
     if not local_pt_files:
         print("No pytorch .bin files found to convert")
         return
 
     local_pt_files = [Path(f) for f in local_pt_files]
+    local_pt_index_file = local_pt_index_files[0] if local_pt_index_files else None
 
     # Safetensors final filenames
     local_st_files = [
-        p.parent / f"{p.stem.lstrip('pytorch_')}.safetensors"
+        p.parent / f"{p.stem.removeprefix('pytorch_')}.safetensors"
         for p in local_pt_files
     ]
 
@@ -172,6 +177,16 @@ def convert_to_safetensors(
 
     except Exception:
         discard_names = []
+
+    if local_pt_index_file:
+        local_pt_index_file = Path(local_pt_index_file)
+        local_st_index_file = local_pt_index_file.parent / f"{local_pt_index_file.stem.removeprefix('pytorch_').rstrip('.bin.index')}.safetensors.index.json"
+
+        if os.path.exists(local_st_index_file):
+            print("Existing .safetensors.index.json file found, remove it first to reconvert")
+            return
+
+        utils.convert_index_file(local_pt_index_file, local_st_index_file, local_pt_files, local_st_files)
 
     # Convert pytorch weights to safetensors
     utils.convert_files(local_pt_files, local_st_files, discard_names)

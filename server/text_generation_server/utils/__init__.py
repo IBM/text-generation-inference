@@ -1,4 +1,4 @@
-from text_generation_server.utils.convert import convert_file, convert_files
+from text_generation_server.utils.convert import convert_file, convert_files, convert_index_file
 from text_generation_server.utils.dist import (
     initialize_torch_distributed,
     run_rank_n,
@@ -10,6 +10,7 @@ from text_generation_server.utils.weights import Weights
 from text_generation_server.utils.hub import (
     get_model_path,
     local_weight_files,
+    local_index_files,
     weight_files,
     weight_hub_files,
     download_weights,
@@ -41,6 +42,7 @@ from text_generation_server.utils.memory_characterizer import (
 __all__ = [
     "convert_file",
     "convert_files",
+    "convert_index_file",
     "initialize_torch_distributed",
     "run_rank_n",
     "print_rank_n",
@@ -48,6 +50,7 @@ __all__ = [
     "RANK",
     "get_model_path",
     "local_weight_files",
+    "local_index_files",
     "weight_files",
     "weight_hub_files",
     "download_weights",

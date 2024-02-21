@@ -13,7 +13,7 @@ def test_convert_files():
     local_pt_files = download_weights(model_id, extension=".bin")
     local_pt_files = [Path(p) for p in local_pt_files]
     local_st_files = [
-        p.parent / f"{p.stem.lstrip('pytorch_')}.safetensors" for p in local_pt_files
+        p.parent / f"{p.stem.removeprefix('pytorch_')}.safetensors" for p in local_pt_files
     ]
     convert_files(local_pt_files, local_st_files, discard_names=[])
 
