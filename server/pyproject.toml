@@ -9,21 +9,21 @@ text-generation-server = 'text_generation_server.cli:app'
 
 [tool.poetry.dependencies]
 python = ">=3.11.0,<3.13"
-protobuf = "^4.25.2"
+protobuf = "^4.25.3"
 grpcio = "^1.60.1"
 grpcio-reflection = "^1.60.1"
 loguru = "^0.7.2"
 typer = "^0.9.0"
-accelerate = { version = "0.26.1", optional = true }
+accelerate = { version = "0.27.2", optional = true }
 bitsandbytes = { version = "^0.42.0", optional = true }
 scipy = "^1.11.4"
 safetensors = "^0.4.2"
-sentencepiece = "^0.1.99"
+sentencepiece = "^0.2.0"
 datasets = { version = "^2.15.0", optional = true }
 texttable = { version = "^1.7.0", optional = true }
-transformers = "4.37.2"
-optimum = { version = "^1.16.2", extras = ["onnxruntime-gpu"], optional = true }
-onnxruntime = { version = "^1.16.3", optional = true }
+transformers = "4.38.0"
+optimum = { version = "^1.17.1", extras = ["onnxruntime-gpu"], optional = true }
+onnxruntime = { version = "^1.17.0", optional = true }
 onnxruntime-gpu = { version = "^1.16.3", optional = true }
 onnx = { version = "^1.15.0", optional = true }
 einops = "^0.7.0"
@@ -48,8 +48,8 @@ onnx-gpu = ["optimum", "onnxruntime-gpu", "onnx"]
 quantize = ["datasets", "texttable"]
 
 [tool.poetry.group.dev.dependencies]
-grpcio-tools = "^1.60.0"
-pytest = "^7.4.4"
+grpcio-tools = "^1.60.1"
+pytest = "^8.0.1"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
