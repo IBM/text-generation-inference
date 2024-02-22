@@ -73,11 +73,15 @@ jobs:
       uses: docker/build-push-action@v5
       with:
         context: .
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
         target: flash-att-builder
         tags: flash-att-builder
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        load: true
 
+    - name: "List docker images (TODO: remove)"
+      run: docker images
+      
     - name: "Docker build flash-att-cache"
       run: docker build --target=flash-att-cache -t flash-att-cache .
 
