@@ -8,9 +8,9 @@ authors = ["Nick Hill"]
 python = ">=3.11"
 
 [tool.poetry.group.dev.dependencies]
-protobuf = "^4.25.2"
+protobuf = "^4.25.3"
 grpcio-tools = "^1.60.1"
-pytest = "^7.4.4"
+pytest = "^8.0.1"
 pytest-asyncio = "^0.23.3"
 requests = "^2.31.0"
 pyyaml = "^6.0.1"
