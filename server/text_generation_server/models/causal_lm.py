@@ -559,7 +559,7 @@ class CausalLM(Model):
             model_path, AutoModelForCausalLM, dtype, quantize, model_config, max_sequence_length
         )
 
-        super(CausalLM, self).__init__(inference_engine, dtype)
+        super(CausalLM, self).__init__(inference_engine, dtype, max_sequence_length)
 
         if self.model.config.pad_token_id is not None:
             self.tokenizer.pad_token_id = self.model.config.pad_token_id

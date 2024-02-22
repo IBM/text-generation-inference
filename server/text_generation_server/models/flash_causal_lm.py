@@ -385,7 +385,7 @@ class FlashCausalLM(Model):
             model_path, auto_model_class, dtype, quantize, model_config, max_sequence_length
         )
 
-        super(FlashCausalLM, self).__init__(inference_engine, dtype)
+        super(FlashCausalLM, self).__init__(inference_engine, dtype, max_sequence_length)
         self.use_position_ids = True
 
         if self.model.config.pad_token_id is not None:

@@ -100,3 +100,9 @@ def local_weight_files(model_path: str, extension=".safetensors"):
     """Get the local safetensors filenames"""
     ext = "" if extension is None else extension
     return glob.glob(f"{model_path}/*{ext}")
+
+
+def local_index_files(model_path: str, extension=".safetensors"):
+    """Get the local .index.json filename"""
+    ext = "" if extension is None else extension
+    return glob.glob(f"{model_path}/*{ext}.index.json")

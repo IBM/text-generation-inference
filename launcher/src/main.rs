@@ -4,7 +4,7 @@ use nix::unistd::Pid;
 use std::env;
 use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::path::Path;
-use std::process::{Command, ExitCode, Stdio};
+use std::process::{Command, ExitCode, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::TryRecvError;
 use std::sync::Arc;
@@ -16,7 +16,7 @@ use std::{fs, io};
 use std::env::VarError;
 use std::ffi::OsString;
 use std::fs::File;
-use std::os::unix::process::CommandExt;
+use std::os::unix::process::{CommandExt, ExitStatusExt};
 use tracing::{info, warn};
 
 // In most cases this gives the best performance for inferencing
@@ -238,7 +238,7 @@ fn main() -> ExitCode {
             Err(TryRecvError::Empty) => {
                 sleep(Duration::from_millis(100));
             }
-            Ok(ShardStatus::Failed) => {
+            Ok(ShardStatus::Failed(_status)) => {
                 shutdown_shards(shutdown, shutdown_receiver);
                 return ExitCode::FAILURE;
             }
@@ -347,9 +347,17 @@ fn main() -> ExitCode {
     let mut exit_code = ExitCode::SUCCESS;
 
     while running.load(Ordering::SeqCst) {
-        if let Ok(ShardStatus::Failed) = status_receiver.try_recv() {
+        if let Ok(ShardStatus::Failed(status)) = status_receiver.try_recv() {
             exit_code = ExitCode::FAILURE;
-            break;
+            terminate_gracefully(&mut webserver, shutdown.clone(), shutdown_receiver);
+            if status.signal() == Some(7) && num_shard > 1 {
+                panic!(
+                    "Encountered SIGBUS error. This is usually caused by NCCL having insufficient shared memory. \
+                    Ensure at least 1GB of shared memory is available. In case of OpenShift/K8s, \
+                    mount a memory medium emptyDir volume to /dev/shm"
+                )
+            }
+            return exit_code
         };
 
         match webserver.try_wait().expect("Error polling status of router process") {
@@ -362,16 +370,20 @@ fn main() -> ExitCode {
         };
     }
 
-    // Graceful termination
+    terminate_gracefully(&mut webserver, shutdown.clone(), shutdown_receiver);
+    
+    exit_code
+}
+
+/// Graceful termination
+fn terminate_gracefully(webserver: &mut std::process::Child, shutdown: Arc<Mutex<bool>>, shutdown_receiver: &mpsc::Receiver<()>) {
     signal::kill(Pid::from_raw(webserver.id() as i32), Signal::SIGTERM).unwrap();
     info!("Waiting for router to gracefully shutdown");
     webserver.wait().unwrap();
     info!("Router terminated");
     shutdown_shards(shutdown, &shutdown_receiver);
 
-    exit_code
 }
-
 
 fn num_cuda_devices() -> Option<usize> {
     let devices = match env::var("CUDA_VISIBLE_DEVICES") {
@@ -481,7 +493,7 @@ fn find_num_shards(num_shard: Option<usize>) -> usize {
 #[derive(Debug)]
 enum ShardStatus {
     Ready,
-    Failed,
+    Failed(ExitStatus),
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -619,7 +631,7 @@ fn shard_manager(
             } else {
                 tracing::error!("Shard {rank} failed to start:\n{err}");
             }
-            status_sender.send(ShardStatus::Failed).unwrap();
+            status_sender.send(ShardStatus::Failed(ExitStatus::from_raw(0))).unwrap();
             return
         }
     };
@@ -654,7 +666,9 @@ fn shard_manager(
                 io::stdout().flush().unwrap_or_default();
                 stderr_thread.join().unwrap_or_default();
                 io::stderr().flush().unwrap_or_default();
-                status_sender.send(ShardStatus::Failed).unwrap();
+                status_sender
+                    .send(ShardStatus::Failed(status))
+                    .unwrap();
             }
             return
         }
@@ -747,7 +761,7 @@ fn resolve_tokenizer_path(model_name: &str, revision: Option<&str>) -> Result<St
 fn write_termination_log(msg: &str) -> Result<(), io::Error> {
     // Writes a message to the termination log.
     // Creates the logfile if it doesn't exist.
-    let mut f = File::options().write(true).create(true).open("/dev/termination-log")?;
+    let mut f = File::options().write(true).create(true).truncate(true).open("/dev/termination-log")?;
     writeln!(f, "{}", msg)?;
     Ok(())
 }
