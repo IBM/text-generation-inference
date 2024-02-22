@@ -5,12 +5,14 @@ on:
   push:
     branches:
       - "main"
+      - "build_cache"
     paths-ignore:
       - "**.md"
       - "proto/**"
   pull_request:
     branches:
       - "main"
+      - "build_cache"
     paths-ignore:
       - "**.md"
       - "proto/**"
@@ -68,7 +70,13 @@ jobs:
       run: docker build --target=flash-att-v2-builder -t flash-att-v2-builder .
 
     - name: "Docker build flash-att-builder"
-      run: docker build --target=flash-att-builder -t flash-att-builder .
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        target: flash-att-builder
+        tags: flash-att-builder
 
     - name: "Docker build flash-att-cache"
       run: docker build --target=flash-att-cache -t flash-att-cache .
