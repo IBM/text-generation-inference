@@ -43,14 +43,13 @@ jobs:
       uses: docker/setup-buildx-action@v3
 
     - name: "Docker build server-release"
-      uses: docker/build-push-action@v5
+      uses: docker/build-push-action@v4
       with:
         context: .
         target: server-release
         tags: server-release
         cache-from: type=gha
         cache-to: type=gha,mode=max
-        load: true
 
     - name: "List docker images"
       run: docker images
