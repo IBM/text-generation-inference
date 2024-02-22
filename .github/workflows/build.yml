@@ -23,14 +23,11 @@ defaults:
 
 env:
   CI: true
-  DOCKER_BUILDKIT: 1
   SERVER_IMAGE_NAME: "text-gen-server:0"
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      BUILDKIT_INLINE_CACHE: 1
 
     steps:
     - name: "Checkout"
@@ -53,7 +50,6 @@ jobs:
         tags: python-builder
         cache-from: type=gha
         cache-to: type=gha,mode=max
-        load: true
 
     - name: "Docker build flash-att-builder"
       uses: docker/build-push-action@v5
@@ -63,7 +59,6 @@ jobs:
         tags: flash-att-builder
         cache-from: type=gha
         cache-to: type=gha,mode=max
-        load: true
 
     - name: "Docker build flash-att-v2-builder"
       uses: docker/build-push-action@v5
@@ -73,7 +68,6 @@ jobs:
         tags: flash-att-v2-builder
         cache-from: type=gha
         cache-to: type=gha,mode=max
-        load: true
 
     - name: "Docker build auto-gptq-installer"
       uses: docker/build-push-action@v5
@@ -83,7 +77,6 @@ jobs:
         tags: auto-gptq-installer
         cache-from: type=gha
         cache-to: type=gha,mode=max
-        load: true
 
     - name: "Docker build router-builder"
       uses: docker/build-push-action@v5
@@ -93,7 +86,6 @@ jobs:
         tags: router-builder
         cache-from: type=gha
         cache-to: type=gha,mode=max
-        load: true
 
     - name: "Docker build server-release"
       uses: docker/build-push-action@v5
