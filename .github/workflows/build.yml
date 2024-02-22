@@ -44,7 +44,7 @@ jobs:
       with:
         config-inline: |
           [worker.oci]
-            max-parallelism = 2
+            max-parallelism = 4
 
     - name: "Docker build server-release"
       uses: docker/build-push-action@v4
