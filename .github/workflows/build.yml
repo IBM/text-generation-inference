@@ -41,6 +41,10 @@ jobs:
 
     - name: "Set up Docker Buildx"
       uses: docker/setup-buildx-action@v3
+      with:
+        config-inline: |
+          [worker.oci]
+            max-parallelism = 2
 
     - name: "Docker build server-release"
       uses: docker/build-push-action@v4
@@ -50,6 +54,7 @@ jobs:
         tags: server-release
         cache-from: type=gha
         cache-to: type=gha,mode=max
+        load: true
 
     - name: "List docker images"
       run: docker images
