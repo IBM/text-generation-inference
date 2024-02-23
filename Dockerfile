@@ -222,17 +222,15 @@ WORKDIR /usr/src/flash-attention-v2
 RUN MAX_JOBS=2 pip --verbose wheel flash-attn==${FLASH_ATT_VERSION} \
     --no-build-isolation --no-deps --no-cache-dir
 
-## Build flash attention  ######################################################
-FROM python-builder as flash-att-builder
 
-WORKDIR /usr/src
+# ## Build flash attention  ######################################################
+# FROM python-builder as flash-att-builder
+# WORKDIR /usr/src
+# COPY server/Makefile-flash-att Makefile
+# # For CI, limit number of parallel compilation threads otherwise the github runner goes OOM
+# ENV MAX_JOBS=2
+# RUN make build-flash-attention
 
-COPY server/Makefile-flash-att Makefile
-
-# For CI, limit number of parallel compilation threads otherwise the github runner goes OOM
-ENV MAX_JOBS=2
-
-RUN make build-flash-attention
 
 ## Install auto-gptq ###########################################################
 FROM python-builder as auto-gptq-installer
@@ -268,11 +266,12 @@ WORKDIR /usr/src
 COPY server/exllamav2_kernels/ .
 RUN python setup.py build
 
-## Flash attention cached build image ##########################################
-FROM base as flash-att-cache
-COPY --from=flash-att-builder /usr/src/flash-attention/build /usr/src/flash-attention/build
-COPY --from=flash-att-builder /usr/src/flash-attention/csrc/layer_norm/build /usr/src/flash-attention/csrc/layer_norm/build
-COPY --from=flash-att-builder /usr/src/flash-attention/csrc/rotary/build /usr/src/flash-attention/csrc/rotary/build
+
+# ## Flash attention cached build image ##########################################
+# FROM base as flash-att-cache
+# COPY --from=flash-att-builder /usr/src/flash-attention/build /usr/src/flash-attention/build
+# COPY --from=flash-att-builder /usr/src/flash-attention/csrc/layer_norm/build /usr/src/flash-attention/csrc/layer_norm/build
+# COPY --from=flash-att-builder /usr/src/flash-attention/csrc/rotary/build /usr/src/flash-attention/csrc/rotary/build
 
 
 ## Flash attention v2 cached build image #######################################
@@ -284,6 +283,7 @@ FROM base as auto-gptq-cache
 
 # Cache just the wheel we built for auto-gptq
 COPY --from=auto-gptq-installer /usr/src/auto-gptq-wheel /usr/src/auto-gptq-wheel
+
 
 ## Final Inference Server image ################################################
 FROM cuda-runtime as server-release
@@ -302,10 +302,10 @@ ENV PATH=/opt/tgis/bin:$PATH
 
 # These could instead come from explicitly cached images
 
-# Copy build artifacts from flash attention builder
-COPY --from=flash-att-cache /usr/src/flash-attention/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
-COPY --from=flash-att-cache /usr/src/flash-attention/csrc/layer_norm/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
-COPY --from=flash-att-cache /usr/src/flash-attention/csrc/rotary/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
+# # Copy build artifacts from flash attention builder
+# COPY --from=flash-att-cache /usr/src/flash-attention/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
+# COPY --from=flash-att-cache /usr/src/flash-attention/csrc/layer_norm/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
+# COPY --from=flash-att-cache /usr/src/flash-attention/csrc/rotary/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
 
 # Install flash attention v2 from the cache build
 RUN --mount=type=bind,from=flash-att-v2-cache,src=/usr/src/flash-attention-v2,target=/usr/src/flash-attention-v2 \
