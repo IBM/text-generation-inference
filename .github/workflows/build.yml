@@ -51,7 +51,7 @@ jobs:
       with:
         context: .
         target: server-release
-        tags: ${{ SERVER_IMAGE_NAME }}
+        tags: ${{ env.SERVER_IMAGE_NAME }}
         cache-from: type=gha
         cache-to: type=gha,mode=min
 
