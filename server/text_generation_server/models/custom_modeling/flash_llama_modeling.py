@@ -35,6 +35,7 @@ from text_generation_server.utils.layers import (
     TensorParallelColumnLinear,
     TensorParallelEmbedding,
     PositionRotaryEmbedding,
+    LinearScalingPositionRotaryEmbedding,
     TensorParallelHead,
     get_linear,
 )
@@ -183,12 +184,22 @@ class FlashLlamaAttention(torch.nn.Module):
         self.hidden_size = config.hidden_size
         self.head_size = self.hidden_size // self.num_heads
 
-        # self.rotary_emb = PositionRotaryEmbedding.load(
-        #     prefix=f"{prefix}.rotary_emb", weights=weights
-        # )
-        self.rotary_emb = PositionRotaryEmbedding.static(
-            dim=self.head_size, base=config.rope_theta, device=weights.device
-        )
+        if config.rope_scaling and "type" in config.rope_scaling:
+            if config.rope_scaling["type"] == "linear":
+                self.rotary_emb = LinearScalingPositionRotaryEmbedding.static(
+                    dim=self.head_size,
+                    base=config.rope_theta,
+                    scaling_factor=config.rope_scaling.get("factor", 1.0),
+                    device=weights.device
+                )
+            else:
+                raise ValueError(
+                    f"rope_scaling of type f{config.rope_scaling.type} is not supported with FLASH_ATTENTION=True"
+                )
+        else:
+            self.rotary_emb = PositionRotaryEmbedding.static(
+                dim=self.head_size, base=config.rope_theta, device=weights.device
+            )
 
         self.softmax_scale = self.head_size**-0.5
 
