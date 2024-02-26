@@ -32,7 +32,7 @@ jobs:
       packages: write
       contents: read
     env:
-      CACHE_IMAGE: ghcr.io/ibm/${{ env.SERVER_IMAGE_NAME }}
+      CACHE_IMAGE: ghcr.io/ibm/text-gen-server:build-cache
       CACHE_REGISTRY: ghcr.io
 
     steps:
