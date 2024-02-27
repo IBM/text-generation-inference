@@ -67,7 +67,7 @@ jobs:
           # usage and traffic limitations.
           if [ "${{ github.event_name }}" == "pull_request" ]
           then
-              CACHE_TO="type=gha,mode=min"
+              CACHE_TO="type=gha,mode=max"
           else
               CACHE_TO="type=registry,ref=${{ env.CACHE_IMAGE }},mode=max"
           fi
