@@ -63,7 +63,11 @@ jobs:
         # usage and traffic limitations.
         if [ "${{ github.event_name }}" == "pull_request" ]
         then
-            CACHE_TO="type=gha,mode=min"
+            #CACHE_TO="type=gha,mode=min"
+            # GHA cache has issues, cannot use `cach-to: gha,mode=min` if `cache-from: reg...,mode=max`
+            # but `cache-to: gha,mode=max` takes longer than uncached build and exhausts GHA cache size limits
+            # instead use cache type "inline" (no external cache)
+            CACHE_TO="type=inline"
         else
             CACHE_TO="type=registry,ref=${{ env.CACHE_IMAGE }},mode=max"
         fi
