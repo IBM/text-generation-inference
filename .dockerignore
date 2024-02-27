@@ -1,2 +1,6 @@
+# exclude any files inside the .git folder to not invalidate docker layer caches
+.git
+
+# exclude build artifacts
 target
 server/transformers
