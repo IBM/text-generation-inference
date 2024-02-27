@@ -5,14 +5,14 @@ on:
 
   push:
     branches:
-      - "main"
+      - main
     paths-ignore:
       - "**.md"
       - "proto/**"
 
   pull_request:
     branches:
-      - "main"
+      - main
     paths-ignore:
       - "**.md"
       - "proto/**"
@@ -32,8 +32,9 @@ jobs:
       packages: write
       contents: read
     env:
-      CACHE_IMAGE: ghcr.io/ibm/text-gen-server:build-cache
-      CACHE_REGISTRY: ghcr.io
+      CACHE_IMAGE: "ghcr.io/ibm/text-gen-server:build-cache"
+      CACHE_REGISTRY: "ghcr.io"
+      SERVER_IMAGE: "ghcr.io/ibm/text-gen-server:latest"  # TODO: don't push final image as a package to ghcr.io
 
     steps:
       - name: "Checkout"
@@ -55,14 +56,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: "Set build cache target"
+        run: |
+          # For push to `main` (PR merged), push a new cache image with all layers (cache-mode=max).
+          # For PR builds, use GitHub action cache which isolates cached layers by PR/branch.
+          # to optimize builds for subsequent pushes to the same PR/branch.
+          # Do not set a cache-to image for PR builds to not overwrite the `main` cache image and
+          # to not ping-pong cache images for two or more different PRs.
+          # Do not push cache images for each PR or multiple branches to not exceed GitHub package
+          # usage and traffic limitations.
+          if [ "${{ github.event_name }}" == "pull_request" ]
+          then
+              CACHE_TO="type=gha,mode=min"
+          else
+              CACHE_TO="type=registry,ref=${{ env.CACHE_IMAGE }},mode=max"
+          fi
+          echo "CACHE_TO=$CACHE_TO" >> $GITHUB_ENV
+
       - name: "Docker build server-release"
         uses: docker/build-push-action@v5
         with:
           context: .
           target: server-release
-          tags: ${{ env.CACHE_IMAGE }}
-          cache-from: type=registry,ref=${{ env.CACHE_IMAGE }}
-          cache-to: type=inline
+          tags: ${{ env.SERVER_IMAGE }}
+          cache-from: |
+            type=gha
+            type=registry,ref=${{ env.CACHE_IMAGE }}
+          cache-to: ${{ env.CACHE_TO }}
           push: ${{ github.event_name != 'pull_request' }}
 
       - name: "List docker images"
