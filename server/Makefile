@@ -1,5 +1,3 @@
-include Makefile-flash-att
-
 gen-server:
 	# Compile protos
 	pip install grpcio-tools==1.60.0 mypy-protobuf==3.5.0 'types-protobuf>=3.20.4' --no-cache-dir
