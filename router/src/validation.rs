@@ -26,6 +26,11 @@ pub struct Validation {
     prefix_cache: Cache<String, usize, RandomState>,
 }
 
+pub struct RequestSize {
+    pub(crate) input_length: usize,
+    pub(crate) prefix_length: usize
+}
+
 impl Validation {
     pub(crate) fn new(
         tokenizer: AsyncTokenizer,
@@ -55,7 +60,7 @@ impl Validation {
         prefix_id: Option<String>,
         params: GenerateParameters,
         inputs: Vec<String>,
-    ) -> Result<Vec<(usize, GenerateRequest)>, ValidationError> {
+    ) -> Result<Vec<(RequestSize, GenerateRequest)>, ValidationError> {
         let min_new_tokens = params.min_new_tokens as usize;
         let max_new_tokens = params.max_new_tokens as usize;
 
@@ -165,7 +170,10 @@ impl Validation {
                         }
 
                         Ok((
-                            input_length,
+                            RequestSize {
+                                input_length,
+                                prefix_length
+                            },
                             GenerateRequest {
                                 prefix_id: prefix_id.clone(),
                                 inputs: input,
@@ -173,10 +181,10 @@ impl Validation {
                             }
                         ))
                     }
-                }).collect::<Result<Vec<(usize, GenerateRequest)>, ValidationError>>().map(|results| {
+                }).collect::<Result<Vec<(RequestSize, GenerateRequest)>, ValidationError>>().map(|results| {
                     // Only record these for successful validation
-                    for (input_length, _) in &results {
-                        metrics::histogram!("tgi_request_input_length", *input_length as f64);
+                    for (request_size, _) in &results {
+                        metrics::histogram!("tgi_request_input_length", request_size.input_length as f64);
                         metrics::histogram!("tgi_request_max_new_tokens", max_new_tokens as f64);
                     }
                     results

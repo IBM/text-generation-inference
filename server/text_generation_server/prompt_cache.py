@@ -9,7 +9,8 @@ from safetensors.torch import load_file as safe_load_file
 
 import torch
 
-PREFIX_STORE_PATH = Path(os.getenv("PREFIX_STORE_PATH", "prompt_prefixes"))
+_PREFIX_STORE_PATH_STR = os.getenv("PREFIX_STORE_PATH", None)
+PREFIX_STORE_PATH = Path(_PREFIX_STORE_PATH_STR) if _PREFIX_STORE_PATH_STR else None
 
 VALID_PREFIX_ID_PATTERN = re.compile("[/\\w\\-]+")
 PROMPT_CACHE_SIZE_MB = int(os.getenv("PROMPT_CACHE_SIZE_MB", "512"))

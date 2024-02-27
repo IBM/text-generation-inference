@@ -23,24 +23,31 @@ REPO_ROOT = os.path.dirname(os.path.dirname(TESTS_DIR))
 INTEGRATION_TESTS_DIR = os.path.join(REPO_ROOT, "integration_tests")
 
 
+@pytest.fixture(autouse=True)
+def temp_prompt_store(tmp_path):
+    # Unless overriden by another fixture, sets the prefix store path to some temp dir
+    with patch("text_generation_server.prompt_cache.PREFIX_STORE_PATH", tmp_path):
+        yield
+
+
 @pytest.fixture()
-def temp_prompt_store():
+def integration_test_prompts():
     with patch("text_generation_server.prompt_cache.PREFIX_STORE_PATH", Path(os.path.join(INTEGRATION_TESTS_DIR, "prompt_prefixes"))):
         yield
 
 
 @pytest.fixture()
-def tiny_starcoder_decoder_prompt(temp_prompt_store):
+def tiny_starcoder_decoder_prompt(integration_test_prompts):
     return "tiny_starcoder"
 
 
 @pytest.fixture()
-def tiny_raw_llama_peft_adapter_prompt(temp_prompt_store):
+def tiny_raw_llama_peft_adapter_prompt(integration_test_prompts):
     return "tinyllama_peft_adapter_raw"
 
 
 @pytest.fixture()
-def tiny_llama_peft_adapter_prompt(temp_prompt_store):
+def tiny_llama_peft_adapter_prompt(integration_test_prompts):
     return "tinyllama_peft_adapter"
 
 

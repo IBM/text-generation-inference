@@ -25,7 +25,7 @@ def serve(
     max_sequence_length: int = 2048,
     max_new_tokens: int = 1024,
     max_batch_size: int = 12,
-    batch_safety_margin: int = 20,
+    batch_safety_margin: int = typer.Option(20, help="Integer from 0-100, a percentage of free GPU memory to hold back as a safety margin to avoid OOM"),
     revision: Optional[str] = None,
     sharded: bool = False,
     cuda_process_memory_fraction: float = 1.0,

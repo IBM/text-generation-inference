@@ -25,7 +25,7 @@ use crate::server::ServerState;
 use unicode_truncate::UnicodeTruncateStr;
 use crate::pb::fmaas::model_info_response::ModelKind;
 use crate::tokenizer::AsyncTokenizer;
-use crate::validation::ValidationError;
+use crate::validation::{RequestSize, ValidationError};
 
 /// Whether to fail if sampling parameters are provided in greedy-mode requests
 /// or to silently ignore them.
@@ -127,18 +127,18 @@ impl GenerationService for GenerationServicer {
 
         if batch_size == 1 {
             // Single request case
-            let (input_length, request) = valids.into_iter().next().unwrap();
-            self.state.batcher.infer(input_length, request)
+            let (request_size, request) = valids.into_iter().next().unwrap();
+            self.state.batcher.infer(request_size.input_length, request_size.prefix_length, request)
                 .map_ok(|response| {
                     log_response(
-                        &response.times, input_length, response.gen_token_count, response.reason,
+                        &response.times, request_size.input_length, response.gen_token_count, response.reason,
                         &response.output_text, start_time, "single", "Request", response.request_id
                     );
                     vec![response.into()]
                 }).await
         } else {
             // Batch size > 1
-            let input_tokens = valids.iter().map(|r| r.0).collect::<Vec<usize>>();
+            let input_tokens = valids.iter().map(|r| r.0.input_length).collect::<Vec<usize>>();
             match self.state.batcher.infer_batch(valids).await {
                 Ok(response_chans) => {
                     try_join_all(response_chans.into_iter().zip(input_tokens).enumerate()
@@ -198,13 +198,13 @@ impl GenerationService for GenerationServicer {
         )?;
 
         // Validate request
-        let (input_length, validated_request) = self
+        let (request_size, validated_request) = self
             .validate(sr.prefix_id, sr.params, vec![req.text], start_time)
             .await?
             .pop().unwrap();
 
         let stream = self.state.batcher
-            .infer_stream(input_length, validated_request, |r| match r {
+            .infer_stream(request_size.input_length, request_size.prefix_length, validated_request, |r| match r {
                 Ok(resp) => Ok(resp.into()),
                 Err(err) => Err(Status::from_error(Box::new(err))),
             }, |ctx, count, reason, request_id, times, out, err| {
@@ -222,7 +222,7 @@ impl GenerationService for GenerationServicer {
                 }
             }, StreamContext {
                 span: Span::current(),
-                input_token_count: input_length,
+                input_token_count: request_size.input_length,
                 start_time,
                 _permit: permit,
             })
@@ -297,7 +297,7 @@ impl GenerationServicer {
         parameters: Option<Parameters>,
         inputs: Vec<String>,
         start_time: Instant,
-    ) -> Result<Vec<(usize, GenerateRequest)>, Status> {
+    ) -> Result<Vec<(RequestSize, GenerateRequest)>, Status> {
         match convert_params(parameters, self.state.default_include_stop_seqs) {
             Ok(params) => self.state.validation.validate(
                 prefix_id, params, inputs

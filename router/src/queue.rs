@@ -32,6 +32,8 @@ pub(crate) struct Entry {
     pub stream_tx: Option<UnboundedSender<Result<InferResponse, ClientError>>>,
     /// Number of tokens in the input
     pub input_length: usize,
+    /// Number of virtual tokens in the prefix, if one is specified
+    pub prefix_length: usize,
     /// Instant when this entry was queued
     pub queue_time: Instant,
     /// Instant when this entry was added to a batch (queue end time)
@@ -52,6 +54,7 @@ impl Entry {
     pub(crate) fn new(
         request: GenerateRequest,
         input_length: usize,
+        prefix_length: usize,
         response_tx: Option<Sender<Result<InferResponse, ClientError>>>,
         stream_tx: Option<UnboundedSender<Result<InferResponse, ClientError>>>,
     ) -> Self {
@@ -60,6 +63,7 @@ impl Entry {
             response_tx,
             stream_tx,
             input_length,
+            prefix_length,
             input_tokens: vec![],
             queue_time: Instant::now(),
             batch_time: None,
@@ -265,7 +269,9 @@ impl<B: BatchType> Queue<B> {
                 break
             }
 
-            let input_len = entry.input_length;
+            // For the purposes of deciding if a request can fit into a batch,
+            // the input length needs to take the length of the prefix into account as well
+            let input_len = entry.input_length + entry.prefix_length;
             let output_len = entry.request.parameters.max_new_tokens as usize;
             let next_stats = <B>::update_stats(
                 &batch_stats, input_len, output_len
@@ -289,7 +295,7 @@ impl<B: BatchType> Queue<B> {
                         let generated_count = e.generated_tokens as usize;
                         t.insert((
                             e.request.parameters.max_new_tokens as usize - generated_count,
-                            e.input_length + generated_count,
+                            e.input_length + e.prefix_length + generated_count,
                             t.len(),
                         ));
                     }

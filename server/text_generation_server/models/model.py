@@ -10,6 +10,7 @@ from typing import List, Tuple, Optional, TypeVar, Type
 
 from transformers import PreTrainedModel
 
+import text_generation_server.prompt_cache
 from text_generation_server.models.types import Batch, GenerateError
 from text_generation_server.inference_engine.engine import BaseInferenceEngine
 from text_generation_server.pb import generate_pb2
@@ -44,7 +45,8 @@ class Model(ABC):
         # Check whether model supports position_ids
         self.use_position_ids = "position_ids" in inspect.signature(self.model.forward).parameters
 
-        prompt_prefix_supported = self._setup_prompt_encoder()
+        # Short-circuit: Don't set up the prompt encoder if the prompt cache is not set
+        prompt_prefix_supported = self.prompt_cache_set() and self._setup_prompt_encoder()
 
         if prompt_prefix_supported:
             # Set up prefix cache
@@ -183,6 +185,10 @@ class Model(ABC):
             if r.id != next_id:
                 next_batch_keep_indices.append(i)
         return next_batch_keep_indices
+
+    @staticmethod
+    def prompt_cache_set() -> bool:
+        return text_generation_server.prompt_cache.PREFIX_STORE_PATH is not None
 
     def _setup_prompt_encoder(self) -> bool:
         try:

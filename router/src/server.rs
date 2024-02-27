@@ -91,7 +91,7 @@ async fn generate(
     // Validate request
     //let details = req.0.parameters.details;
     let GenerateRequest {inputs, prefix_id, parameters} = req.0;
-    let (input_length, validated_request) =
+    let (request_size, validated_request) =
         state.validation.validate(
             prefix_id, parameters, vec![inputs]
         ).await.map_err(|err| {
@@ -102,7 +102,7 @@ async fn generate(
     // Inference
     let response = state
         .batcher
-        .infer(input_length, validated_request)
+        .infer(request_size.input_length, request_size.prefix_length, validated_request)
         .await
         .map_err(|err| {
             tracing::error!("{err}");
