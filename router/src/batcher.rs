@@ -39,6 +39,7 @@ use crate::pb::fmaas::StopReason::{
     Cancelled, EosToken, Error, MaxTokens, NotFinished, StopSequence, TimeLimit, TokenLimit
 };
 use crate::pb::fmaas::token_info::TopToken;
+use crate::validation::RequestSize;
 
 /// Batcher
 #[derive(Clone)]
@@ -96,6 +97,7 @@ impl Batcher {
     pub(crate) async fn infer(
         &self,
         input_length: usize,
+        prefix_length: usize,
         request: GenerateRequest,
     ) -> Result<InferResponse, InferError> {
         // One shot channel to communicate with the background batching task
@@ -103,7 +105,7 @@ impl Batcher {
 
         // Try to add the request to the queue
         self.enqueue_request(vec![
-            Entry::new(request, input_length, Some(response_tx), None),
+            Entry::new(request, input_length, prefix_length, Some(response_tx), None),
         ])?;
 
         // Await on the response from the background task
@@ -117,14 +119,14 @@ impl Batcher {
     // Add a batch of new requests to the queue and return an vec of futures that will generate the text
     pub(crate) async fn infer_batch(
         &self,
-        requests: Vec<(usize, GenerateRequest)>,
+        requests: Vec<(RequestSize, GenerateRequest)>,
     ) -> Result<Vec<Map<Receiver<Result<InferResponse, ClientError>>,
         impl FnOnce(Result<Result<InferResponse, ClientError>, RecvError>) -> Result<InferResponse, InferError> + '_>>, InferError> {
 
         let mut response_chans= vec![];
 
         let entries: Vec<Entry> = requests.into_iter()
-            .map(|(input_length, request)| {
+            .map(|(request_size, request)| {
                 // One shot channel to communicate with the background batching task
                 let (response_tx, response_rx) = oneshot::channel();
                 response_chans.push(response_rx
@@ -134,7 +136,7 @@ impl Batcher {
                     })
                 );
 
-                Entry::new(request, input_length, Some(response_tx), None)
+                Entry::new(request, request_size.input_length, request_size.prefix_length, Some(response_tx), None)
             }).collect();
 
         // Try to add the request to the queue
@@ -147,6 +149,7 @@ impl Batcher {
     pub(crate) async fn infer_stream<T, C>(
         &self,
         input_length: usize,
+        prefix_length: usize,
         request: GenerateRequest,
         result_map: fn (Result<InferResponse, InferError>) -> T,
         on_drop: fn (&C, u32, StopReason, Option<u64>, Option<Times>, String, Option<InferError>),
@@ -170,7 +173,7 @@ impl Batcher {
 
         // Try to add the request to the queue
         self.enqueue_request(vec![
-            Entry::new(request, input_length, None, Some(response_tx)),
+            Entry::new(request, input_length, prefix_length, None, Some(response_tx)),
         ])?;
 
         Ok(ResponseStream {
