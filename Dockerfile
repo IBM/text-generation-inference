@@ -229,8 +229,10 @@ WORKDIR /usr/src/flash-attention-v2
 
 # Download the wheel or build it if a pre-compiled release doesn't exist
 # MAX_JOBS: For CI, limit number of parallel compilation threads otherwise the github runner goes OOM
-RUN MAX_JOBS=2 pip --verbose wheel flash-attn==${FLASH_ATT_VERSION} \
-    --no-build-isolation --no-deps --no-cache-dir
+RUN MAX_JOBS=2  pip --verbose wheel --no-deps flash-attn==${FLASH_ATT_VERSION} \
+    "git+https://github.com/Dao-AILab/flash-attention.git@${FLASH_ATT_VERSION}#subdirectory=csrc/layer_norm" \
+    "git+https://github.com/Dao-AILab/flash-attention.git@${FLASH_ATT_VERSION}#subdirectory=csrc/rotary" \
+    --no-build-isolation --no-cache-dir
 
 
 ## Install auto-gptq ###########################################################
@@ -271,13 +273,15 @@ RUN python setup.py build
 
 ## Flash attention v2 cached build image #######################################
 FROM base as flash-att-v2-cache
+
+# Copy just the wheels we built for flash-attention
 COPY --from=flash-att-v2-builder /usr/src/flash-attention-v2 /usr/src/flash-attention-v2
 
 
 ## Auto gptq cached build image
 FROM base as auto-gptq-cache
 
-# Cache just the wheel we built for auto-gptq
+# Copy just the wheel we built for auto-gptq
 COPY --from=auto-gptq-installer /usr/src/auto-gptq-wheel /usr/src/auto-gptq-wheel
 
 
@@ -317,6 +321,9 @@ RUN cd server && make gen-server && pip install ".[accelerate, ibm-fms, onnx-gpu
 
 # Patch codegen model changes into transformers 4.35
 RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py
+
+# Print a list of all installed packages and versions
+RUN pip list -v --disable-pip-version-check --no-python-version-warning
 
 # Install router
 COPY --from=router-builder /usr/local/cargo/bin/text-generation-router /usr/local/bin/text-generation-router
