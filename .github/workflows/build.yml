@@ -25,6 +25,7 @@ defaults:
 env:
   CI: true
   SERVER_IMAGE_NAME: "text-gen-server:0"
+  SERVER_IMAGE: "ghcr.io/ibm/text-gen-server:latest"  # TODO: consider publishing to quay.io or icr.io instead
 
 jobs:
   build:
@@ -35,7 +36,6 @@ jobs:
     env:
       CACHE_IMAGE: "ghcr.io/ibm/text-gen-server:build-cache"
       CACHE_REGISTRY: "ghcr.io"
-      SERVER_IMAGE: "ghcr.io/ibm/text-gen-server:latest"
       
     steps:
       - name: "Checkout"
