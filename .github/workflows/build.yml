@@ -89,7 +89,8 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
       
       - name: "Cleanup old cache images"
-        uses: actions/delete-package-versions@v4
+        uses: actions/delete-package-versions@v5
+        if: ${{ github.event_name == 'push' }}
         with: 
           package-name: 'text-gen-server'
           package-type: 'container'
