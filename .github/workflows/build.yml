@@ -36,6 +36,7 @@ jobs:
     env:
       CACHE_IMAGE: "ghcr.io/ibm/text-gen-server:build-cache"
       CACHE_REGISTRY: "ghcr.io"
+      CACHE_PACKAGE_NAME: "text-gen-server"
       
     steps:
       - name: "Checkout"
@@ -92,9 +93,9 @@ jobs:
         uses: actions/delete-package-versions@v5
         if: ${{ github.event_name == 'push' }}
         with: 
-          package-name: 'text-gen-server'
-          package-type: 'container'
-          delete-only-untagged-versions: 'true'
+          package-name: ${{ env.CACHE_PACKAGE_NAME }}
+          package-type: container
+          delete-only-untagged-versions: true
 
       - name: "List docker images"
         run: docker images
