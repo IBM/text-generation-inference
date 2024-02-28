@@ -24,6 +24,7 @@ defaults:
 env:
   CI: true
   SERVER_IMAGE_NAME: "text-gen-server:0"
+  SERVER_IMAGE: "ghcr.io/ibm/text-gen-server:latest"  # TODO: consider publishing to quay.io or icr.io instead
 
 jobs:
   build:
@@ -34,8 +35,8 @@ jobs:
     env:
       CACHE_IMAGE: "ghcr.io/ibm/text-gen-server:build-cache"
       CACHE_REGISTRY: "ghcr.io"
-      SERVER_IMAGE: "ghcr.io/ibm/text-gen-server:latest"  # TODO: don't push final image as a package to ghcr.io
-
+      CACHE_PACKAGE_NAME: "text-gen-server"
+      
     steps:
       - name: "Checkout"
         uses: actions/checkout@v4
@@ -86,6 +87,14 @@ jobs:
           cache-from: type=registry,ref=${{ env.CACHE_IMAGE }}
           cache-to: ${{ env.CACHE_TO }}
           push: ${{ github.event_name != 'pull_request' }}
+      
+      - name: "Cleanup old cache images"
+        uses: actions/delete-package-versions@v5
+        if: ${{ github.event_name == 'push' }}
+        with: 
+          package-name: ${{ env.CACHE_PACKAGE_NAME }}
+          package-type: container
+          delete-only-untagged-versions: true
 
       - name: "List docker images"
         run: docker images
