@@ -6,7 +6,6 @@ on:
   push:
     branches:
       - main
-      - cleanup_build_cache
     paths-ignore:
       - "**.md"
       - "proto/**"
