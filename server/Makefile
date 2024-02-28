@@ -1,5 +1,3 @@
-include Makefile-flash-att
-
 .PHONY: all
 all: install run-dev
 

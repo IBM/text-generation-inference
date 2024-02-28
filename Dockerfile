@@ -12,6 +12,7 @@ ARG PYTORCH_VERSION=2.2.0
 
 ARG PYTHON_VERSION=3.11
 
+
 ## Base Layer ##################################################################
 FROM registry.access.redhat.com/ubi9/ubi:${BASE_UBI_IMAGE_TAG} as base
 WORKDIR /app
@@ -29,6 +30,7 @@ RUN dnf remove -y --disableplugin=subscription-manager \
 
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
+
 
 ## CUDA Base ###################################################################
 FROM base as cuda-base
@@ -53,6 +55,7 @@ ENV CUDA_HOME="/usr/local/cuda" \
     PATH="/usr/local/nvidia/bin:${CUDA_HOME}/bin:${PATH}" \
     LD_LIBRARY_PATH="/usr/local/nvidia/lib:/usr/local/nvidia/lib64:$CUDA_HOME/lib64:$CUDA_HOME/extras/CUPTI/lib64:${LD_LIBRARY_PATH}"
 
+
 ## CUDA Runtime ################################################################
 FROM cuda-base as cuda-runtime
 
@@ -70,6 +73,7 @@ RUN dnf config-manager \
         libcublas-11-8-${NV_LIBCUBLAS_VERSION} \
         libnccl-${NV_LIBNCCL_PACKAGE_VERSION} \
     && dnf clean all
+
 
 ## CUDA Development ############################################################
 FROM cuda-base as cuda-devel
@@ -95,6 +99,7 @@ RUN dnf config-manager \
 
 ENV LIBRARY_PATH="$CUDA_HOME/lib64/stubs"
 
+
 ## Rust builder ################################################################
 # Specific debian version so that compatible glibc version is used
 FROM rust:1.76-bullseye as rust-builder
@@ -113,6 +118,7 @@ COPY rust-toolchain.toml rust-toolchain.toml
 
 RUN rustup component add rustfmt
 
+
 ## Internal router builder #####################################################
 FROM rust-builder as router-builder
 
@@ -124,6 +130,7 @@ WORKDIR /usr/src/router
 #RUN --mount=type=cache,target=/root/.cargo --mount=type=cache,target=/usr/src/router/target cargo install --path .
 RUN cargo install --path .
 
+
 ## Launcher builder ############################################################
 FROM rust-builder as launcher-builder
 
@@ -134,6 +141,7 @@ WORKDIR /usr/src/launcher
 
 #RUN --mount=type=cache,target=/root/.cargo --mount=type=cache,target=/usr/src/launcher/target cargo install --path .
 RUN env GIT_COMMIT_HASH=${GIT_COMMIT_HASH} cargo install --path .
+
 
 ## Tests base ##################################################################
 FROM base as test-base
@@ -149,6 +157,7 @@ RUN pip install --upgrade pip --no-cache-dir && pip install pytest --no-cache-di
 
 # CPU only
 ENV CUDA_VISIBLE_DEVICES=""
+
 
 ## Tests #######################################################################
 FROM test-base as cpu-tests
@@ -182,6 +191,7 @@ COPY --from=launcher-builder /usr/local/cargo/bin/text-generation-launcher /usr/
 # Install integration tests
 COPY integration_tests integration_tests
 RUN cd integration_tests && make install
+
 
 ## Python builder #############################################################
 FROM cuda-devel as python-builder
@@ -219,20 +229,11 @@ WORKDIR /usr/src/flash-attention-v2
 
 # Download the wheel or build it if a pre-compiled release doesn't exist
 # MAX_JOBS: For CI, limit number of parallel compilation threads otherwise the github runner goes OOM
-RUN MAX_JOBS=2 pip --verbose wheel flash-attn==${FLASH_ATT_VERSION} \
-    --no-build-isolation --no-deps --no-cache-dir
+RUN MAX_JOBS=2  pip --verbose wheel --no-deps flash-attn==${FLASH_ATT_VERSION} \
+    "git+https://github.com/Dao-AILab/flash-attention.git@${FLASH_ATT_VERSION}#subdirectory=csrc/layer_norm" \
+    "git+https://github.com/Dao-AILab/flash-attention.git@${FLASH_ATT_VERSION}#subdirectory=csrc/rotary" \
+    --no-build-isolation --no-cache-dir
 
-## Build flash attention  ######################################################
-FROM python-builder as flash-att-builder
-
-WORKDIR /usr/src
-
-COPY server/Makefile-flash-att Makefile
-
-# For CI, limit number of parallel compilation threads otherwise the github runner goes OOM
-ENV MAX_JOBS=2
-
-RUN make build-flash-attention
 
 ## Install auto-gptq ###########################################################
 FROM python-builder as auto-gptq-installer
@@ -260,6 +261,7 @@ WORKDIR /usr/src
 COPY server/exllama_kernels/ .
 RUN python setup.py build
 
+
 ## Build transformers exllamav2 kernels ########################################
 FROM python-builder as exllamav2-kernels-builder
 
@@ -268,22 +270,20 @@ WORKDIR /usr/src
 COPY server/exllamav2_kernels/ .
 RUN python setup.py build
 
-## Flash attention cached build image ##########################################
-FROM base as flash-att-cache
-COPY --from=flash-att-builder /usr/src/flash-attention/build /usr/src/flash-attention/build
-COPY --from=flash-att-builder /usr/src/flash-attention/csrc/layer_norm/build /usr/src/flash-attention/csrc/layer_norm/build
-COPY --from=flash-att-builder /usr/src/flash-attention/csrc/rotary/build /usr/src/flash-attention/csrc/rotary/build
-
 
 ## Flash attention v2 cached build image #######################################
 FROM base as flash-att-v2-cache
+
+# Copy just the wheels we built for flash-attention
 COPY --from=flash-att-v2-builder /usr/src/flash-attention-v2 /usr/src/flash-attention-v2
+
 
 ## Auto gptq cached build image
 FROM base as auto-gptq-cache
 
-# Cache just the wheel we built for auto-gptq
+# Copy just the wheel we built for auto-gptq
 COPY --from=auto-gptq-installer /usr/src/auto-gptq-wheel /usr/src/auto-gptq-wheel
+
 
 ## Final Inference Server image ################################################
 FROM cuda-runtime as server-release
@@ -299,13 +299,6 @@ SHELL ["/bin/bash", "-c"]
 COPY --from=build /opt/tgis /opt/tgis
 
 ENV PATH=/opt/tgis/bin:$PATH
-
-# These could instead come from explicitly cached images
-
-# Copy build artifacts from flash attention builder
-COPY --from=flash-att-cache /usr/src/flash-attention/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
-COPY --from=flash-att-cache /usr/src/flash-attention/csrc/layer_norm/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
-COPY --from=flash-att-cache /usr/src/flash-attention/csrc/rotary/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
 
 # Install flash attention v2 from the cache build
 RUN --mount=type=bind,from=flash-att-v2-cache,src=/usr/src/flash-attention-v2,target=/usr/src/flash-attention-v2 \
@@ -328,6 +321,9 @@ RUN cd server && make gen-server && pip install ".[accelerate, ibm-fms, onnx-gpu
 
 # Patch codegen model changes into transformers 4.35
 RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py
+
+# Print a list of all installed packages and versions
+RUN pip list -v --disable-pip-version-check --no-python-version-warning
 
 # Install router
 COPY --from=router-builder /usr/local/cargo/bin/text-generation-router /usr/local/bin/text-generation-router

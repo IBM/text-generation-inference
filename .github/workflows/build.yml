@@ -2,15 +2,17 @@ name: "Build"
 
 on:
   workflow_dispatch:
+
   push:
     branches:
-      - "main"
+      - main
     paths-ignore:
       - "**.md"
       - "proto/**"
+
   pull_request:
     branches:
-      - "main"
+      - main
     paths-ignore:
       - "**.md"
       - "proto/**"
@@ -21,102 +23,75 @@ defaults:
 
 env:
   CI: true
-  DOCKER_BUILDKIT: 1
   SERVER_IMAGE_NAME: "text-gen-server:0"
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
     env:
-      BUILDKIT_INLINE_CACHE: 1
+      CACHE_IMAGE: "ghcr.io/ibm/text-gen-server:build-cache"
+      CACHE_REGISTRY: "ghcr.io"
+      SERVER_IMAGE: "ghcr.io/ibm/text-gen-server:latest"  # TODO: don't push final image as a package to ghcr.io
 
     steps:
-    - name: "Checkout"
-      uses: actions/checkout@v4
+      - name: "Checkout"
+        uses: actions/checkout@v4
 
-    - name: "Free up disk space"
-      uses: ./.github/actions/free-up-disk-space
+      - name: "Free up disk space"
+        uses: ./.github/actions/free-up-disk-space
 
-    - name: "Set up QEMU"
-      uses: docker/setup-qemu-action@v3
+      - name: "Set up QEMU"
+        uses: docker/setup-qemu-action@v3
 
-    - name: "Set up Docker Buildx"
-      uses: docker/setup-buildx-action@v3
+      - name: "Set up Docker Buildx"
+        uses: docker/setup-buildx-action@v3
 
-    - name: "Generate job steps to build stages sequentially"
-      run: |
-        build_targets=$(grep -iE "^FROM .+ as .*$" Dockerfile | grep -E -o "[^ ]+$")
-        for t in $build_targets; do
-          echo
-          echo "    - name: \"Docker build ${t}\""
-          echo "      run: docker build --target=$t -t $t ."
-        done
+      - name: "Log in to cache image container registry"
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.CACHE_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: "Docker build base"
-      run: docker build --target=base -t base .
+      - name: "Set build cache target"
+        run: |
+          # For push to `main` (PR merged), push a new cache image with all layers (cache-mode=max).
+          # For PR builds, use GitHub action cache which isolates cached layers by PR/branch.
+          # to optimize builds for subsequent pushes to the same PR/branch.
+          # Do not set a cache-to image for PR builds to not overwrite the `main` cache image and
+          # to not ping-pong cache images for two or more different PRs.
+          # Do not push cache images for each PR or multiple branches to not exceed GitHub package
+          # usage and traffic limitations.
+          # UPDATE 2024/02/26: GHA cache appears to have issues, cannot use `cache-to: gha,mode=min`
+          # if `cache-from: reg...,mode=max` but `cache-to: gha,mode=max` takes longer than uncached
+          # build and exhausts GHA cache size limits, so use cache `type=inline` (no external cache).
+          if [ "${{ github.event_name }}" == "pull_request" ]
+          then
+              #CACHE_TO="type=gha,mode=min"
+              CACHE_TO="type=inline"
+          else
+              CACHE_TO="type=registry,ref=${{ env.CACHE_IMAGE }},mode=max"
+          fi
+          echo "CACHE_TO=$CACHE_TO" >> $GITHUB_ENV
 
-    - name: "Docker build cuda-base"
-      run: docker build --target=cuda-base -t cuda-base .
+      - name: "Docker build server-release"
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: server-release
+          tags: ${{ env.SERVER_IMAGE }}
+          cache-from: type=registry,ref=${{ env.CACHE_IMAGE }}
+          cache-to: ${{ env.CACHE_TO }}
+          push: ${{ github.event_name != 'pull_request' }}
 
-    - name: "Docker build cuda-devel"
-      run: docker build --target=cuda-devel -t cuda-devel .
+      - name: "List docker images"
+        run: docker images
 
-    - name: "Docker build python-builder"
-      run: docker build --target=python-builder -t python-builder .
-
-    - name: "Docker build flash-att-v2-builder"
-      run: docker build --target=flash-att-v2-builder -t flash-att-v2-builder .
-
-    - name: "Docker build flash-att-builder"
-      run: docker build --target=flash-att-builder -t flash-att-builder .
-
-    - name: "Docker build flash-att-cache"
-      run: docker build --target=flash-att-cache -t flash-att-cache .
-
-    - name: "Docker build flash-att-v2-cache"
-      run: docker build --target=flash-att-v2-cache -t flash-att-v2-cache .
-
-    - name: "Docker build auto-gptq-installer"
-      run: docker build --target=auto-gptq-installer -t auto-gptq-installer .
-
-    - name: "Docker build auto-gptq-cache"
-      run: docker build --target=auto-gptq-cache -t auto-gptq-cache .
-
-    - name: "Docker build cuda-runtime"
-      run: docker build --target=cuda-runtime -t cuda-runtime .
-
-    - name: "Docker build rust-builder"
-      run: docker build --target=rust-builder -t rust-builder .
-
-    - name: "Docker build router-builder"
-      run: docker build --target=router-builder -t router-builder .
-
-    - name: "Docker build launcher-builder"
-      run: docker build --target=launcher-builder -t launcher-builder .
-
-    - name: "Docker build test-base"
-      run: docker build --target=test-base -t test-base .
-
-    - name: "Docker build cpu-tests"
-      run: docker build --target=cpu-tests -t cpu-tests .
-
-    - name: "Docker build build"
-      run: docker build --target=build -t build .
-
-    - name: "Docker build exllama-kernels-builder"
-      run: docker build --target=exllama-kernels-builder -t exllama-kernels-builder .
-
-    - name: "Docker build exllamav2-kernels-builder"
-      run: docker build --target=exllamav2-kernels-builder -t exllamav2-kernels-builder .
-
-    - name: "Docker build server-release"
-      run: docker build --target=server-release -t server-release .
-
-    - name: "List docker images"
-      run: docker images
-
-    - name: "Check disk usage"
-      shell: bash
-      run: |
-        docker system df
-        df -h
+      - name: "Check disk usage"
+        shell: bash
+        run: |
+          docker system df
+          df -h

@@ -2,6 +2,14 @@ name: "Test"
 
 on:
   workflow_dispatch:
+
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "**.md"
+      - "proto/**"
+
   pull_request:
     branches:
       - main
@@ -15,53 +23,81 @@ defaults:
 
 env:
   CI: true
-  DOCKER_BUILDKIT: 1
   TEST_IMAGE_NAME: "cpu-tests:0"
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    env:
+      CACHE_IMAGE: "ghcr.io/ibm/text-gen-server:test-cache"
+      CACHE_REGISTRY: "ghcr.io"
+
     steps:
-    - name: "Checkout"
-      uses: actions/checkout@v4
+      - name: "Checkout"
+        uses: actions/checkout@v4
 
-    - name: "Free up disk space"
-      uses: ./.github/actions/free-up-disk-space
+      - name: "Set up QEMU"
+        uses: docker/setup-qemu-action@v3
 
-    - name: "Set up QEMU"
-      uses: docker/setup-qemu-action@v3
+      - name: "Setup Docker Buildx"
+        uses: docker/setup-buildx-action@v3
 
-    - name: "Setup Docker Buildx"
-      uses: docker/setup-buildx-action@v3
+      - name: "Log in to cache image container registry"
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.CACHE_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: "Build test image"
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        file: ./Dockerfile
-        target: "cpu-tests"
-        tags: ${{ env.TEST_IMAGE_NAME }}
-        outputs: type=docker,dest=/tmp/test_image.tar
+      - name: "Set build cache target"
+        run: |
+          # For push to `main` (PR merged), push a new cache image with all layers (cache-mode=max).
+          # For PR builds, use GitHub action cache which isolates cached layers by PR/branch.
+          # to optimize builds for subsequent pushes to the same PR/branch.
+          # Do not set a cache-to image for PR builds to not overwrite the `main` cache image and
+          # to not ping-pong cache images for two or more different PRs.
+          # Do not push cache images for each PR or multiple branches to not exceed GitHub package
+          # usage and traffic limitations.
+          # UPDATE 2024/02/26: GHA cache appears to have issues, cannot use `cache-to: gha,mode=min`
+          # if `cache-from: reg...,mode=max` but `cache-to: gha,mode=max` takes longer than uncached
+          # build and exhausts GHA cache size limits, so use cache `type=inline` (no external cache).
+          if [ "${{ github.event_name }}" == "pull_request" ]
+          then
+              #CACHE_TO="type=gha,mode=min"
+              CACHE_TO="type=inline"
+          else
+              CACHE_TO="type=registry,ref=${{ env.CACHE_IMAGE }},mode=max"
+          fi
+          echo "CACHE_TO=$CACHE_TO" >> $GITHUB_ENV
 
-    - name: "Upload test image"
-      uses: actions/upload-artifact@v4
-      with:
-        name: "test-image"
-        path: /tmp/test_image.tar
-        retention-days: 1
+      - name: "Build test image"
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: "cpu-tests"
+          tags: ${{ env.TEST_IMAGE_NAME }}
+          cache-from: |
+              type=gha
+              type=registry,ref=${{ env.CACHE_IMAGE }}
+          cache-to: ${{ env.CACHE_TO }}
+          outputs: type=docker,dest=/tmp/test_image.tar
+
+      - name: "Upload test image"
+        uses: actions/upload-artifact@v4
+        with:
+          name: "test-image"
+          path: /tmp/test_image.tar
+          retention-days: 1
 
   test-python:
     runs-on: ubuntu-latest
     needs: build
     steps:
       - name: "Checkout"
-        uses: actions/checkout@v3
-
-      - name: "Free up disk space"
-        uses: ./.github/actions/free-up-disk-space
-
-      - name: "Setup Docker Buildx"
-        uses: docker/setup-buildx-action@v3
+        uses: actions/checkout@v4
 
       - name: "Download test image"
         uses: actions/download-artifact@v4
@@ -83,13 +119,7 @@ jobs:
     needs: build
     steps:
       - name: "Checkout"
-        uses: actions/checkout@v3
-
-      - name: "Free up disk space"
-        uses: ./.github/actions/free-up-disk-space
-
-      - name: "Setup Docker Buildx"
-        uses: docker/setup-buildx-action@v3
+        uses: actions/checkout@v4
 
       - name: "Download test image"
         uses: actions/download-artifact@v4
