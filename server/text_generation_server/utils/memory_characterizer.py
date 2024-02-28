@@ -1,4 +1,5 @@
 from text_generation_server.pb import generate_pb2
+from text_generation_server.prompt_cache import PROMPT_CACHE_SIZE_MB
 import numpy as np
 import torch
 import torch.cuda
@@ -8,7 +9,7 @@ import gc, os, sys
 
 # Set the memory estimation method to auto, manual or off. If PT2C is used, auto will be forced.
 ESTIMATE_MEMORY                   = os.getenv("ESTIMATE_MEMORY", "auto")
-assert ESTIMATE_MEMORY in ["auto", "manual", "off"]
+assert ESTIMATE_MEMORY in ["auto", "manual", "off"], "valid options for ESTIMATE_MEMORY are auto, manual, and off"
 # Select the batch size that is used to run the tests. The idea is to make the 
 # batch large enough so that the measurement is more accurate, i.e. improve signal to
 # noise ratio. If set too large it could prevent the estimator from finding a quadratic
@@ -332,7 +333,17 @@ class Estimator:
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats(self.model.device)
         self.baseline = torch.cuda.max_memory_allocated(self.model.device)
-        self.free_memory, _ = torch.cuda.mem_get_info(self.model.device)
+        device_free_memory, _ = torch.cuda.mem_get_info(self.model.device)
+
+        # If the model contains a prefix cache, then reduce available memory by the max size of the cache
+        if self.model.prefix_cache is not None:
+            max_cache_size = PROMPT_CACHE_SIZE_MB * 1024 * 1024
+            print(f"Prefix cache enabled, reducing available memory by {max_cache_size}")
+            self.free_memory = device_free_memory - max_cache_size
+        else:
+            print(f"Prefix cache disabled, using all available memory")
+            self.free_memory = device_free_memory
+
         print("Baseline: %d, Free memory: %d" % (self.baseline, self.free_memory))
 
     def find_upper_bound(self):

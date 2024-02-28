@@ -32,7 +32,7 @@ pub(crate) trait BatchType: Send + Sync + Clone + 'static {
                 let generated_count = entry.generated_tokens;
                 Self::update_stats(
                     &stats,
-                    entry.input_length + generated_count as usize,
+                    entry.input_length + entry.prefix_length + generated_count as usize,
                     (entry.request.parameters.max_new_tokens - generated_count) as usize,
                 )
             }
