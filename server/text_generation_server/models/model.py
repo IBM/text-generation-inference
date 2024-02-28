@@ -45,10 +45,11 @@ class Model(ABC):
         # Check whether model supports position_ids
         self.use_position_ids = "position_ids" in inspect.signature(self.model.forward).parameters
 
-        # Short-circuit: Don't set up the prompt encoder if the prompt cache is not set
-        prompt_prefix_supported = self.prompt_cache_set() and self._setup_prompt_encoder()
+        # 🌶️🌶️🌶️ self._setup_prompt_encoder must be called even if the prompt cache is not used.
+        # A required side-effect is that it sets self.word_embeddings.
+        prompt_prefix_supported = self._setup_prompt_encoder()
 
-        if prompt_prefix_supported:
+        if prompt_prefix_supported and self.prompt_cache_set():
             # Set up prefix cache
 
             if max_seq_length is None:
