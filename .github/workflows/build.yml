@@ -6,6 +6,7 @@ on:
   push:
     branches:
       - main
+      - quay
     paths-ignore:
       - "**.md"
       - "proto/**"
@@ -22,9 +23,7 @@ defaults:
     shell: bash
 
 env:
-  CI: true
-  SERVER_IMAGE_NAME: "text-gen-server:0"
-  SERVER_IMAGE: "ghcr.io/ibm/text-gen-server:latest"  # TODO: consider publishing to quay.io or icr.io instead
+  SERVER_IMAGE: "ghcr.io/ibm/text-gen-server"  # TODO: publishing to quay.io
 
 jobs:
   build:
@@ -78,12 +77,28 @@ jobs:
           fi
           echo "CACHE_TO=$CACHE_TO" >> $GITHUB_ENV
 
+          # TODO: remove this
+          env | sort
+
+      # generate tags: quay.io/wxpe/text-gen-server:f73d9aa, quay.io/wxpe/text-gen-server:main, quay.io/wxpe/text-gen-server:main.f73d9aa
+      - name: "Generate tags"
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.SERVER_IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,enable=true,priority=100,prefix=,suffix=,format=short     
+
       - name: "Docker build server-release"
         uses: docker/build-push-action@v5
         with:
           context: .
           target: server-release
-          tags: ${{ env.SERVER_IMAGE }}
+          tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=registry,ref=${{ env.CACHE_IMAGE }}
           cache-to: ${{ env.CACHE_TO }}
           push: ${{ github.event_name != 'pull_request' }}
