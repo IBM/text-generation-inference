@@ -1,12 +1,14 @@
 use std::fmt::{Debug, Formatter};
+
 use flume::{Receiver, Sender};
 use tokenizers::{Encoding, Tokenizer};
 use tokio::sync::oneshot;
 
 type TokenizationRequest = (
-    String, bool, oneshot::Sender<Result<(String, usize, Option<Encoding>), tokenizers::Error>>
+    String,
+    bool,
+    oneshot::Sender<Result<(String, usize, Option<Encoding>), tokenizers::Error>>,
 );
-
 
 #[derive(Clone)]
 pub(crate) struct AsyncTokenizer {
@@ -26,31 +28,32 @@ impl AsyncTokenizer {
         for _ in 0..workers {
             let tokenizer = tokenizer.clone();
             let receiver = receiver.clone();
-            tokio::task::spawn_blocking(
-                move || tokenization_worker(tokenizer, receiver)
-            );
+            tokio::task::spawn_blocking(move || tokenization_worker(tokenizer, receiver));
         }
         Self { sender }
     }
 
     /// Tokenize the supplied string
     pub(crate) async fn tokenize(
-        &self, input: String, include_encoding: bool,
+        &self,
+        input: String,
+        include_encoding: bool,
     ) -> Result<(String, usize, Option<Encoding>), tokenizers::Error> {
         let (sender, receiver) = oneshot::channel();
         // unwrap is safe - receiver can only dropped after sender is dropped
-        self.sender.send_async((input, include_encoding, sender)).await.unwrap();
+        self.sender
+            .send_async((input, include_encoding, sender))
+            .await
+            .unwrap();
         // unwrap is safe - sender is in scope
         receiver.await.unwrap()
     }
 }
 
-fn tokenization_worker(
-    tokenizer: Tokenizer,
-    receiver: Receiver<TokenizationRequest>,
-) {
+fn tokenization_worker(tokenizer: Tokenizer, receiver: Receiver<TokenizationRequest>) {
     while let Ok((input, with_encoding, sender)) = receiver.recv() {
-        let result = tokenizer.encode(&input[..], true)
+        let result = tokenizer
+            .encode(&input[..], true)
             .map(|encoding| (input, encoding.len(), with_encoding.then_some(encoding)));
         sender.send(result).unwrap_or_default();
     }

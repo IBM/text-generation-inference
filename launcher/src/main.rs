@@ -1,26 +1,34 @@
+use std::{
+    env,
+    env::VarError,
+    ffi::OsString,
+    fs,
+    fs::File,
+    io,
+    io::{BufRead, BufReader, ErrorKind, Write},
+    os::unix::process::{CommandExt, ExitStatusExt},
+    path::Path,
+    process::{Command, ExitCode, ExitStatus, Stdio},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+        mpsc::TryRecvError,
+        Arc, Mutex,
+    },
+    thread,
+    thread::sleep,
+    time::{Duration, Instant},
+};
+
 use clap::Parser;
-use nix::sys::signal::{self, Signal};
-use nix::unistd::Pid;
-use std::env;
-use std::io::{BufRead, BufReader, ErrorKind, Write};
-use std::path::Path;
-use std::process::{Command, ExitCode, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::TryRecvError;
-use std::sync::Arc;
-use std::sync::{mpsc, Mutex};
-use std::thread;
-use std::thread::sleep;
-use std::time::{Duration, Instant};
-use std::{fs, io};
-use std::env::VarError;
-use std::ffi::OsString;
-use std::fs::File;
-use std::os::unix::process::{CommandExt, ExitStatusExt};
+use nix::{
+    sys::signal::{self, Signal},
+    unistd::Pid,
+};
 use tracing::{info, warn};
 
 // In most cases this gives the best performance for inferencing
-const DEFAULT_PYTORCH_CUDA_ALLOC_CONF: &'static str = "expandable_segments:True";
+const DEFAULT_PYTORCH_CUDA_ALLOC_CONF: &str = "expandable_segments:True";
 const DEFAULT_MAX_SEQUENCE_LENGTH: usize = 2048;
 
 /// App Configuration
@@ -96,12 +104,14 @@ fn main() -> ExitCode {
         default_hook(panic_info);
     }));
 
-
     // Pattern match configuration
     let args = Args::parse();
 
     if args.json_output {
-        tracing_subscriber::fmt().json().with_current_span(false).init();
+        tracing_subscriber::fmt()
+            .json()
+            .with_current_span(false)
+            .init();
     } else {
         tracing_subscriber::fmt().compact().init();
     }
@@ -116,27 +126,28 @@ fn main() -> ExitCode {
     }
 
     match (args.dtype.as_ref(), args.dtype_str.as_ref()) {
-        (Some(dt), Some(dt_s)) if dt != dt_s => panic!(
-            "dtype and dtype_str args both provided with different values"
-        ),
+        (Some(dt), Some(dt_s)) if dt != dt_s => {
+            panic!("dtype and dtype_str args both provided with different values")
+        }
         _ => (),
     }
-    
+
     // Determine number of shards based on command line arg and env vars
     let num_shard = find_num_shards(args.num_shard);
-    
+
     // Resolve fast tokenizer path
-    let tokenizer_path = resolve_tokenizer_path(
-        &args.model_name, args.revision.as_deref()
-    ).expect("Could not find tokenizer for model");
-    
+    let tokenizer_path = resolve_tokenizer_path(&args.model_name, args.revision.as_deref())
+        .expect("Could not find tokenizer for model");
+
     // Determine max sequence length based on command line arg and env vars
     let config_json_path = tokenizer_path.replace("tokenizer.json", "config.json");
     let max_sequence_length = get_max_sequence_length(args.max_sequence_length, &config_json_path);
 
     match env::var("MAX_BATCH_WEIGHT") {
         Ok(max_batch_weight) if !max_batch_weight.trim().is_empty() => {
-            warn!("MAX_BATCH_WEIGHT is set to {max_batch_weight} but this parameter will be ignored.");
+            warn!(
+                "MAX_BATCH_WEIGHT is set to {max_batch_weight} but this parameter will be ignored."
+            );
         }
         _ => {}
     }
@@ -150,25 +161,27 @@ fn main() -> ExitCode {
 
     // Set PYTORCH_CUDA_ALLOC_CONF to default value if it's not set in the environment
     let cuda_alloc_conf = match env::var("PYTORCH_CUDA_ALLOC_CONF") {
-        Err(VarError::NotPresent) if DEFAULT_PYTORCH_CUDA_ALLOC_CONF == "" => None,
+        Err(VarError::NotPresent) if DEFAULT_PYTORCH_CUDA_ALLOC_CONF.is_empty() => None,
         Err(VarError::NotPresent) => {
             info!("Setting PYTORCH_CUDA_ALLOC_CONF to default value: {DEFAULT_PYTORCH_CUDA_ALLOC_CONF}");
             Some(DEFAULT_PYTORCH_CUDA_ALLOC_CONF)
-        },
+        }
         Ok(alloc_conf) if alloc_conf.trim().is_empty() => {
             info!("PYTORCH_CUDA_ALLOC_CONF is unset");
             Some("") // This means remove it from the env
-        },
+        }
         Ok(alloc_conf) => {
             info!("PYTORCH_CUDA_ALLOC_CONF is set to: {alloc_conf}");
             None
-        },
+        }
         Err(VarError::NotUnicode(_)) => panic!("PYTORCH_CUDA_ALLOC_CONF set to non-unicode value"),
     };
 
     // Backwards compatibility for "hf_custom_tp" deployment engine name
     let deployment_framework = if args.deployment_framework == "hf_custom_tp" {
-        warn!("The \"hf_custom_tp\" deployment engine name is deprecated, please use \"tgis_native\"");
+        warn!(
+            "The \"hf_custom_tp\" deployment engine name is deprecated, please use \"tgis_native\""
+        );
         "tgis_native"
     } else {
         &args.deployment_framework
@@ -198,7 +211,6 @@ fn main() -> ExitCode {
         let status_sender = status_sender.clone();
         let shutdown = shutdown.clone();
         let shutdown_sender = shutdown_sender.clone();
-        let cuda_alloc_conf = cuda_alloc_conf.clone();
         thread::spawn(move || {
             shard_manager(
                 args.model_name,
@@ -323,7 +335,7 @@ fn main() -> ExitCode {
                 tracing::error!("Failed to start webserver: {err}");
             }
 
-            shutdown_shards(shutdown, &shutdown_receiver);
+            shutdown_shards(shutdown, shutdown_receiver);
             return ExitCode::FAILURE;
         }
     };
@@ -357,32 +369,38 @@ fn main() -> ExitCode {
                     mount a memory medium emptyDir volume to /dev/shm"
                 )
             }
-            return exit_code
+            return exit_code;
         };
 
-        match webserver.try_wait().expect("Error polling status of router process") {
+        match webserver
+            .try_wait()
+            .expect("Error polling status of router process")
+        {
             Some(_) => {
                 tracing::error!("Webserver Crashed");
-                shutdown_shards(shutdown, &shutdown_receiver);
+                shutdown_shards(shutdown, shutdown_receiver);
                 return ExitCode::FAILURE;
-            },
+            }
             None => sleep(Duration::from_millis(100)),
         };
     }
 
     terminate_gracefully(&mut webserver, shutdown.clone(), shutdown_receiver);
-    
+
     exit_code
 }
 
 /// Graceful termination
-fn terminate_gracefully(webserver: &mut std::process::Child, shutdown: Arc<Mutex<bool>>, shutdown_receiver: &mpsc::Receiver<()>) {
+fn terminate_gracefully(
+    webserver: &mut std::process::Child,
+    shutdown: Arc<Mutex<bool>>,
+    shutdown_receiver: &mpsc::Receiver<()>,
+) {
     signal::kill(Pid::from_raw(webserver.id() as i32), Signal::SIGTERM).unwrap();
     info!("Waiting for router to gracefully shutdown");
     webserver.wait().unwrap();
     info!("Router terminated");
-    shutdown_shards(shutdown, &shutdown_receiver);
-
+    shutdown_shards(shutdown, shutdown_receiver);
 }
 
 fn num_cuda_devices() -> Option<usize> {
@@ -423,7 +441,7 @@ fn get_max_sequence_length(max_sequence_length: Option<usize>, config_json_path:
 
 /// Opens the model's config.json file and reads into serde_json value
 fn get_config_json(config_path: &String) -> Result<serde_json::Value, std::io::Error> {
-    let reader = BufReader::new(File::open(config_path)?); 
+    let reader = BufReader::new(File::open(config_path)?);
     Ok(serde_json::from_reader(reader)?)
 }
 
@@ -459,8 +477,10 @@ fn get_max_sequence_length_from_config(model_config: &serde_json::Value) -> Opti
 
 fn find_num_shards(num_shard: Option<usize>) -> usize {
     // get the number of shards given `num_gpu` and `num_shard`
-    let num_gpus = env::var("NUM_GPUS")
-        .ok().map(|s| s.parse::<usize>().expect("NUM_GPUS must be a positive integer"));
+    let num_gpus = env::var("NUM_GPUS").ok().map(|s| {
+        s.parse::<usize>()
+            .expect("NUM_GPUS must be a positive integer")
+    });
     let num_shard = match (num_gpus, num_shard) {
         (Some(num_gpu), None) => num_gpu,
         (None, Some(num_shard)) => num_shard,
@@ -469,26 +489,25 @@ fn find_num_shards(num_shard: Option<usize>) -> usize {
                 panic!("NUM_GPUS and num_shard are set to different values ({num_gpu} and {num_shard})");
             }
             num_shard
-        },
+        }
         // try to default to the number of available GPUs
         (None, None) => match num_cuda_devices() {
             Some(num_shard) => {
                 info!("Inferring num_shard = {num_shard} from CUDA_VISIBLE_DEVICES/NVIDIA_VISIBLE_DEVICES");
                 num_shard
-            },
+            }
             None => {
                 // By default we only have one master shard
                 info!("Defaulting num_shard to 1");
                 1
-            },
-        }
+            }
+        },
     };
     if num_shard < 1 {
         panic!("`num_shard` / NUM_GPUS cannot be < 1");
     }
     num_shard
 }
-
 
 #[derive(Debug)]
 enum ShardStatus {
@@ -572,7 +591,10 @@ fn shard_manager(
     let mut env: Vec<(OsString, OsString)> = env::vars_os().collect();
 
     // Fix up TRANSFORMERS_CACHE and HUGGINGFACE_HUB_CACHE env vars
-    match (env::var("TRANSFORMERS_CACHE"), env::var("HUGGINGFACE_HUB_CACHE")) {
+    match (
+        env::var("TRANSFORMERS_CACHE"),
+        env::var("HUGGINGFACE_HUB_CACHE"),
+    ) {
         (Ok(t), Err(_)) => env.push(("HUGGINGFACE_HUB_CACHE".into(), t.into())),
         (Err(_), Ok(h)) => env.push(("TRANSFORMERS_CACHE".into(), h.into())),
         (Ok(t), Ok(h)) if t != h => panic!(
@@ -631,32 +653,36 @@ fn shard_manager(
             } else {
                 tracing::error!("Shard {rank} failed to start:\n{err}");
             }
-            status_sender.send(ShardStatus::Failed(ExitStatus::from_raw(0))).unwrap();
-            return
+            status_sender
+                .send(ShardStatus::Failed(ExitStatus::from_raw(0)))
+                .unwrap();
+            return;
         }
     };
 
     // Redirect STDOUT and STDERR to the console
     let shard_stdout = p.stdout.take().unwrap();
-    let stdout_thread = thread::spawn(
-        move || BufReader::new(shard_stdout).lines().for_each(
-            |line| println!("Shard {rank}: {}", line.unwrap())
-        )
-    );
+    let stdout_thread = thread::spawn(move || {
+        BufReader::new(shard_stdout)
+            .lines()
+            .for_each(|line| println!("Shard {rank}: {}", line.unwrap()))
+    });
     let shard_stderr = p.stderr.take().unwrap();
-    let stderr_thread = thread::spawn(
-        move || BufReader::new(shard_stderr).lines().for_each(
-            |line| eprintln!("Shard {rank}: {}", line.unwrap())
-        )
-    );
+    let stderr_thread = thread::spawn(move || {
+        BufReader::new(shard_stderr)
+            .lines()
+            .for_each(|line| eprintln!("Shard {rank}: {}", line.unwrap()))
+    });
 
     let mut ready = false;
     let start_time = Instant::now();
     let mut wait_time = Instant::now();
     loop {
         // Process exited
-        if let Some(status) = p.try_wait()
-                .expect(&*format!("Error polling status of shard {rank}")) {
+        if let Some(status) = p
+            .try_wait()
+            .unwrap_or_else(|_| panic!("Error polling status of shard {rank}"))
+        {
             if *shutdown.lock().unwrap() {
                 info!("Shard {rank} terminated");
             } else {
@@ -666,11 +692,9 @@ fn shard_manager(
                 io::stdout().flush().unwrap_or_default();
                 stderr_thread.join().unwrap_or_default();
                 io::stderr().flush().unwrap_or_default();
-                status_sender
-                    .send(ShardStatus::Failed(status))
-                    .unwrap();
+                status_sender.send(ShardStatus::Failed(status)).unwrap();
             }
-            return
+            return;
         }
 
         // We received a shutdown signal
@@ -678,7 +702,7 @@ fn shard_manager(
             p.kill().unwrap();
             let _ = p.wait().unwrap();
             info!("Shard {rank} terminated");
-            return
+            return;
         }
 
         // Shard is ready
@@ -710,13 +734,13 @@ fn shutdown_shards(shutdown: Arc<Mutex<bool>>, shutdown_receiver: &mpsc::Receive
     let _ = shutdown_receiver.recv();
 }
 
-
 fn resolve_tokenizer_path(model_name: &str, revision: Option<&str>) -> Result<String, io::Error> {
     let cache = env::var("TRANSFORMERS_CACHE")
-        .or_else(|_| env::var("HUGGINGFACE_HUB_CACHE")).ok();
-    let mut model_dir = cache.as_ref().map(
-        |c| Path::new(&c).join(format!("models--{}", model_name.replace("/", "--")))
-    );
+        .or_else(|_| env::var("HUGGINGFACE_HUB_CACHE"))
+        .ok();
+    let mut model_dir = cache
+        .as_ref()
+        .map(|c| Path::new(&c).join(format!("models--{}", model_name.replace('/', "--"))));
     if let Some(ref d) = model_dir {
         if !d.try_exists()? {
             model_dir = None;
@@ -724,13 +748,12 @@ fn resolve_tokenizer_path(model_name: &str, revision: Option<&str>) -> Result<St
     }
     if let Some(dir) = model_dir {
         let revision = revision.unwrap_or("main");
-        let ref_path = dir.join("refs").join(&revision);
+        let ref_path = dir.join("refs").join(revision);
         let revision = match ref_path.try_exists()? {
             true => fs::read_to_string(ref_path)?,
             false => revision.to_string(),
         };
-        let tok_path = dir.join("snapshots")
-            .join(&revision).join("tokenizer.json");
+        let tok_path = dir.join("snapshots").join(&revision).join("tokenizer.json");
         if tok_path.try_exists()? {
             Ok(tok_path.to_string_lossy().into())
         } else {
@@ -745,7 +768,7 @@ fn resolve_tokenizer_path(model_name: &str, revision: Option<&str>) -> Result<St
         // Try treating model_name as explicit model path
         let try_path = Path::new(&model_name).join("tokenizer.json");
         if try_path.try_exists()? {
-             Ok(try_path.to_string_lossy().into())
+            Ok(try_path.to_string_lossy().into())
         } else {
             let message = if cache.is_none() {
                 format!("Model path {model_name} not found (TRANSFORMERS_CACHE env var not set)")
@@ -761,7 +784,11 @@ fn resolve_tokenizer_path(model_name: &str, revision: Option<&str>) -> Result<St
 fn write_termination_log(msg: &str) -> Result<(), io::Error> {
     // Writes a message to the termination log.
     // Creates the logfile if it doesn't exist.
-    let mut f = File::options().write(true).create(true).truncate(true).open("/dev/termination-log")?;
+    let mut f = File::options()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open("/dev/termination-log")?;
     writeln!(f, "{}", msg)?;
     Ok(())
 }

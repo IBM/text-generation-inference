@@ -1,17 +1,16 @@
 /// Payload validation logic
 use std::collections::hash_map::RandomState;
 use std::time::Duration;
-use crate::{ErrorResponse, GenerateParameters, GenerateRequest};
-use axum::http::StatusCode;
-use axum::Json;
-use futures::future::try_join_all;
-use futures::TryFutureExt;
+
+use axum::{http::StatusCode, Json};
+use futures::{future::try_join_all, TryFutureExt};
 use moka::future::Cache;
 use rand::Rng;
+use text_generation_client::{ClientError, ShardedClient};
 use thiserror::Error;
 use tokio::time::Instant;
-use text_generation_client::{ClientError, ShardedClient};
-use crate::tokenizer::AsyncTokenizer;
+
+use crate::{tokenizer::AsyncTokenizer, ErrorResponse, GenerateParameters, GenerateRequest};
 
 const MAX_STOP_SEQS: usize = 6;
 const MAX_STOP_SEQ_LENGTH: usize = 240;
@@ -28,7 +27,7 @@ pub struct Validation {
 
 pub struct RequestSize {
     pub(crate) input_length: usize,
-    pub(crate) prefix_length: usize
+    pub(crate) prefix_length: usize,
 }
 
 impl Validation {
@@ -38,7 +37,6 @@ impl Validation {
         max_sequence_length: usize,
         max_max_new_tokens: usize,
     ) -> Self {
-
         // Rust-level cache just stores length of prefixes
         let prefix_cache = Cache::builder()
             .max_capacity(256)
@@ -86,130 +84,155 @@ impl Validation {
             return Err(ValidationError::RepetitionPenalty);
         }
         if let Some((_, decay_factor)) = params.length_penalty {
-            if decay_factor < 1.0 || decay_factor > 10.0 {
+            if !(1.0..=10.0).contains(&decay_factor) {
                 return Err(ValidationError::LengthPenalty);
             }
         }
         if params.stop_seqs.len() > MAX_STOP_SEQS {
-            return Err(ValidationError::StopSequences(MAX_STOP_SEQS, MAX_STOP_SEQ_LENGTH));
+            return Err(ValidationError::StopSequences(
+                MAX_STOP_SEQS,
+                MAX_STOP_SEQ_LENGTH,
+            ));
         }
-        if (params.include_logprobs || params.include_ranks || params.include_top_n != 0) &&
-            !(params.include_input_tokens || params.include_gen_tokens) {
+        if (params.include_logprobs || params.include_ranks || params.include_top_n != 0)
+            && !(params.include_input_tokens || params.include_gen_tokens)
+        {
             return Err(ValidationError::TokenDetail);
         }
 
-        if params.stop_seqs.iter().any(|s| s.is_empty() || s.len() > MAX_STOP_SEQ_LENGTH) {
-            return Err(ValidationError::StopSequences(MAX_STOP_SEQS, MAX_STOP_SEQ_LENGTH));
+        if params
+            .stop_seqs
+            .iter()
+            .any(|s| s.is_empty() || s.len() > MAX_STOP_SEQ_LENGTH)
+        {
+            return Err(ValidationError::StopSequences(
+                MAX_STOP_SEQS,
+                MAX_STOP_SEQ_LENGTH,
+            ));
         }
 
         let prefix_length = if let Some(prefix_id) = &prefix_id {
-            self.prefix_cache.try_get_with_by_ref(
-                prefix_id, prompt_prefix_lookup(&self.client, prefix_id),
-            ).map_err(|e| ValidationError::PromptPrefix(
-                prefix_id.clone(),
-                e.to_string(),
-            )).await?
+            self.prefix_cache
+                .try_get_with_by_ref(prefix_id, prompt_prefix_lookup(&self.client, prefix_id))
+                .map_err(|e| ValidationError::PromptPrefix(prefix_id.clone(), e.to_string()))
+                .await?
         } else {
             0
         };
 
         // Get the number of tokens in the inputs
-        let futures = inputs.into_iter().map(|input|
-            self.tokenizer.tokenize(input, false).map_ok(|(input, input_length, _)| {
-                metrics::histogram!("tgi_request_raw_input_length", input_length as f64);
-                (input, input_length)
-            })
-        );
+        let futures = inputs.into_iter().map(|input| {
+            self.tokenizer
+                .tokenize(input, false)
+                .map_ok(|(input, input_length, _)| {
+                    metrics::histogram!("tgi_request_raw_input_length", input_length as f64);
+                    (input, input_length)
+                })
+        });
 
         match try_join_all(futures).await {
             Ok(results) => {
-                results.into_iter().map(|(input, mut input_length)| {
-                    let mut parameters = params.clone();
-                    if parameters.truncate_input_tokens > 0 && parameters.truncate_input_tokens < input_length {
-                        input_length = params.truncate_input_tokens;
-                    } else {
-                        // Indicates no truncation is necessary
-                        parameters.truncate_input_tokens = 0;
-                    }
-                    // Add prefix length to obtain effective token length
-                    let effective_input_length = input_length + prefix_length;
-                    if effective_input_length >= self.max_sequence_length {
-                        // This covers the disallowed boundary case where input length == max seq length
-                        Err(ValidationError::InputLength2(
-                            input_length,
-                            prefix_length,
-                            self.max_sequence_length,
-                        ))
-                    } else if effective_input_length + min_new_tokens > self.max_sequence_length {
-                        // Input + min new tokens can't exceed global max token limit
-                        Err(ValidationError::InputLength(
-                            input_length,
-                            prefix_length,
-                            min_new_tokens,
-                            self.max_sequence_length,
-                        ))
-                    } else {
-                        // If sampling mode and seed is None, assign a random one
-                        if parameters.temperature != 0.0 && parameters.seed.is_none() {
-                            // We generate a 32bit seed so the values aren't too many digits,
-                            // since this will be returned in the API response
-                            let seed = {
-                                // Since we are async, ensure the ThreadRng goes out of scope
-                                let mut rng = rand::thread_rng();
-                                rng.gen::<u32>()
-                            };
-                            parameters.seed = Some(seed as u64);
+                results
+                    .into_iter()
+                    .map(|(input, mut input_length)| {
+                        let mut parameters = params.clone();
+                        if parameters.truncate_input_tokens > 0
+                            && parameters.truncate_input_tokens < input_length
+                        {
+                            input_length = params.truncate_input_tokens;
+                        } else {
+                            // Indicates no truncation is necessary
+                            parameters.truncate_input_tokens = 0;
                         }
-
-                        if effective_input_length + max_new_tokens > self.max_sequence_length {
-                            // If max tokens exceeds global limit, reduce it and flag so that the
-                            // appropriate stop reason is returned
-                            parameters.max_new_tokens =
-                                (self.max_sequence_length - effective_input_length) as u32;
-                            parameters.max_is_token_limit = true;
-                        }
-
-                        Ok((
-                            RequestSize {
+                        // Add prefix length to obtain effective token length
+                        let effective_input_length = input_length + prefix_length;
+                        if effective_input_length >= self.max_sequence_length {
+                            // This covers the disallowed boundary case where input length == max seq length
+                            Err(ValidationError::InputLength2(
                                 input_length,
-                                prefix_length
-                            },
-                            GenerateRequest {
-                                prefix_id: prefix_id.clone(),
-                                inputs: input,
-                                parameters,
+                                prefix_length,
+                                self.max_sequence_length,
+                            ))
+                        } else if effective_input_length + min_new_tokens > self.max_sequence_length
+                        {
+                            // Input + min new tokens can't exceed global max token limit
+                            Err(ValidationError::InputLength(
+                                input_length,
+                                prefix_length,
+                                min_new_tokens,
+                                self.max_sequence_length,
+                            ))
+                        } else {
+                            // If sampling mode and seed is None, assign a random one
+                            if parameters.temperature != 0.0 && parameters.seed.is_none() {
+                                // We generate a 32bit seed so the values aren't too many digits,
+                                // since this will be returned in the API response
+                                let seed = {
+                                    // Since we are async, ensure the ThreadRng goes out of scope
+                                    let mut rng = rand::thread_rng();
+                                    rng.gen::<u32>()
+                                };
+                                parameters.seed = Some(seed as u64);
                             }
-                        ))
-                    }
-                }).collect::<Result<Vec<(RequestSize, GenerateRequest)>, ValidationError>>().map(|results| {
-                    // Only record these for successful validation
-                    for (request_size, _) in &results {
-                        metrics::histogram!("tgi_request_input_length", request_size.input_length as f64);
-                        metrics::histogram!("tgi_request_max_new_tokens", max_new_tokens as f64);
-                    }
-                    results
-                })
-            },
+
+                            if effective_input_length + max_new_tokens > self.max_sequence_length {
+                                // If max tokens exceeds global limit, reduce it and flag so that the
+                                // appropriate stop reason is returned
+                                parameters.max_new_tokens =
+                                    (self.max_sequence_length - effective_input_length) as u32;
+                                parameters.max_is_token_limit = true;
+                            }
+
+                            Ok((
+                                RequestSize {
+                                    input_length,
+                                    prefix_length,
+                                },
+                                GenerateRequest {
+                                    prefix_id: prefix_id.clone(),
+                                    inputs: input,
+                                    parameters,
+                                },
+                            ))
+                        }
+                    })
+                    .collect::<Result<Vec<(RequestSize, GenerateRequest)>, ValidationError>>()
+                    .map(|results| {
+                        // Only record these for successful validation
+                        for (request_size, _) in &results {
+                            metrics::histogram!(
+                                "tgi_request_input_length",
+                                request_size.input_length as f64
+                            );
+                            metrics::histogram!(
+                                "tgi_request_max_new_tokens",
+                                max_new_tokens as f64
+                            );
+                        }
+                        results
+                    })
+            }
             Err(err) => Err(ValidationError::Tokenizer(err.to_string())),
         }
     }
-
 }
 
-
 async fn prompt_prefix_lookup(
-    client: &ShardedClient, prefix_id: &String,
+    client: &ShardedClient,
+    prefix_id: &str,
 ) -> Result<usize, ClientError> {
     let start_time = Instant::now();
     let result = client.clone().prefix_lookup(prefix_id).await;
     if result.is_ok() {
-        metrics::histogram!("tgi_prompt_load_duration", start_time.elapsed().as_secs_f64());
+        metrics::histogram!(
+            "tgi_prompt_load_duration",
+            start_time.elapsed().as_secs_f64()
+        );
     } else {
         metrics::increment_counter!("tgi_prompt_load_failure");
     }
     result
 }
-
 
 #[derive(Error, Debug)]
 pub enum ValidationError {
@@ -229,7 +252,9 @@ pub enum ValidationError {
     MaxNewTokens(usize),
     #[error("min_new_tokens must be <= max_new_tokens")]
     MinNewTokens,
-    #[error("input tokens ({0}) plus prefix length ({1}) plus min_new_tokens ({2}) must be <= {3}")]
+    #[error(
+        "input tokens ({0}) plus prefix length ({1}) plus min_new_tokens ({2}) must be <= {3}"
+    )]
     InputLength(usize, usize, usize, usize),
     #[error("input tokens ({0}) plus prefix length ({1}) must be < {2}")]
     InputLength2(usize, usize, usize),
@@ -242,7 +267,7 @@ pub enum ValidationError {
     #[error("can't retrieve prompt prefix with id '{0}': {1}")]
     PromptPrefix(String, String),
     #[error("sampling parameters aren't applicable in greedy decoding mode")]
-    SampleParametersGreedy
+    SampleParametersGreedy,
 }
 
 impl From<ValidationError> for (StatusCode, Json<ErrorResponse>) {

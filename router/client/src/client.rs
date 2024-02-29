@@ -1,11 +1,16 @@
 /// Single shard Client
 use std::time::Duration;
-use crate::pb::generate::v1::text_generation_service_client::TextGenerationServiceClient;
-use crate::pb::generate::v1::*;
-use crate::{ClientError, Result};
+
 use tonic::transport::{Channel, Uri};
 use tracing::*;
-use crate::pb::generate::v1::model_info_response::ModelType;
+
+use crate::{
+    pb::generate::v1::{
+        model_info_response::ModelType,
+        text_generation_service_client::TextGenerationServiceClient, *,
+    },
+    ClientError, Result,
+};
 
 const PREFIX_LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -15,7 +20,13 @@ pub struct Client {
     stub: TextGenerationServiceClient<Channel>,
 }
 
-pub type GenerateTokenResponse = (Vec<Token>, Vec<InputTokens>, Vec<GenerateError>, u64, Duration);
+pub type GenerateTokenResponse = (
+    Vec<Token>,
+    Vec<InputTokens>,
+    Vec<GenerateError>,
+    u64,
+    Duration,
+);
 
 impl Client {
     /// Returns a client connected to the given url
@@ -78,18 +89,21 @@ impl Client {
     #[instrument(skip(self))]
     pub async fn model_info(&mut self) -> Result<(ModelType, u32, bool, MemoryScalingModel)> {
         let request = tonic::Request::new(ModelInfoRequest {});
-        let response = self.stub
+        let response = self
+            .stub
             .model_info(request)
             .instrument(info_span!("model_info"))
             .await?
             .into_inner();
         ModelType::try_from(response.model_type)
-            .map(|mt| (
-                mt,
-                response.eos_token,
-                response.batch_padding,
-                response.memory_scaling_model.unwrap(),
-            ))
+            .map(|mt| {
+                (
+                    mt,
+                    response.eos_token,
+                    response.batch_padding,
+                    response.memory_scaling_model.unwrap(),
+                )
+            })
             .map_err(|_| ClientError::Generation("Unrecognized model type".to_string()))
     }
 
@@ -104,11 +118,10 @@ impl Client {
     /// Get shard model info
     #[instrument(skip(self))]
     pub async fn prefix_lookup(&mut self, prefix_id: String) -> Result<u32> {
-        let mut request = tonic::Request::new(
-            PrefixLookupRequest { prefix_id }
-        );
+        let mut request = tonic::Request::new(PrefixLookupRequest { prefix_id });
         request.set_timeout(PREFIX_LOOKUP_TIMEOUT);
-        let response = self.stub
+        let response = self
+            .stub
             .prefix_lookup(request)
             .instrument(info_span!("prefix_lookup"))
             .await?
@@ -122,10 +135,13 @@ impl Client {
     /// and input token info if requested
     #[instrument(skip(self))]
     pub async fn prefill(
-        &mut self, batch: Batch, to_prune: Vec<CachedBatch>,
+        &mut self,
+        batch: Batch,
+        to_prune: Vec<CachedBatch>,
     ) -> Result<GenerateTokenResponse> {
-        let request = tonic::Request::new(PrefillRequest{
-            batch: Some(batch), to_prune,
+        let request = tonic::Request::new(PrefillRequest {
+            batch: Some(batch),
+            to_prune,
         });
         let response = self
             .stub
@@ -150,23 +166,24 @@ impl Client {
     /// Returns next generated token of each request in the batches and id of the next cached batch
     #[instrument(skip(self))]
     pub async fn next_token(
-        &mut self, batches: Vec<CachedBatch>,
+        &mut self,
+        batches: Vec<CachedBatch>,
     ) -> Result<Option<GenerateTokenResponse>> {
-        let request = tonic::Request::new(
-            NextTokenRequest { batches }
-        );
+        let request = tonic::Request::new(NextTokenRequest { batches });
         let response = self
             .stub
             .next_token(request)
             .instrument(info_span!("generate_with_cache"))
             .await?
             .into_inner();
-        Ok(response.result.map(|result| (
-            result.output_tokens,
-            vec![],
-            result.errors,
-            result.batch_id,
-            Duration::from_nanos(result.forward_time_ns),
-        )))
+        Ok(response.result.map(|result| {
+            (
+                result.output_tokens,
+                vec![],
+                result.errors,
+                result.batch_id,
+                Duration::from_nanos(result.forward_time_ns),
+            )
+        }))
     }
 }
