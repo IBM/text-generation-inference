@@ -77,9 +77,6 @@ jobs:
           fi
           echo "CACHE_TO=$CACHE_TO" >> $GITHUB_ENV
 
-          # TODO: remove this
-          env | sort
-
       # generate tags: quay.io/wxpe/text-gen-server:f73d9aa, quay.io/wxpe/text-gen-server:main, quay.io/wxpe/text-gen-server:main.f73d9aa
       - name: "Generate tags"
         id: meta
@@ -92,6 +89,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,enable=true,priority=100,prefix=,suffix=,format=short     
+            type=sha,enable=true,priority=100,prefix=${{ env.GITHUB_REF_NAME }},suffix=,format=short     
 
       - name: "Docker build server-release"
         uses: docker/build-push-action@v5
