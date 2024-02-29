@@ -23,7 +23,7 @@ defaults:
     shell: bash
 
 env:
-  SERVER_IMAGE: "quay.io/wxpe/text-gen-router"
+  SERVER_IMAGE: "quay.io/wxpe/text-gen-server"
   IMAGE_REGISTRY: "quay.io"
 
 jobs:
