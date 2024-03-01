@@ -5,18 +5,15 @@ mod client;
 mod pb;
 mod sharded_client;
 
-pub use client::Client;
+pub use client::{Client, GenerateTokenResponse};
 pub use pb::generate::v1::{
-    Batch, Token, InputTokens, NextTokenChooserParameters, RequestedDetails,
-    Request, StopSequence, CachedBatch, RequestsStatus, GenerateError,
-    HealthResponse,
+    next_token_chooser_parameters::LengthPenalty, Batch, CachedBatch, GenerateError,
+    HealthResponse, InputTokens, NextTokenChooserParameters, Request, RequestedDetails,
+    RequestsStatus, StopSequence, Token,
 };
-pub use pb::generate::v1::next_token_chooser_parameters::LengthPenalty;
 pub use sharded_client::ShardedClient;
-pub use client::GenerateTokenResponse;
 use thiserror::Error;
-use tonic::{Code, transport};
-use tonic::Status;
+use tonic::{transport, Code, Status};
 
 #[derive(Error, Debug, Clone)]
 pub enum ClientError {
@@ -33,7 +30,7 @@ impl From<Status> for ClientError {
         match err.code() {
             Code::ResourceExhausted => Self::OutOfMemory(),
             Code::Unavailable => Self::Connection(err.message().to_string()),
-            _ => Self::Generation(err.message().to_string())
+            _ => Self::Generation(err.message().to_string()),
         }
     }
 }

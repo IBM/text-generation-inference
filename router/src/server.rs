@@ -1,28 +1,35 @@
-use crate::{
-    Batcher, Details, ErrorResponse, GenerateRequest, GeneratedText, Validation,
+use std::{
+    net::SocketAddr,
+    sync::{atomic::AtomicBool, Arc},
+    time::Duration,
 };
-use axum::extract::Extension;
-use axum::http::{HeaderMap, StatusCode};
-use axum::response::IntoResponse;
-use axum::routing::{get, post};
-use axum::{Json, Router};
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::time::Duration;
+
+use axum::{
+    extract::Extension,
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+    routing::get,
+    Json, Router,
+};
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use text_generation_client::ShardedClient;
 use tokenizers::Tokenizer;
-use tokio::signal;
-use tokio::sync::{Notify, Semaphore};
-use tokio::time::{Instant, sleep, timeout};
+use tokio::{
+    signal,
+    sync::{Notify, Semaphore},
+    time::{sleep, timeout, Instant},
+};
 use tracing::{instrument, warn};
-use crate::batch_types::{BatchType, FlashBatch, PaddedBatch};
-use crate::decoder::Decoder;
-use crate::grpc_server::start_grpc_server;
-use crate::health::Health;
-use crate::queue::BatchingConfig;
-use crate::tokenizer::AsyncTokenizer;
+
+use crate::{
+    batch_types::{BatchType, FlashBatch, PaddedBatch},
+    decoder::Decoder,
+    grpc_server::start_grpc_server,
+    health::Health,
+    queue::BatchingConfig,
+    tokenizer::AsyncTokenizer,
+    Batcher, ErrorResponse, GenerateRequest, GeneratedText, Validation,
+};
 
 // Server shared state
 #[derive(Clone)]
@@ -48,13 +55,17 @@ async fn health(mut health: Extension<Health>) -> Result<(), (StatusCode, Json<E
         Ok(true) => Ok(()),
         Ok(false) => Err((
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(ErrorResponse { error: "unhealthy".to_string() }),
+            Json(ErrorResponse {
+                error: "unhealthy".to_string(),
+            }),
         )),
         Err(_) => {
             tracing::error!("Aborting health-check request after {PROBE_TIMEOUT_SECS}s time-out");
             Err((
                 StatusCode::SERVICE_UNAVAILABLE,
-                Json(ErrorResponse { error: "Healthcheck timed-out".to_string() }),
+                Json(ErrorResponse {
+                    error: "Healthcheck timed-out".to_string(),
+                }),
             ))
         }
     }
@@ -90,19 +101,30 @@ async fn generate(
 
     // Validate request
     //let details = req.0.parameters.details;
-    let GenerateRequest {inputs, prefix_id, parameters} = req.0;
-    let (request_size, validated_request) =
-        state.validation.validate(
-            prefix_id, parameters, vec![inputs]
-        ).await.map_err(|err| {
+    let GenerateRequest {
+        inputs,
+        prefix_id,
+        parameters,
+    } = req.0;
+    let (request_size, validated_request) = state
+        .validation
+        .validate(prefix_id, parameters, vec![inputs])
+        .await
+        .map_err(|err| {
             tracing::error!("{err}");
             err
-        })?.pop().unwrap();
+        })?
+        .pop()
+        .unwrap();
 
     // Inference
     let response = state
         .batcher
-        .infer(request_size.input_length, request_size.prefix_length, validated_request)
+        .infer(
+            request_size.input_length,
+            request_size.prefix_length,
+            validated_request,
+        )
         .await
         .map_err(|err| {
             tracing::error!("{err}");
@@ -175,9 +197,8 @@ async fn generate(
     Ok((headers, Json(response)))
 }
 
-
 struct BatchConfigValidator<'a, B: BatchType> {
-    batch_type: &'a B
+    batch_type: &'a B,
 }
 
 impl<'a, B: BatchType> BatchConfigValidator<'a, B> {
@@ -187,13 +208,10 @@ impl<'a, B: BatchType> BatchConfigValidator<'a, B> {
         _max_batch_size: usize,
         max_batch_weight: usize,
     ) {
-        let single_request_stats = <B>::update_stats(
-            &B::Stats::default(), max_sequence_length, 0
-        );
+        let single_request_stats = <B>::update_stats(&B::Stats::default(), max_sequence_length, 0);
 
-        let single_request_prefill_weight = self.batch_type.prefill_weight(
-            &single_request_stats, 1
-        );
+        let single_request_prefill_weight =
+            self.batch_type.prefill_weight(&single_request_stats, 1);
         if max_batch_weight < single_request_prefill_weight {
             panic!(
                 "max_batch_weight ({}) not large enough for (prefill) max_sequence_length ({})",
@@ -201,16 +219,15 @@ impl<'a, B: BatchType> BatchConfigValidator<'a, B> {
             )
         }
 
-        let single_request_nexttoken_weight = self.batch_type.batch_initial_weight(
-            &single_request_stats, 1
-        );
+        let single_request_nexttoken_weight = self
+            .batch_type
+            .batch_initial_weight(&single_request_stats, 1);
         if max_batch_weight < single_request_nexttoken_weight {
             panic!(
                 "max_batch_weight ({}) not large enough for (next-token) max_sequence_length ({})",
                 max_batch_weight, max_sequence_length
             )
         }
-
     }
 }
 
@@ -240,40 +257,65 @@ async fn metrics(prom_handle: Extension<PrometheusHandle>) -> String {
 #[allow(clippy::too_many_arguments)]
 pub async fn run(mut args: ServerRunArgs) {
     // Query shard for model info
-    let (seq2seq, eos_token_id, use_padding, model) = args.client.model_info().await
+    let (seq2seq, eos_token_id, use_padding, model) = args
+        .client
+        .model_info()
+        .await
         .expect("Error contacting model shard");
-    tracing::info!("Shard model info: is_seq2seq = {seq2seq}, eos_token_id = {eos_token_id}, \
-        use_padding = {use_padding}");
+    tracing::info!(
+        "Shard model info: is_seq2seq = {seq2seq}, eos_token_id = {eos_token_id}, \
+        use_padding = {use_padding}"
+    );
 
     if use_padding {
         // For now, we are not tracking the batch encoder and decoder input tokens separately
         // in the encoder-decoder model case, so we use the worst-case coefficient.
         // A more precise weight estimate would be given by:
         //     (coef0 * encoder_input_len + coef1 * decoder_input_len) * batch_size
-        let nexttoken_gradient = f32::max(model.nexttoken_linear_coef0, model.nexttoken_linear_coef1) as f64;
+        let nexttoken_gradient =
+            f32::max(model.nexttoken_linear_coef0, model.nexttoken_linear_coef1) as f64;
 
-        do_run(args, seq2seq, eos_token_id, model.weight_limit as usize, PaddedBatch{
-            prefill_linear_coef1: model.prefill_linear_coef0 as f64,
-            prefill_quadratic_coef1: model.prefill_quadratic_coef0 as f64,
-            prefill_quadratic_coef2: model.prefill_quadratic_coef1 as f64,
-            nexttoken_gradient,
-        }).await
+        do_run(
+            args,
+            seq2seq,
+            eos_token_id,
+            model.weight_limit as usize,
+            PaddedBatch {
+                prefill_linear_coef1: model.prefill_linear_coef0 as f64,
+                prefill_quadratic_coef1: model.prefill_quadratic_coef0 as f64,
+                prefill_quadratic_coef2: model.prefill_quadratic_coef1 as f64,
+                nexttoken_gradient,
+            },
+        )
+        .await
     } else {
         args.max_prefill_padding = 1.0; // There's no padding so disable checking for this
-        do_run(args, seq2seq, eos_token_id, model.weight_limit as usize, FlashBatch {
-            prefill_gradient: model.prefill_linear_coef0 as f64,
-            nexttoken_gradient: model.nexttoken_linear_coef1 as f64, // decoder coefficient
-        }).await
+        do_run(
+            args,
+            seq2seq,
+            eos_token_id,
+            model.weight_limit as usize,
+            FlashBatch {
+                prefill_gradient: model.prefill_linear_coef0 as f64,
+                nexttoken_gradient: model.nexttoken_linear_coef1 as f64, // decoder coefficient
+            },
+        )
+        .await
     }
 }
-
 
 /// Serving method
 #[allow(clippy::too_many_arguments)]
 async fn do_run<B: BatchType>(
-    args: ServerRunArgs, seq2seq: bool, eos_token_id: u32, batch_weight_limit: usize, batch_scaling: B,
+    args: ServerRunArgs,
+    seq2seq: bool,
+    eos_token_id: u32,
+    batch_weight_limit: usize,
+    batch_scaling: B,
 ) {
-    let batch_config_validator = BatchConfigValidator::<B>{batch_type: &batch_scaling};
+    let batch_config_validator = BatchConfigValidator::<B> {
+        batch_type: &batch_scaling,
+    };
 
     tracing::info!("Using batch weight limit: {}", batch_weight_limit);
 
@@ -290,23 +332,25 @@ async fn do_run<B: BatchType>(
         warn!(
             "adjusting max_new_tokens ({}) down to max_sequence_length - 1 ({})",
             args.max_new_tokens,
-            args.max_sequence_length-1
+            args.max_sequence_length - 1
         );
         args.max_sequence_length - 1
     };
 
-
-    let tokenizers = AsyncTokenizer::new(
-        &args.tokenizer, args.tokenization_workers
-    );
+    let tokenizers = AsyncTokenizer::new(&args.tokenizer, args.tokenization_workers);
 
     // Create state
     let generation_health = Arc::new(AtomicBool::new(false));
     let health_ext = Health::new(
-        args.client.clone(), generation_health.clone(), &args.tokenizer,
+        args.client.clone(),
+        generation_health.clone(),
+        &args.tokenizer,
     );
     let decoder = Decoder::new(
-        args.tokenizer, seq2seq, eos_token_id, !args.output_special_tokens,
+        args.tokenizer,
+        seq2seq,
+        eos_token_id,
+        !args.output_special_tokens,
     );
     let batcher = Batcher::new(
         args.client.clone(),
@@ -332,11 +376,10 @@ async fn do_run<B: BatchType>(
         batcher,
         limit_concurrent_requests: Arc::new(Semaphore::new(args.max_concurrent_requests)),
         max_sequence_length: args.max_sequence_length,
-        max_new_tokens: max_new_tokens,
+        max_new_tokens,
         seq2seq,
         default_include_stop_seqs: args.default_include_stop_seqs,
     };
-
 
     // Duration buckets
     let duration_matcher = Matcher::Suffix(String::from("duration"));
@@ -367,18 +410,26 @@ async fn do_run<B: BatchType>(
     // Total tokens buckets
     let total_tokens_matcher = Matcher::Full(String::from("tgi_request_total_tokens"));
     // Batch size buckets
-    let batch_inference_size_matcher = Matcher::Full(String::from("tgi_batch_inference_batch_size"));
+    let batch_inference_size_matcher =
+        Matcher::Full(String::from("tgi_batch_inference_batch_size"));
     let batch_size_buckets: Vec<f64> = (0..args.max_batch_size).map(|x| (x + 1) as f64).collect();
 
     // Prometheus handler
     let builder = PrometheusBuilder::new()
-        .set_buckets_for_metric(duration_matcher, &duration_buckets).unwrap()
-        .set_buckets_for_metric(tokenized_tokens_matcher, &tokenized_tokens_buckets).unwrap()
-        .set_buckets_for_metric(input_length_matcher, &max_sequence_length_buckets).unwrap()
-        .set_buckets_for_metric(generated_tokens_matcher, &max_new_tokens_buckets).unwrap()
-        .set_buckets_for_metric(max_new_tokens_matcher, &max_new_tokens_buckets).unwrap()
-        .set_buckets_for_metric(total_tokens_matcher, &max_sequence_length_buckets).unwrap()
-        .set_buckets_for_metric(batch_inference_size_matcher, &batch_size_buckets).unwrap();
+        .set_buckets_for_metric(duration_matcher, &duration_buckets)
+        .unwrap()
+        .set_buckets_for_metric(tokenized_tokens_matcher, &tokenized_tokens_buckets)
+        .unwrap()
+        .set_buckets_for_metric(input_length_matcher, &max_sequence_length_buckets)
+        .unwrap()
+        .set_buckets_for_metric(generated_tokens_matcher, &max_new_tokens_buckets)
+        .unwrap()
+        .set_buckets_for_metric(max_new_tokens_matcher, &max_new_tokens_buckets)
+        .unwrap()
+        .set_buckets_for_metric(total_tokens_matcher, &max_sequence_length_buckets)
+        .unwrap()
+        .set_buckets_for_metric(batch_inference_size_matcher, &batch_size_buckets)
+        .unwrap();
     let prom_handle = builder
         .install_recorder()
         .expect("failed to install metrics recorder");
@@ -398,11 +449,14 @@ async fn do_run<B: BatchType>(
 
     // Create gRPC server
     let grpc_task = start_grpc_server(
-        args.grpc_addr, args.tls_key_pair, args.tls_client_ca_cert,
-        shared_state, tokenizers, async move {
-            notify_clone.notified().await
-        },
-    ).await;
+        args.grpc_addr,
+        args.tls_key_pair,
+        args.tls_client_ca_cert,
+        shared_state,
+        tokenizers,
+        async move { notify_clone.notified().await },
+    )
+    .await;
 
     // Wait two seconds to ensure gRPC server does not immediately
     // fail before starting
