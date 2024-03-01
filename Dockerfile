@@ -297,6 +297,9 @@ SHELL ["/bin/bash", "-c"]
 
 COPY --from=build /opt/tgis /opt/tgis
 
+# `pip` is installed in the venv here
+ENV PATH=/opt/tgis/bin:$PATH
+
 # Install flash attention v2 from the cache build
 RUN --mount=type=bind,from=flash-att-v2-cache,src=/usr/src/flash-attention-v2,target=/usr/src/flash-attention-v2 \
     pip install /usr/src/flash-attention-v2/*.whl --no-cache-dir
