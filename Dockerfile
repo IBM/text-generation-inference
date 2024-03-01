@@ -171,7 +171,7 @@ WORKDIR /usr/src
 # Install specific version of torch
 RUN pip install torch=="$PYTORCH_VERSION+cpu" --index-url "${PYTORCH_INDEX}/cpu" --no-cache-dir
 # There is no rocm 6.0 wheel in the python repo as of March 1st 2023
-RUN pip install 'https://repo.radeon.com/rocm/manylinux/rocm-rel-6.0/torch-${PYTORCH_VERSION}+rocm6.0-cp311-cp311-linux_x86_64.whl' --no-cache-dir
+RUN pip install "https://repo.radeon.com/rocm/manylinux/rocm-rel-6.0/torch-${PYTORCH_VERSION}+rocm6.0-cp311-cp311-linux_x86_64.whl" --no-cache-dir
 
 COPY server/Makefile server/Makefile
 
