@@ -1,25 +1,34 @@
-use crate::{GenerateParameters, GenerateRequest};
-use std::collections::{BTreeSet, VecDeque};
-use std::mem::take;
-use std::ops::Add;
-use std::time::Duration;
-use nohash_hasher::IntMap;
-use tokio::sync::mpsc::{Receiver, UnboundedSender};
-use tokio::sync::mpsc::error::TryRecvError::{Disconnected, Empty};
-use text_generation_client::{
-    Batch, ClientError, LengthPenalty, NextTokenChooserParameters, Request, RequestedDetails, Token
+use std::{
+    collections::{BTreeSet, VecDeque},
+    mem::take,
+    ops::Add,
+    time::Duration,
 };
-use tokio::sync::oneshot::Sender;
-use tokio::time::Instant;
+
+use nohash_hasher::IntMap;
+use text_generation_client::{
+    Batch, ClientError, LengthPenalty, NextTokenChooserParameters, Request, RequestedDetails, Token,
+};
+use tokio::{
+    sync::{
+        mpsc::{
+            error::TryRecvError::{Disconnected, Empty},
+            Receiver, UnboundedSender,
+        },
+        oneshot::Sender,
+    },
+    time::Instant,
+};
 use tracing::info;
-use crate::batch_types::BatchType;
-use crate::batcher::InferResponse;
-use crate::decoder::IncrementalDecoderWrapper;
+
+use crate::{
+    batch_types::BatchType, batcher::InferResponse, decoder::IncrementalDecoderWrapper,
+    GenerateParameters, GenerateRequest,
+};
 
 // Requests that fit into the next batch can overtake others
 // that don't as long as they arrive within this amount of time after
 const CUTOFF_DURATION: Duration = Duration::from_secs(1);
-
 
 /// Queue entry / in-progress request state
 #[derive(Debug)]
@@ -88,17 +97,21 @@ impl Entry {
 
     // Convenience method for sending a terminating response
     pub(crate) fn send_final(
-        &mut self, result: Result<InferResponse, ClientError>
+        &mut self,
+        result: Result<InferResponse, ClientError>,
     ) -> Result<(), Result<InferResponse, ClientError>> {
         if self.response_tx.is_some() {
-            let rtx = take( &mut self.response_tx );
+            let rtx = take(&mut self.response_tx);
             rtx.unwrap().send(result)
         } else {
-            self.stream_tx.as_mut().unwrap().send(result).map_err(|s| s.0)
+            self.stream_tx
+                .as_mut()
+                .unwrap()
+                .send(result)
+                .map_err(|s| s.0)
         }
     }
 }
-
 
 #[derive(Debug)]
 pub(crate) struct BatchingConfig {
@@ -136,7 +149,9 @@ pub(crate) struct Queue<B: BatchType> {
 
 impl<B: BatchType> Queue<B> {
     pub(crate) fn new(
-        config: BatchingConfig, _batch_type: B, receiver: Receiver<Vec<Entry>>
+        config: BatchingConfig,
+        _batch_type: B,
+        receiver: Receiver<Vec<Entry>>,
     ) -> Self {
         Self {
             config,
@@ -172,7 +187,7 @@ impl<B: BatchType> Queue<B> {
             }
             // We have at least one entry in the buffer
             if let Some(batch) = self.try_next_batch(entries, 1) {
-                return Some(batch)
+                return Some(batch);
             }
         }
     }
@@ -187,16 +202,17 @@ impl<B: BatchType> Queue<B> {
                 metrics::increment_counter!("tgi_request_failure", "err" => "cancelled");
                 pruned = true;
                 false
-            },
+            }
             entry if entry.deadline_exceeded() => {
                 // Send timeout response
                 metrics::increment_counter!("tgi_request_failure", "err" => "timeout");
                 entry.batch_time = Some(Instant::now());
-                entry.send_final(Ok(InferResponse::early_timeout(&entry)))
+                entry
+                    .send_final(Ok(InferResponse::early_timeout(entry)))
                     .unwrap_or_default();
                 pruned = true;
                 false
-            },
+            }
             _ => true,
         });
 
@@ -217,21 +233,22 @@ impl<B: BatchType> Queue<B> {
     /// Get the next batch without blocking.
     /// Corresponding entries are added to the entries map
     pub(crate) fn try_next_batch(
-        &mut self, entries: &mut IntMap<u64, Entry>, min_size: usize,
+        &mut self,
+        entries: &mut IntMap<u64, Entry>,
+        min_size: usize,
     ) -> Option<Batch> {
-
         let buffer_size = self.buffer.len();
         if buffer_size < min_size {
             // Not enough requests waiting to reach min_size
             self.last_logged = None;
-            return None
+            return None;
         }
 
         let mut total_count = entries.len();
         if total_count + min_size > self.config.size_limit {
             // Not enough space to fit min_size within max batch size
             self.last_logged = None;
-            return None
+            return None;
         }
 
         // Indices into buffer of entries chosen to add to next batch
@@ -248,16 +265,17 @@ impl<B: BatchType> Queue<B> {
         let effective_prefill_weight_limit = match self.config.weight_limit {
             prefill_limit if prefill_limit == 0 || total_count == 0 => prefill_limit,
             prefill_limit => {
-                let current_batch_weight = self.batch_type.batch_initial_weight(&batch_stats, total_count);
-                let pct_space_free = 1.0 - (
-                    current_batch_weight as f64 / self.config.weight_limit as f64
-                );
+                let current_batch_weight = self
+                    .batch_type
+                    .batch_initial_weight(&batch_stats, total_count);
+                let pct_space_free =
+                    1.0 - (current_batch_weight as f64 / self.config.weight_limit as f64);
                 let limit = (pct_space_free * prefill_limit as f64) as usize;
                 if limit == 0 {
-                    return None
+                    return None;
                 }
                 limit
-            },
+            }
         };
         let max_prefill_padding = self.config.prefill_padding_limit;
 
@@ -266,19 +284,21 @@ impl<B: BatchType> Queue<B> {
         for (index, entry) in self.buffer.iter().enumerate() {
             let config = &self.config;
             if matches!(time_cutoff, Some(t) if entry.queue_time > t) {
-                break
+                break;
             }
 
             // For the purposes of deciding if a request can fit into a batch,
             // the input length needs to take the length of the prefix into account as well
             let input_len = entry.input_length + entry.prefix_length;
             let output_len = entry.request.parameters.max_new_tokens as usize;
-            let next_stats = <B>::update_stats(
-                &batch_stats, input_len, output_len
-            );
+            let next_stats = <B>::update_stats(&batch_stats, input_len, output_len);
 
             // Avoid more granular analysis if possible
-            if self.batch_type.batch_max_weight(&next_stats, total_count + 1) > config.weight_limit {
+            if self
+                .batch_type
+                .batch_max_weight(&next_stats, total_count + 1)
+                > config.weight_limit
+            {
                 // We aren't sure whether this next request will fit, so populate
                 // a btree with the current batch of requests, the set of
                 // requests already evaluated, and this one, and perform more
@@ -287,9 +307,10 @@ impl<B: BatchType> Queue<B> {
 
                 // Allocate btree the first time it's required
                 let tree = btree.get_or_insert_with(|| {
-                    let mut t = Box::new(BTreeSet::new());
+                    let mut t = Box::<BTreeSet<(usize, usize, usize)>>::default();
                     // Populate with records corresponding to all existing and pending entries
-                    let pending = chosen_indices.iter()
+                    let pending = chosen_indices
+                        .iter()
                         .map(|i| (&0, self.buffer.get(*i).unwrap()));
                     for (_, e) in entries.iter().chain(pending) {
                         let generated_count = e.generated_tokens as usize;
@@ -305,16 +326,19 @@ impl<B: BatchType> Queue<B> {
                 tree.insert((output_len, input_len, tree.len()));
 
                 // Perform analysis
-                if self.batch_type.exceeds_weight(tree, config.weight_limit, output_len) {
+                if self
+                    .batch_type
+                    .exceeds_weight(tree, config.weight_limit, output_len)
+                {
                     if chosen_indices.len() + buffer_size < min_size + index + 1 {
                         // We don't have enough remaining to meet min_size
                         self.last_logged = None;
-                        return None
+                        return None;
                     }
                     // Remove our tuple from the set
                     tree.remove(&(output_len, input_len, tree.len() - 1));
                     time_cutoff.get_or_insert_with(|| entry.queue_time.add(CUTOFF_DURATION));
-                    continue
+                    continue;
                 }
                 metrics::increment_counter!("tgi_granular_batch_addition");
             } else if let Some(tree) = btree.as_mut() {
@@ -328,15 +352,13 @@ impl<B: BatchType> Queue<B> {
 
             // Also check whether adding this request will breach the prefill weight limit
             if effective_prefill_weight_limit > 0 || max_prefill_padding < 1.0 {
-                let next_prefill_stats = <B>::update_stats(
-                    &prefill_stats, input_len, 0
-                );
+                let next_prefill_stats = <B>::update_stats(&prefill_stats, input_len, 0);
                 let batch_size = chosen_indices.len() + 1;
                 let mut skip = false;
                 if effective_prefill_weight_limit > 0 {
-                    let prefill_weight = self.batch_type.prefill_weight(
-                        &next_prefill_stats, batch_size
-                    );
+                    let prefill_weight = self
+                        .batch_type
+                        .prefill_weight(&next_prefill_stats, batch_size);
                     if prefill_weight > effective_prefill_weight_limit {
                         skip = true;
                         metrics::increment_counter!("tgi_prefill_weight_limit_exceeded");
@@ -358,7 +380,7 @@ impl<B: BatchType> Queue<B> {
                     }
                     time_cutoff.get_or_insert_with(|| entry.queue_time.add(CUTOFF_DURATION));
                     metrics::increment_counter!("tgi_prefill_weight_limit_exceeded");
-                    continue
+                    continue;
                 }
                 prefill_stats = next_prefill_stats;
             }
@@ -368,7 +390,7 @@ impl<B: BatchType> Queue<B> {
             chosen_indices.push(index);
             total_count += 1;
             if total_count >= config.size_limit {
-                break
+                break;
             }
         }
 
@@ -381,44 +403,57 @@ impl<B: BatchType> Queue<B> {
                 self.last_logged = current_counts;
                 info!("Chose 0 out of {buffer_size} requests from buffer, total now {total_count}");
             }
-            return None
+            return None;
         }
 
         self.last_logged = None;
-        info!("Chose {chosen_count} out of {buffer_size} requests from buffer, \
-                total now {total_count}");
+        info!(
+            "Chose {chosen_count} out of {buffer_size} requests from buffer, \
+                total now {total_count}"
+        );
 
         let some_now = Some(now);
-        let requests = chosen_indices.iter().enumerate().map(|(i, index)| {
-            let mut entry = self.buffer.remove(index - i).expect("bug");
-            // Allocate new id
-            let id = self.next_id;
-            self.next_id += 1;
-            let request = Request {
-                id,
-                prefix_id: entry.request.prefix_id.clone().unwrap_or_default(),
-                inputs: entry.request.inputs.clone(),
-                input_length: entry.input_length as u32,
-                max_output_length: entry.request.parameters.max_new_tokens,
-                truncate: entry.request.parameters.truncate_input_tokens > 0,
-                parameters: Some((&entry.request.parameters).into()),
-                stream_response: entry.stream_tx.is_some(),
-                details: (&entry.request.parameters).into(),
-            };
-            // Set batch_time
-            entry.batch_time = some_now;
-            metrics::histogram!("tgi_request_queue_duration", (now - entry.queue_time).as_secs_f64());
-            // Insert into entries IntMap
-            entries.insert(id, entry);
-            request
-        }).collect::<Vec<Request>>();
+        let requests = chosen_indices
+            .iter()
+            .enumerate()
+            .map(|(i, index)| {
+                let mut entry = self.buffer.remove(index - i).expect("bug");
+                // Allocate new id
+                let id = self.next_id;
+                self.next_id += 1;
+                let request = Request {
+                    id,
+                    prefix_id: entry.request.prefix_id.clone().unwrap_or_default(),
+                    inputs: entry.request.inputs.clone(),
+                    input_length: entry.input_length as u32,
+                    max_output_length: entry.request.parameters.max_new_tokens,
+                    truncate: entry.request.parameters.truncate_input_tokens > 0,
+                    parameters: Some((&entry.request.parameters).into()),
+                    stream_response: entry.stream_tx.is_some(),
+                    details: (&entry.request.parameters).into(),
+                };
+                // Set batch_time
+                entry.batch_time = some_now;
+                metrics::histogram!(
+                    "tgi_request_queue_duration",
+                    (now - entry.queue_time).as_secs_f64()
+                );
+                // Insert into entries IntMap
+                entries.insert(id, entry);
+                request
+            })
+            .collect::<Vec<Request>>();
 
         let batch_tokens = <B>::count_tokens(
             requests.iter().map(|r| r.input_length as usize),
             chosen_count,
         );
         metrics::gauge!("tgi_queue_size", self.buffer.len() as f64);
-        let batch = Batch { id: self.next_batch_id, requests, total_tokens: batch_tokens as u32 };
+        let batch = Batch {
+            id: self.next_batch_id,
+            requests,
+            total_tokens: batch_tokens as u32,
+        };
         // Increment batch id
         self.next_batch_id += 1;
         Some(batch)
@@ -438,9 +473,11 @@ impl From<&GenerateParameters> for NextTokenChooserParameters {
                 x if x == 1.0 || x == 0.0 => None,
                 theta => Some(theta),
             },
-            length_penalty: parameters.length_penalty
+            length_penalty: parameters
+                .length_penalty
                 .map(|(start_index, decay_factor)| LengthPenalty {
-                    start_index, decay_factor
+                    start_index,
+                    decay_factor,
                 }),
         }
     }

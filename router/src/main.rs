@@ -1,14 +1,16 @@
+use std::{
+    fs::File,
+    io,
+    io::Write,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+};
+
 /// Text Generation Inference external gRPC server entrypoint
 use clap::Parser;
-use std::fs::File;
-use std::io;
-use std::io::Write;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use text_generation_client::ShardedClient;
-use text_generation_router::server;
+use text_generation_router::{server, server::ServerRunArgs};
 use tokenizers::Tokenizer;
 use tracing::warn;
-use text_generation_router::server::ServerRunArgs;
 
 /// App Configuration
 #[derive(Parser, Debug)]
@@ -68,7 +70,10 @@ fn main() -> Result<(), std::io::Error> {
     let args = Args::parse();
 
     if args.json_output {
-        tracing_subscriber::fmt().json().with_current_span(false).init();
+        tracing_subscriber::fmt()
+            .json()
+            .with_current_span(false)
+            .init();
     } else {
         tracing_subscriber::fmt().compact().init();
     }
@@ -77,8 +82,8 @@ fn main() -> Result<(), std::io::Error> {
     validate_args(&args);
 
     // Instantiate tokenizer
-    let mut tokenizer = Tokenizer::from_file(args.tokenizer_path)
-        .expect("Problem loading tokenizer for model");
+    let mut tokenizer =
+        Tokenizer::from_file(args.tokenizer_path).expect("Problem loading tokenizer for model");
 
     if let Some(tp) = tokenizer.get_truncation() {
         if tp.max_length < args.max_sequence_length {
@@ -114,17 +119,16 @@ fn main() -> Result<(), std::io::Error> {
             tracing::info!("Using pool of {tokenization_workers} threads for tokenization");
 
             // Clear the cache; useful if this process rebooted
-            sharded_client.clear_cache().await.expect("Unable to clear cache");
+            sharded_client
+                .clear_cache()
+                .await
+                .expect("Unable to clear cache");
             tracing::info!("Connected");
 
-            let grpc_addr = SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), args.grpc_port
-            );
+            let grpc_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), args.grpc_port);
 
             // Binds on localhost
-            let addr = SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), args.port
-            );
+            let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), args.port);
 
             // Run server
             server::run(ServerRunArgs {
@@ -139,7 +143,9 @@ fn main() -> Result<(), std::io::Error> {
                 tokenization_workers,
                 addr,
                 grpc_addr,
-                tls_key_pair: args.tls_cert_path.map(|cp| (cp, args.tls_key_path.unwrap())),
+                tls_key_pair: args
+                    .tls_cert_path
+                    .map(|cp| (cp, args.tls_key_path.unwrap())),
                 tls_client_ca_cert: args.tls_client_ca_cert_path,
                 output_special_tokens: args.output_special_tokens,
                 default_include_stop_seqs: args.default_include_stop_seqs,
@@ -188,7 +194,11 @@ fn validate_args(args: &Args) {
 fn write_termination_log(msg: &str) -> Result<(), io::Error> {
     // Writes a message to the termination log.
     // Creates the logfile if it doesn't exist.
-    let mut f = File::options().write(true).create(true).truncate(true).open("/dev/termination-log")?;
+    let mut f = File::options()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open("/dev/termination-log")?;
     writeln!(f, "{}", msg)?;
     Ok(())
 }

@@ -1,8 +1,11 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+
+use text_generation_client::{Batch, NextTokenChooserParameters, Request, ShardedClient};
 use tokenizers::Tokenizer;
 use tokio::time::Instant;
-use text_generation_client::{Batch, NextTokenChooserParameters, Request, ShardedClient};
 
 const TEST_INPUT: &str = "liveness";
 
@@ -15,24 +18,33 @@ pub(crate) struct Health {
 
 impl Health {
     pub(crate) fn new(
-        client: ShardedClient, generation_health: Arc<AtomicBool>, tokenizer: &Tokenizer
+        client: ShardedClient,
+        generation_health: Arc<AtomicBool>,
+        tokenizer: &Tokenizer,
     ) -> Self {
         Self {
             client,
             generation_health,
-            test_input_tokens: tokenizer.encode(TEST_INPUT, true)
-                .expect("Tokenization error").len() as u32
+            test_input_tokens: tokenizer
+                .encode(TEST_INPUT, true)
+                .expect("Tokenization error")
+                .len() as u32,
         }
     }
 
     pub(crate) async fn check(&mut self) -> bool {
         let generation_healthy = self.generation_health.load(Ordering::SeqCst);
 
-        let mut guard = Guard{ prefill: !generation_healthy, start_time: Some(Instant::now()) };
+        let mut guard = Guard {
+            prefill: !generation_healthy,
+            start_time: Some(Instant::now()),
+        };
 
         let ok = if generation_healthy {
             // Generation is healthy, we only check that the shards are answering gRPC calls
-            self.client.health().await
+            self.client
+                .health()
+                .await
                 .map_err(|err| tracing::error!("Basic shard healthcheck error: {err}"))
                 .is_ok()
         } else {
@@ -59,7 +71,10 @@ impl Health {
                 total_tokens: 1,
             };
             // Skips the queue, but will still be serialized behind in-flight prefill/next_token requests
-            let value = self.client.prefill(batch, vec![]).await
+            let value = self
+                .client
+                .prefill(batch, vec![])
+                .await
                 .map_err(|err| tracing::error!("Prefill healthcheck error: {err}"))
                 .is_ok();
             // Update generation health
@@ -81,7 +96,11 @@ impl Drop for Guard {
         if let Some(start_time) = self.start_time {
             tracing::warn!(
                 "Healthcheck request cancelled during {} check after {}ms",
-                if self.prefill { "prefill" } else { "basic shard" },
+                if self.prefill {
+                    "prefill"
+                } else {
+                    "basic shard"
+                },
                 start_time.elapsed().as_millis(),
             )
         }

@@ -1,45 +1,57 @@
-use std::cmp::max;
-/// Batching and inference logic
-use crate::queue::{BatchingConfig, Entry, Queue};
-use crate::{ErrorResponse, GenerateRequest};
-use axum::http::StatusCode;
-use axum::Json;
-use std::future::Future;
-use std::mem::take;
-use std::ops::Add;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::task::{Context, Poll};
-use std::time::Duration;
-use futures::{FutureExt, pin_mut, TryFutureExt};
-use futures::future::Map;
+use std::{
+    cmp::max,
+    future::Future,
+    mem::take,
+    ops::Add,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    task::{Context, Poll},
+    time::Duration,
+};
+
+use axum::{http::StatusCode, Json};
+use futures::{future::Map, pin_mut, FutureExt, TryFutureExt};
 use nohash_hasher::IntMap;
 use text_generation_client::{
-    ClientError, Token, ShardedClient, CachedBatch, RequestsStatus,
-    InputTokens, GenerateError, Batch, GenerateTokenResponse
+    Batch, CachedBatch, ClientError, GenerateError, GenerateTokenResponse, InputTokens,
+    RequestsStatus, ShardedClient, Token,
 };
 use thiserror::Error;
-use tokio::select;
-
-use tokio::sync::oneshot;
-use tokio::sync::mpsc::{channel, Sender, unbounded_channel, UnboundedReceiver};
-use tokio::sync::mpsc::error::TrySendError;
-use tokio::sync::oneshot::error::RecvError;
-use tokio::sync::oneshot::Receiver;
-use tokio::time::Instant;
-use tokio_stream::Stream;
-use tracing::{debug, info, instrument, warn, enabled, Level, error};
-use crate::batch_types::BatchType;
-use crate::batcher::InferError::{GenerationError, RequestQueueFull};
-use crate::batcher::TokenInfos::{WithIds, WithStrings};
-use crate::decoder::{Decoder, IncrementalDecoder, IncrementalDecoderWrapper};
-use crate::pb::fmaas::{StopReason, TokenInfo};
-use crate::pb::fmaas::StopReason::{
-    Cancelled, EosToken, Error, MaxTokens, NotFinished, StopSequence, TimeLimit, TokenLimit
+use tokio::{
+    select,
+    sync::{
+        mpsc::{channel, error::TrySendError, unbounded_channel, Sender, UnboundedReceiver},
+        oneshot,
+        oneshot::{error::RecvError, Receiver},
+    },
+    time::Instant,
 };
-use crate::pb::fmaas::token_info::TopToken;
-use crate::validation::RequestSize;
+use tokio_stream::Stream;
+use tracing::{debug, enabled, error, info, warn, Level};
+
+/// Batching and inference logic
+use crate::queue::{BatchingConfig, Entry, Queue};
+use crate::{
+    batch_types::BatchType,
+    batcher::{
+        InferError::{GenerationError, RequestQueueFull},
+        TokenInfos::{WithIds, WithStrings},
+    },
+    decoder::{Decoder, IncrementalDecoder, IncrementalDecoderWrapper},
+    pb::fmaas::{
+        token_info::TopToken,
+        StopReason,
+        StopReason::{
+            Cancelled, EosToken, Error, MaxTokens, NotFinished, StopSequence, TimeLimit, TokenLimit,
+        },
+        TokenInfo,
+    },
+    validation::RequestSize,
+    ErrorResponse, GenerateRequest,
+};
 
 /// Batcher
 #[derive(Clone)]
@@ -65,16 +77,20 @@ impl Batcher {
         let decoder = Arc::new(decoder);
 
         // Spawn batching background task that contains all the inference logic
-        tokio::spawn(std::panic::AssertUnwindSafe(batching_task(
-            client,
-            max_waiting_tokens,
-            Queue::new(config, batch_type, receiver),
-            decoder.clone(),
-            generation_health,
-        )).catch_unwind().map_err(|panic| {
-            error!("Batching task panicked: {panic:?}");
-            std::process::exit(1);
-        }));
+        tokio::spawn(
+            std::panic::AssertUnwindSafe(batching_task(
+                client,
+                max_waiting_tokens,
+                Queue::new(config, batch_type, receiver),
+                decoder.clone(),
+                generation_health,
+            ))
+            .catch_unwind()
+            .map_err(|panic| {
+                error!("Batching task panicked: {panic:?}");
+                std::process::exit(1);
+            }),
+        );
 
         Self { sender, decoder }
     }
@@ -88,7 +104,7 @@ impl Batcher {
                     ents.len()
                 );
                 RequestQueueFull()
-            },
+            }
             TrySendError::Closed(_) => panic!("Queue closed"),
         })
     }
@@ -104,9 +120,13 @@ impl Batcher {
         let (response_tx, response_rx) = oneshot::channel();
 
         // Try to add the request to the queue
-        self.enqueue_request(vec![
-            Entry::new(request, input_length, prefix_length, Some(response_tx), None),
-        ])?;
+        self.enqueue_request(vec![Entry::new(
+            request,
+            input_length,
+            prefix_length,
+            Some(response_tx),
+            None,
+        )])?;
 
         // Await on the response from the background task
         // We can safely unwrap as the background task will never drop the sender
@@ -120,24 +140,42 @@ impl Batcher {
     pub(crate) async fn infer_batch(
         &self,
         requests: Vec<(RequestSize, GenerateRequest)>,
-    ) -> Result<Vec<Map<Receiver<Result<InferResponse, ClientError>>,
-        impl FnOnce(Result<Result<InferResponse, ClientError>, RecvError>) -> Result<InferResponse, InferError> + '_>>, InferError> {
+    ) -> Result<
+        Vec<
+            Map<
+                Receiver<Result<InferResponse, ClientError>>,
+                impl FnOnce(
+                        Result<Result<InferResponse, ClientError>, RecvError>,
+                    ) -> Result<InferResponse, InferError>
+                    + '_,
+            >,
+        >,
+        InferError,
+    > {
+        let mut response_chans = vec![];
 
-        let mut response_chans= vec![];
-
-        let entries: Vec<Entry> = requests.into_iter()
+        let entries: Vec<Entry> = requests
+            .into_iter()
             .map(|(request_size, request)| {
                 // One shot channel to communicate with the background batching task
                 let (response_tx, response_rx) = oneshot::channel();
-                response_chans.push(response_rx
-                    .map(move |r: Result<Result<InferResponse, ClientError>, RecvError>| match r.unwrap() {
+                response_chans.push(response_rx.map(
+                    move |r: Result<Result<InferResponse, ClientError>, RecvError>| match r.unwrap()
+                    {
                         Ok(ir) => ir.ensure_decoded(&self.decoder),
                         Err(err) => Err(GenerationError(err.to_string())),
-                    })
-                );
+                    },
+                ));
 
-                Entry::new(request, request_size.input_length, request_size.prefix_length, Some(response_tx), None)
-            }).collect();
+                Entry::new(
+                    request,
+                    request_size.input_length,
+                    request_size.prefix_length,
+                    Some(response_tx),
+                    None,
+                )
+            })
+            .collect();
 
         // Try to add the request to the queue
         self.enqueue_request(entries)?;
@@ -151,30 +189,38 @@ impl Batcher {
         input_length: usize,
         prefix_length: usize,
         request: GenerateRequest,
-        result_map: fn (Result<InferResponse, InferError>) -> T,
-        on_drop: fn (&C, u32, StopReason, Option<u64>, Option<Times>, String, Option<InferError>),
+        result_map: fn(Result<InferResponse, InferError>) -> T,
+        on_drop: fn(&C, u32, StopReason, Option<u64>, Option<Times>, String, Option<InferError>),
         on_drop_context: C,
     ) -> Result<ResponseStream<T, C>, InferError> {
         // Channel to communicate with the background batching task
         let (response_tx, response_rx) = unbounded_channel();
 
         // Send first response with input token count (and text if requested), and random seed used
-        response_tx.send(Ok(InferResponse{
-            in_token_count: input_length as u32,
-            output_text: request.parameters.include_input_text
-                .then(|| request.inputs.clone())
-                .unwrap_or_default(),
-            seed: request.parameters.seed.unwrap_or_default(),
-            ..Default::default()
-        })).unwrap_or_default();
+        response_tx
+            .send(Ok(InferResponse {
+                in_token_count: input_length as u32,
+                output_text: request
+                    .parameters
+                    .include_input_text
+                    .then(|| request.inputs.clone())
+                    .unwrap_or_default(),
+                seed: request.parameters.seed.unwrap_or_default(),
+                ..Default::default()
+            }))
+            .unwrap_or_default();
 
         let has_stop_seq = !request.parameters.stop_seqs.is_empty();
         let include_token_info = request.parameters.include_gen_tokens;
 
         // Try to add the request to the queue
-        self.enqueue_request(vec![
-            Entry::new(request, input_length, prefix_length, None, Some(response_tx)),
-        ])?;
+        self.enqueue_request(vec![Entry::new(
+            request,
+            input_length,
+            prefix_length,
+            None,
+            Some(response_tx),
+        )])?;
 
         Ok(ResponseStream {
             inner: response_rx,
@@ -190,7 +236,9 @@ impl Batcher {
                 Accumulator::String(String::new())
             } else {
                 Accumulator::Decoder(IncrementalDecoderWrapper::for_decoder(
-                    &self.decoder, self.decoder.seq2seq, 0,
+                    &self.decoder,
+                    self.decoder.seq2seq,
+                    0,
                 ))
             },
             times: None,
@@ -203,7 +251,7 @@ impl Batcher {
 
 enum Accumulator {
     String(String),
-    Decoder(IncrementalDecoderWrapper)
+    Decoder(IncrementalDecoderWrapper),
 }
 
 impl Accumulator {
@@ -224,11 +272,11 @@ impl Default for Accumulator {
 /// State associated with the ongoing response stream
 pub struct ResponseStream<T, C> {
     inner: UnboundedReceiver<Result<InferResponse, ClientError>>,
-    map_func: fn (Result<InferResponse, InferError>) -> T,
+    map_func: fn(Result<InferResponse, InferError>) -> T,
     // This is only an option to avoid Arc clones when used in poll_next
     decoder: Option<Arc<Decoder>>,
     include_token_info: bool,
-    on_drop: fn (&C, u32, StopReason, Option<u64>, Option<Times>, String, Option<InferError>),
+    on_drop: fn(&C, u32, StopReason, Option<u64>, Option<Times>, String, Option<InferError>),
     on_drop_context: Arc<C>,
     token_count: u32,
     output: Accumulator,
@@ -247,10 +295,13 @@ impl<T, C> Drop for ResponseStream<T, C> {
             }
         }
         (self.on_drop)(
-            &self.on_drop_context, self.token_count, self.stop_reason, self.request_id,
+            &self.on_drop_context,
+            self.token_count,
+            self.stop_reason,
+            self.request_id,
             take(&mut self.times),
             take(&mut self.output).into_string(),
-            take(&mut self.err)
+            take(&mut self.err),
         );
     }
 }
@@ -260,7 +311,9 @@ impl<T, C> Stream for ResponseStream<T, C> {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
-            let next = self.inner.poll_recv(cx)
+            let next = self
+                .inner
+                .poll_recv(cx)
                 .map_err(|err| GenerationError(err.to_string()))
                 .map(|o| match o {
                     Some(mut res) => {
@@ -277,21 +330,18 @@ impl<T, C> Stream for ResponseStream<T, C> {
                                 }
                                 let token = match &ir.tokens {
                                     WithIds(toks) if !toks.is_empty() => Some(&toks[0]),
-                                    _ => None
+                                    _ => None,
                                 };
                                 // Detatch and reattach the decoder to appease borrow checker
                                 // while avoiding having to clone Arcs
                                 let decoder = take(&mut self.decoder);
                                 match &mut self.output {
                                     Accumulator::String(str) => {
-                                        str.push_str(&*ir.output_text);
-                                    },
+                                        str.push_str(&ir.output_text);
+                                    }
                                     Accumulator::Decoder(id) => {
                                         if let Some(tok) = token {
-                                            match id.next(
-                                                tok.token_id,
-                                                decoder.as_ref().unwrap(),
-                                            ) {
+                                            match id.next(tok.token_id, decoder.as_ref().unwrap()) {
                                                 Ok((text, _)) => ir.output_text = text,
                                                 Err(err) => decode_err = Some(err),
                                             }
@@ -309,13 +359,16 @@ impl<T, C> Stream for ResponseStream<T, C> {
                                 if !self.include_token_info {
                                     ir.tokens.clear();
                                 }
-                                ir.decode_token_infos(&self.decoder.as_ref().unwrap());
-                                if ir.tokens.is_empty() && ir.output_text.is_empty()
-                                    && ir.reason == NotFinished && ir.gen_token_count != 0 {
+                                ir.decode_token_infos(self.decoder.as_ref().unwrap());
+                                if ir.tokens.is_empty()
+                                    && ir.output_text.is_empty()
+                                    && ir.reason == NotFinished
+                                    && ir.gen_token_count != 0
+                                {
                                     // Don't include response if it's empty, unless it's the first
-                                    return None
+                                    return None;
                                 }
-                            },
+                            }
                             Err(err) => {
                                 self.err = Some(err.clone());
                             }
@@ -325,12 +378,12 @@ impl<T, C> Stream for ResponseStream<T, C> {
                             res = Err(err);
                         }
                         Some(Some((self.map_func)(res)))
-                    },
+                    }
                     None => Some(None),
                 });
             if let Poll::Ready(None) = next {
                 // Skip if output is empty (for example was a special token)
-                continue
+                continue;
             }
             return next.map(Option::unwrap);
         }
@@ -358,14 +411,17 @@ async fn batching_task<B: BatchType>(
     // Get the next batch from the queue
     while let Some(batch) = queue.next_batch(processor.entries()).await {
         if enabled!(Level::DEBUG) {
-            debug!["Pulled batch of {} request(s) from queue: {:?}", batch.requests.len(),
-                batch.requests.iter().map(|r| r.id).collect::<Vec<u64>>()];
+            debug![
+                "Pulled batch of {} request(s) from queue: {:?}",
+                batch.requests.len(),
+                batch.requests.iter().map(|r| r.id).collect::<Vec<u64>>()
+            ];
         }
         log_new_batch(batch.id, processor.entries());
 
-        let (mut cached_batch, _) = processor.prefill(
-            &mut client, batch, vec![], None, &mut queue,
-        ).await;
+        let (mut cached_batch, _) = processor
+            .prefill(&mut client, batch, vec![], None, &mut queue)
+            .await;
         let mut waiting_tokens = 1;
         let mut batch_max_remaining_tokens = None;
         let mut next_prefill_after = None;
@@ -378,30 +434,39 @@ async fn batching_task<B: BatchType>(
             let mut batches = vec![batch];
 
             // Recompute or decrement batch_remaining_tokens as appropriate
-            batch_max_remaining_tokens = Some(batch_max_remaining_tokens.map_or_else(
-                || processor.max_remaining_tokens(), |t| t - 1
-            ));
+            batch_max_remaining_tokens = Some(
+                batch_max_remaining_tokens
+                    .map_or_else(|| processor.max_remaining_tokens(), |t| t - 1),
+            );
 
             let batch_tokens = <B>::count_tokens(
-                processor.entries().iter().map(
-                    |(_, e)| e.input_length + e.generated_tokens as usize
-                ),
+                processor
+                    .entries()
+                    .iter()
+                    .map(|(_, e)| e.input_length + e.generated_tokens as usize),
                 batch_size,
             );
 
             metrics::gauge!("tgi_batch_current_size", batch_size as f64);
             metrics::gauge!("tgi_batch_input_tokens", batch_tokens as f64);
-            metrics::gauge!("tgi_batch_max_remaining_tokens", batch_max_remaining_tokens.unwrap() as f64);
+            metrics::gauge!(
+                "tgi_batch_max_remaining_tokens",
+                batch_max_remaining_tokens.unwrap() as f64
+            );
 
             // Don't interfere with current batch if it's about to complete
-            if batch_max_remaining_tokens.unwrap() >= 2 &&
-                next_prefill_after.map_or(true, |t| Instant::now() > t) {
+            if batch_max_remaining_tokens.unwrap() >= 2
+                && next_prefill_after.map_or(true, |t| Instant::now() > t)
+            {
                 // Determine min num of requests for add-on batch based on current batch size and
                 // tokens since last prefill
                 let min_size = if batch_size <= 1 || waiting_tokens >= max_waiting_tokens {
                     1
                 } else {
-                    max(1, (batch_size * (max_waiting_tokens - waiting_tokens)) / max_waiting_tokens)
+                    max(
+                        1,
+                        (batch_size * (max_waiting_tokens - waiting_tokens)) / max_waiting_tokens,
+                    )
                 };
 
                 // Try to get a new batch
@@ -409,7 +474,11 @@ async fn batching_task<B: BatchType>(
                     info!(
                         "DEBUG: Pulled batch of {} extra request(s) from queue: {:?}",
                         new_batch.requests.len(),
-                        new_batch.requests.iter().map(|r| r.id).collect::<Vec<u64>>()
+                        new_batch
+                            .requests
+                            .iter()
+                            .map(|r| r.id)
+                            .collect::<Vec<u64>>()
                     );
 
                     // Determine whether existing batch needs pruning
@@ -419,11 +488,20 @@ async fn batching_task<B: BatchType>(
                     };
 
                     // Generate one token for this new batch to have the attention past in cache
-                    let first_new_id = new_batch.requests.first()
-                        .expect("Batch can't be empty here").id;
-                    let (new_cached_batch, prefill_time) = processor.prefill(
-                        &mut client, new_batch, to_prune, Some(first_new_id), &mut queue
-                    ).await;
+                    let first_new_id = new_batch
+                        .requests
+                        .first()
+                        .expect("Batch can't be empty here")
+                        .id;
+                    let (new_cached_batch, prefill_time) = processor
+                        .prefill(
+                            &mut client,
+                            new_batch,
+                            to_prune,
+                            Some(first_new_id),
+                            &mut queue,
+                        )
+                        .await;
 
                     // Hack for now - update existing batch based on pruning that would have been done
                     match batches[0].status.as_mut() {
@@ -447,15 +525,19 @@ async fn batching_task<B: BatchType>(
                         if batch_size > 0 {
                             combined_batch_id = batch_id;
                             if added_batch_size > 0 {
-                                info!("Extending batch #{} of {} with additional batch #{} of {}",
-                                batch_id, batch_size, new_batch_id, added_batch_size);
+                                info!(
+                                    "Extending batch #{} of {} with additional batch #{} of {}",
+                                    batch_id, batch_size, new_batch_id, added_batch_size
+                                );
                                 metrics::increment_counter!("tgi_batch_concatenation_count");
                             }
                         } else {
                             combined_batch_id = new_batch_id;
                             if new_batch_size > 0 {
-                                info!("Replacing completed batch #{} with new batch #{} of {}",
-                                batch_id, new_batch_id, new_batch_size);
+                                info!(
+                                    "Replacing completed batch #{} with new batch #{} of {}",
+                                    batch_id, new_batch_id, new_batch_size
+                                );
                             }
                         }
                         if added_batch_size > 0 {
@@ -463,7 +545,7 @@ async fn batching_task<B: BatchType>(
                         }
                     } else if batches.is_empty() {
                         // All batches completed or failed, fetch a new one
-                        break
+                        break;
                     }
                 } else {
                     next_prefill_after = None;
@@ -486,26 +568,29 @@ async fn batching_task<B: BatchType>(
     info!("Batching loop exiting");
 }
 
-
 fn log_new_batch(id: u64, entries: &IntMap<u64, Entry>) {
     let bs = entries.len();
     if bs != 0 {
         //TODO improve what's printed here
         let total_toks = entries.iter().map(|(_, e)| e.input_length).sum::<usize>();
-        let max_new_toks = entries.iter().map(
-            |(_, e)| e.request.parameters.max_new_tokens - e.generated_tokens
-        ).max().unwrap();
-        info!["New or updated batch #{} of size {} ({} total toks), max new toks = {}",
-                        id, bs, total_toks, max_new_toks];
+        let max_new_toks = entries
+            .iter()
+            .map(|(_, e)| e.request.parameters.max_new_tokens - e.generated_tokens)
+            .max()
+            .unwrap();
+        info![
+            "New or updated batch #{} of size {} ({} total toks), max new toks = {}",
+            id, bs, total_toks, max_new_toks
+        ];
     }
 }
 
 fn some_completed(batch: &Option<CachedBatch>) -> bool {
-    batch.as_ref().map_or(
-        true,|b| b.status.as_ref().map_or(
-            true, |s| !s.completed_ids.is_empty()
-        )
-    )
+    batch.as_ref().map_or(true, |b| {
+        b.status
+            .as_ref()
+            .map_or(true, |s| !s.completed_ids.is_empty())
+    })
 }
 
 struct TokenProcessor<'a> {
@@ -522,9 +607,10 @@ impl<'a> TokenProcessor<'a> {
 
     /// Max number of tokens to generate before the current batch will complete
     fn max_remaining_tokens(&self) -> u32 {
-        self.entries.iter().map(
-            |(_, e)| e.request.parameters.max_new_tokens - e.generated_tokens
-        ).sum()
+        self.entries
+            .values()
+            .map(|e| e.request.parameters.max_new_tokens - e.generated_tokens)
+            .sum()
     }
 
     async fn prefill<B: BatchType>(
@@ -543,23 +629,37 @@ impl<'a> TokenProcessor<'a> {
         metrics::histogram!(
             "tgi_batch_inference_batch_size", batch_size as f64, "method" => "prefill"
         );
-        let (result, prefill_time) = self._wrap_future(
-            client.prefill(batch, to_prune), "prefill", start_time, start_id, queue
-        ).await;
+        let (result, prefill_time) = self
+            ._wrap_future(
+                client.prefill(batch, to_prune),
+                "prefill",
+                start_time,
+                start_id,
+                queue,
+            )
+            .await;
         info!("Prefill took {prefill_time:?} for {batch_size} inputs, {batch_tokens} total tokens");
         (result, prefill_time)
     }
 
     async fn next_token<B: BatchType>(
-        &mut self, client: &mut ShardedClient, batches: Vec<CachedBatch>, queue: &mut Queue<B>,
+        &mut self,
+        client: &mut ShardedClient,
+        batches: Vec<CachedBatch>,
+        queue: &mut Queue<B>,
     ) -> (Option<CachedBatch>, Duration) {
         metrics::histogram!(
             "tgi_batch_inference_batch_size", self.entries.len() as f64, "method" => "next_token"
         );
         let start_time = Instant::now();
         self._wrap_future(
-            client.next_token(batches), "next_token", start_time, None, queue
-        ).await
+            client.next_token(batches),
+            "next_token",
+            start_time,
+            None,
+            queue,
+        )
+        .await
     }
 
     /// Wrap a future inside a match statement to handle errors and send the response to the Batcher
@@ -586,14 +686,10 @@ impl<'a> TokenProcessor<'a> {
 
         let elapsed = start_time.elapsed();
         let result = match result {
-            Ok(
-                Some((generated_tokens, input_tokens, errors, next_batch_id, forward_duration))
-            ) => {
+            Ok(Some((generated_tokens, input_tokens, errors, next_batch_id, forward_duration))) => {
                 let pre_token_process_time = Instant::now();
                 self.process_input_tokens(input_tokens);
-                let completed_request_ids = self.process_next_tokens(
-                    generated_tokens, errors,
-                );
+                let completed_request_ids = self.process_next_tokens(generated_tokens, errors);
                 // Update health
                 self.generation_health.store(true, Ordering::SeqCst);
                 metrics::histogram!(
@@ -617,11 +713,11 @@ impl<'a> TokenProcessor<'a> {
                 // Probably don't need this additional counter because the duration histogram
                 // records a total count
                 metrics::increment_counter!("tgi_batch_inference_success", "method" => method);
-                Some(CachedBatch{
+                Some(CachedBatch {
                     batch_id: next_batch_id,
-                    status: completed_request_ids.map(|c| RequestsStatus{completed_ids: c}),
+                    status: completed_request_ids.map(|c| RequestsStatus { completed_ids: c }),
                 })
-            },
+            }
             // No inference was performed, only batch cleanup
             Ok(None) => None,
             // If we have an error, we discard the whole batch
@@ -631,12 +727,12 @@ impl<'a> TokenProcessor<'a> {
                 let reason = match err {
                     ClientError::OutOfMemory() => "oom",
                     ClientError::Connection(_) => "connection",
-                    _ => "error"
+                    _ => "error",
                 };
                 metrics::increment_counter!("tgi_batch_inference_failure", "method" => method, "reason" => reason);
                 self.send_errors(err, start_id);
                 None
-            },
+            }
         };
 
         (result, elapsed)
@@ -647,7 +743,7 @@ impl<'a> TokenProcessor<'a> {
         self.entries.retain(|id, entry| {
             if matches![start_id, Some(sid) if *id < sid] {
                 // Keep entries that weren't in the failed request batch
-                return true
+                return true;
             }
             // unwrap_or is valid here as we don't care if the receiver is gone.
             entry.send_final(Err(error.clone())).unwrap_or_default();
@@ -658,19 +754,30 @@ impl<'a> TokenProcessor<'a> {
     /// If stop reason is StopSequence, second element of returned tuple will be
     /// Some((index into stop seq array, index of first byte of stop seq in entry.output))
     fn check_stopping_criteria(
-        entry: &Entry, last_token_id: u32, eos_token_id: u32, new_bytes: Option<usize>,
+        entry: &Entry,
+        last_token_id: u32,
+        eos_token_id: u32,
+        new_bytes: Option<usize>,
     ) -> (StopReason, Option<(usize, usize)>) {
         let params = &entry.request.parameters;
         match params.deadline {
             Some(deadline) if Instant::now() > deadline => (TimeLimit, None),
             _ if entry.generated_tokens < params.min_new_tokens => (NotFinished, None),
             _ if last_token_id == eos_token_id => (EosToken, None),
-            _ if entry.generated_tokens >= params.max_new_tokens =>
-                (if params.max_is_token_limit { TokenLimit } else { MaxTokens }, None),
-            _ => if let Some(ss_match) = TokenProcessor::matches_stop_sequence(entry, new_bytes) {
-                (StopSequence, Some(ss_match))
-            } else {
-                (NotFinished, None)
+            _ if entry.generated_tokens >= params.max_new_tokens => (
+                if params.max_is_token_limit {
+                    TokenLimit
+                } else {
+                    MaxTokens
+                },
+                None,
+            ),
+            _ => {
+                if let Some(ss_match) = TokenProcessor::matches_stop_sequence(entry, new_bytes) {
+                    (StopSequence, Some(ss_match))
+                } else {
+                    (NotFinished, None)
+                }
             }
         }
     }
@@ -678,33 +785,40 @@ impl<'a> TokenProcessor<'a> {
     /// If stop sequence matches, returns tuple
     /// (index into stop seq array, index of first byte of stop seq in entry.output)
     fn matches_stop_sequence(entry: &Entry, new_bytes: Option<usize>) -> Option<(usize, usize)> {
-        new_bytes.map(|new_bytes_count| {
+        new_bytes.and_then(|new_bytes_count| {
             // We compare byte subslices to avoid utf8 boundary problem
             let output = entry.output.as_ref().unwrap().output().as_bytes();
             let next_off = (output.len() + 1) - new_bytes_count;
-            entry.request.parameters.stop_seqs.iter()
-                .map(|ss| (ss.as_bytes(), ss.len(), next_off.saturating_sub(ss.len()))).enumerate()
-                .find_map(|(ss_idx, (ss, len, start_off))| output[start_off..]
-                    .windows(len).rposition(|w| w == ss)
-                    .map(|pos| (ss_idx, start_off + pos))
-                )
-        }).flatten()
+            entry
+                .request
+                .parameters
+                .stop_seqs
+                .iter()
+                .map(|ss| (ss.as_bytes(), ss.len(), next_off.saturating_sub(ss.len())))
+                .enumerate()
+                .find_map(|(ss_idx, (ss, len, start_off))| {
+                    output[start_off..]
+                        .windows(len)
+                        .rposition(|w| w == ss)
+                        .map(|pos| (ss_idx, start_off + pos))
+                })
+        })
     }
 
     /// Add returned input tokens to their corresponding entries
     fn process_input_tokens(&mut self, inputs: Vec<InputTokens>) {
         for input in inputs.into_iter() {
             let request_id = input.request_id;
-            let e = self.entries.get_mut(&request_id)
+            let e = self
+                .entries
+                .get_mut(&request_id)
                 .expect("ID not found. This is a bug.");
             // This should be before any generated tokens are processed
             assert_eq!(e.generated_tokens, 0);
 
             if let Some(stream) = e.stream_tx.as_ref() {
                 // In progress stream, send individual token response
-                let response = InferResponse::stream_input_info(
-                    input.tokens, request_id
-                );
+                let response = InferResponse::stream_input_info(input.tokens, request_id);
                 stream.send(Ok(response)).unwrap_or_default();
             } else {
                 e.input_tokens = input.tokens;
@@ -715,7 +829,9 @@ impl<'a> TokenProcessor<'a> {
     /// Store next token for each sequence, evaluate stopping criteria,
     /// send output back for streaming or completed requests
     fn process_next_tokens(
-        &mut self, outputs: Vec<Token>, errors: Vec<GenerateError>,
+        &mut self,
+        outputs: Vec<Token>,
+        errors: Vec<GenerateError>,
     ) -> Option<Vec<u64>> {
         let mut completed_ids = vec![];
         let request_count = outputs.len();
@@ -723,7 +839,9 @@ impl<'a> TokenProcessor<'a> {
             let request_id = output.request_id;
             let next_token_id = output.token_id;
 
-            let e = self.entries.get_mut(&request_id)
+            let e = self
+                .entries
+                .get_mut(&request_id)
                 .expect("ID not found. This is a bug.");
 
             let is_stream = e.stream_tx.is_some();
@@ -740,7 +858,9 @@ impl<'a> TokenProcessor<'a> {
                     _ => stop_seqs.iter().map(|ss| ss.len()).max().unwrap(),
                 };
                 e.output = Some(IncrementalDecoderWrapper::for_decoder(
-                    &self.decoder, self.decoder.seq2seq, hold_back_bytes,
+                    self.decoder,
+                    self.decoder.seq2seq,
+                    hold_back_bytes,
                 ));
             }
 
@@ -768,7 +888,7 @@ impl<'a> TokenProcessor<'a> {
                     Ok((decoded, added)) => {
                         text = Some(decoded);
                         bytes_added = Some(added);
-                    },
+                    }
                     Err(err) => {
                         // Decoding error, abort the request
                         e.send_final(Err(ClientError::Generation(err.to_string())))
@@ -776,14 +896,17 @@ impl<'a> TokenProcessor<'a> {
                         self.entries.remove(&request_id).unwrap();
                         info!("DEBUG: Completed req id {request_id} with reason {Error:?}");
                         completed_ids.push(request_id);
-                        continue
-                    },
+                        continue;
+                    }
                 }
             }
 
             // Evaluate stopping criteria
             let (mut stop_reason, stop_seq_match) = TokenProcessor::check_stopping_criteria(
-                e, next_token_id, self.decoder.eos_token_id, bytes_added
+                e,
+                next_token_id,
+                self.decoder.eos_token_id,
+                bytes_added,
             );
 
             if stop_reason != NotFinished {
@@ -806,27 +929,43 @@ impl<'a> TokenProcessor<'a> {
                 // Flush the output if we are doing incremental decoding
                 let mut decode_err = None;
                 if let Some(t) = text.as_mut() {
-                    if let Err(err) = e.output.as_mut().unwrap()
-                        .flush(truncate_to, self.decoder).map(|s| t.push_str(&s)) {
+                    if let Err(err) = e
+                        .output
+                        .as_mut()
+                        .unwrap()
+                        .flush(truncate_to, self.decoder)
+                        .map(|s| t.push_str(&s))
+                    {
                         decode_err = Some(err);
                     }
                 }
                 let response = match decode_err {
                     Some(err) => Err(ClientError::Generation(err.to_string())),
                     _ if is_stream => Ok(InferResponse::stream_final(
-                        token.unwrap(), text, &e, request_id, stop_reason, stop_sequence
+                        token.unwrap(),
+                        text,
+                        &e,
+                        request_id,
+                        stop_reason,
+                        stop_sequence,
                     )),
                     _ => Ok(InferResponse::unary(
-                        &mut e, request_id, self.decoder.seq2seq, stop_reason, stop_sequence
+                        &mut e,
+                        request_id,
+                        self.decoder.seq2seq,
+                        stop_reason,
+                        stop_sequence,
                     )),
                 };
                 // unwrap_or is valid here as we don't care if the receiver is gone.
                 e.send_final(response).unwrap_or_default();
-
             } else if is_stream {
                 // In progress stream, send individual token response
                 let response = InferResponse::stream_inprog(
-                    token.unwrap(), e.generated_tokens, text, request_id
+                    token.unwrap(),
+                    e.generated_tokens,
+                    text,
+                    request_id,
                 );
                 if e.stream_tx.as_ref().unwrap().send(Ok(response)).is_err() {
                     // If receiver closed (request cancelled), cancel this entry
@@ -834,11 +973,13 @@ impl<'a> TokenProcessor<'a> {
                     stop_reason = Cancelled;
                     metrics::increment_counter!("tgi_request_failure", "err" => "cancelled");
                     //TODO include request context in log message
-                    warn!("Aborted streaming request {request_id} cancelled by client \
-                        after generating {} token(s)", e.generated_tokens);
+                    warn!(
+                        "Aborted streaming request {request_id} cancelled by client \
+                        after generating {} token(s)",
+                        e.generated_tokens
+                    );
                 }
             }
-
             // Only check non-streaming response channel every 16 tokens to avoid repeated atomic access
             else if e.generated_tokens % 16 == 0 && e.response_tx.as_ref().unwrap().is_closed() {
                 // If receiver closed (request cancelled), cancel this entry
@@ -846,8 +987,11 @@ impl<'a> TokenProcessor<'a> {
                 stop_reason = Cancelled;
                 metrics::increment_counter!("tgi_request_failure", "err" => "cancelled");
                 //TODO include request context in log message
-                warn!("Aborted request {request_id} cancelled by client \
-                    after generating {} token(s)", e.generated_tokens);
+                warn!(
+                    "Aborted request {request_id} cancelled by client \
+                    after generating {} token(s)",
+                    e.generated_tokens
+                );
             }
 
             if stop_reason != NotFinished {
@@ -860,24 +1004,34 @@ impl<'a> TokenProcessor<'a> {
         for error in errors.into_iter() {
             let request_id = error.request_id;
 
-            let e = self.entries.get_mut(&request_id)
+            let e = self
+                .entries
+                .get_mut(&request_id)
                 .expect("ID not found. This is a bug.");
 
-                // Abort the request
-                // TODO maybe send Ok result with Error stop reason instead,
-                // so that any tokens already generated will be included in unary case
-                let message = match e.generated_tokens {
-                    0 => error.message.clone(),
-                    n => format!["Error after generating {} tokens: {}", n, error.message],
-                };
-                e.send_final(Err(ClientError::Generation(message))).unwrap_or_default();
-                self.entries.remove(&request_id).unwrap();
-                info!("DEBUG: Completed req id {request_id} with reason {Error:?}: {}", error.message);
-                completed_ids.push(request_id);
+            // Abort the request
+            // TODO maybe send Ok result with Error stop reason instead,
+            // so that any tokens already generated will be included in unary case
+            let message = match e.generated_tokens {
+                0 => error.message.clone(),
+                n => format!["Error after generating {} tokens: {}", n, error.message],
+            };
+            e.send_final(Err(ClientError::Generation(message)))
+                .unwrap_or_default();
+            self.entries.remove(&request_id).unwrap();
+            info!(
+                "DEBUG: Completed req id {request_id} with reason {Error:?}: {}",
+                error.message
+            );
+            completed_ids.push(request_id);
         }
 
         // Return None if all requests in this batch have completed, otherwise the list of completed ids
-        if completed_ids.len() == request_count { None } else { Some(completed_ids) }
+        if completed_ids.len() == request_count {
+            None
+        } else {
+            Some(completed_ids)
+        }
     }
 }
 
@@ -893,8 +1047,10 @@ pub(crate) struct Times {
 
 impl From<&Entry> for Times {
     fn from(entry: &Entry) -> Self {
-        Self{
-            queued: entry.queue_time, start: entry.batch_time.unwrap(), end: Instant::now(),
+        Self {
+            queued: entry.queue_time,
+            start: entry.batch_time.unwrap(),
+            end: Instant::now(),
         }
     }
 }
@@ -906,7 +1062,7 @@ impl From<&Entry> for Times {
 #[derive(Debug)]
 pub(crate) enum TokenInfos {
     WithIds(Vec<Token>),
-    WithStrings(Vec<TokenInfo>)
+    WithStrings(Vec<TokenInfo>),
 }
 
 impl Default for TokenInfos {
@@ -928,32 +1084,37 @@ impl TokenInfos {
             WithIds(tis) => tis.is_empty(),
         }
     }
-    pub(crate) fn to_final_vec(self) -> Vec<TokenInfo> {
+    pub(crate) fn to_final_vec(&self) -> Vec<TokenInfo> {
         match self {
-            WithStrings(tis) => tis,
+            WithStrings(tis) => tis.to_vec(),
             _ => vec![],
         }
     }
     fn decode(&mut self, decoder: &Decoder) {
         if let WithIds(toks) = &self {
-            *self = WithStrings(toks.iter()
-                .map(|t| TokenInfos::decode_token_info(t, decoder))
-                .collect());
+            *self = WithStrings(
+                toks.iter()
+                    .map(|t| TokenInfos::decode_token_info(t, decoder))
+                    .collect(),
+            );
         }
     }
     fn decode_token_info(with_ids: &Token, decoder: &Decoder) -> TokenInfo {
-        TokenInfo{
+        TokenInfo {
             text: decoder.id_to_token(with_ids.token_id),
             logprob: with_ids.logprob,
             rank: with_ids.rank,
-            top_tokens: with_ids.top_tokens.iter().map(|tt| TopToken{
-                text: decoder.id_to_token(tt.token_id),
-                logprob: tt.logprob,
-            }).collect(),
+            top_tokens: with_ids
+                .top_tokens
+                .iter()
+                .map(|tt| TopToken {
+                    text: decoder.id_to_token(tt.token_id),
+                    logprob: tt.logprob,
+                })
+                .collect(),
         }
     }
 }
-
 
 #[derive(Debug, Default)]
 pub(crate) struct InferResponse {
@@ -1070,17 +1231,19 @@ impl InferResponse {
             is_decoded: true,
             // We only include input token count in the unary case, since it will have
             // already been sent in the streaming case
-            in_token_count: if entry.response_tx.is_some() { entry.input_length as u32 } else { 0 },
-            times: Some((&*entry).into()),
+            in_token_count: if entry.response_tx.is_some() {
+                entry.input_length as u32
+            } else {
+                0
+            },
+            times: Some(entry.into()),
             ..Default::default()
         }
     }
 
     pub(crate) fn decode_output_text(&mut self, decoder: &Decoder) -> Result<(), InferError> {
         if !self.is_decoded {
-            self.output_text += &*decoder.decode(
-                take(&mut self.token_ids), true, true,
-            )?;
+            self.output_text += &*decoder.decode(take(&mut self.token_ids), true, true)?;
             self.is_decoded = true;
         }
         Ok(())
@@ -1091,9 +1254,7 @@ impl InferResponse {
         self.in_tokens.decode(decoder);
     }
 
-    pub(crate) fn ensure_decoded(
-        mut self, decoder: &Decoder
-    ) -> Result<InferResponse, InferError> {
+    pub(crate) fn ensure_decoded(mut self, decoder: &Decoder) -> Result<InferResponse, InferError> {
         self.decode_token_infos(decoder);
         self.decode_output_text(decoder).map(|_| self)
     }
@@ -1112,13 +1273,11 @@ pub enum InferError {
 /// Convert to Axum supported format
 impl From<InferError> for (StatusCode, Json<ErrorResponse>) {
     fn from(err: InferError) -> Self {
-        match err {
-            _ => (
-                StatusCode::FAILED_DEPENDENCY,
-                Json(ErrorResponse {
-                    error: err.to_string(),
-                }),
-            ),
-        }
+        (
+            StatusCode::FAILED_DEPENDENCY,
+            Json(ErrorResponse {
+                error: err.to_string(),
+            }),
+        )
     }
 }

@@ -1,14 +1,15 @@
-/// Multi shard Client
-use crate::{ClientError, Result};
-use crate::{Batch, Client, HealthResponse};
 use futures::future::join_all;
 use tokio::sync::{broadcast, mpsc};
 use tonic::transport::Uri;
-use crate::client::GenerateTokenResponse;
-use crate::pb::generate::v1::CachedBatch;
-use crate::pb::generate::v1::model_info_response::ModelType;
-use crate::pb::generate::v1::MemoryScalingModel;
-use crate::sharded_client::Request::{NextToken, Prefill};
+
+use crate::{
+    client::GenerateTokenResponse,
+    pb::generate::v1::{model_info_response::ModelType, CachedBatch, MemoryScalingModel},
+    sharded_client::Request::{NextToken, Prefill},
+    Batch, Client, HealthResponse,
+};
+/// Multi shard Client
+use crate::{ClientError, Result};
 
 #[derive(Clone, Debug)]
 enum Request {
@@ -39,10 +40,8 @@ impl ShardedClient {
             tokio::spawn(async move {
                 while let Ok((request, response_chan)) = receiver.recv().await {
                     let result = match request {
-                        Prefill(batch, to_prune) =>
-                            client.prefill(batch, to_prune).await.map(|r| Some(r)),
-                        NextToken(batches) =>
-                            client.next_token(batches).await,
+                        Prefill(batch, to_prune) => client.prefill(batch, to_prune).await.map(Some),
+                        NextToken(batches) => client.next_token(batches).await,
                     };
                     response_chan.try_send(result).unwrap_or_default();
                 }
@@ -95,27 +94,36 @@ impl ShardedClient {
     ///
     /// Optionally prunes existing batches first to maximize available memory
     pub async fn prefill(
-        &mut self, batch: Batch, to_prune: Vec<CachedBatch>,
+        &mut self,
+        batch: Batch,
+        to_prune: Vec<CachedBatch>,
     ) -> Result<Option<GenerateTokenResponse>> {
         if batch.requests.is_empty() {
             return Ok(None);
         }
         let (tx, mut rx) = mpsc::channel(1);
-        self.sender.send((Prefill(batch, to_prune), tx))
+        self.sender
+            .send((Prefill(batch, to_prune), tx))
             .map_err(|e| ClientError::Generation(e.to_string()))?;
-        rx.recv().await.ok_or_else(|| ClientError::Connection("client closed".to_string()))?
+        rx.recv()
+            .await
+            .ok_or_else(|| ClientError::Connection("client closed".to_string()))?
     }
 
     /// Generate one token for each request in the given cached batch
     ///
     /// Returns next generated token of each request in the batches and id of the next cached batch
     pub async fn next_token(
-        &mut self, batches: Vec<CachedBatch>,
+        &mut self,
+        batches: Vec<CachedBatch>,
     ) -> Result<Option<GenerateTokenResponse>> {
         let (tx, mut rx) = mpsc::channel(1);
-        self.sender.send((NextToken(batches), tx))
+        self.sender
+            .send((NextToken(batches), tx))
             .map_err(|e| ClientError::Generation(e.to_string()))?;
-        rx.recv().await.ok_or_else(|| ClientError::Connection("client closed".to_string()))?
+        rx.recv()
+            .await
+            .ok_or_else(|| ClientError::Connection("client closed".to_string()))?
     }
 
     /// Clear the past generations cache
@@ -129,18 +137,25 @@ impl ShardedClient {
     }
 
     /// Get length of prompt prefix - verifies existence and populates cache
-    pub async fn prefix_lookup(&mut self, prefix_id: &String) -> Result<usize> {
+    pub async fn prefix_lookup(&mut self, prefix_id: &str) -> Result<usize> {
         let futures: Vec<_> = self
             .clients
             .iter_mut()
-            .map(|client| client.prefix_lookup(prefix_id.clone()))
+            .map(|client| client.prefix_lookup(prefix_id.to_string()))
             .collect();
-        join_all(futures).await.first().unwrap().clone().map(|l| l as usize)
+        join_all(futures)
+            .await
+            .first()
+            .unwrap()
+            .clone()
+            .map(|l| l as usize)
     }
 
     /// Get shard model info
     pub async fn model_info(&mut self) -> Result<(bool, u32, bool, MemoryScalingModel)> {
-        self.clients[0].model_info().await
+        self.clients[0]
+            .model_info()
+            .await
             .map(|(mt, eos, bpad, mem_model)| (mt == ModelType::Seq2seqLm, eos, bpad, mem_model))
     }
 }
