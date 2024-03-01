@@ -40,9 +40,6 @@ jobs:
       - name: "Checkout"
         uses: actions/checkout@v4
 
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@main
-
       - name: "Free up disk space"
         uses: ./.github/actions/free-up-disk-space
 
