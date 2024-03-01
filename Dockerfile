@@ -8,7 +8,7 @@ ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
 # e.g. flash-attn v2.5.2 => torch ['1.12.1', '1.13.1', '2.0.1', '2.1.2', '2.2.0', '2.3.0.dev20240126']
 # https://github.com/Dao-AILab/flash-attention/blob/v2.5.2/.github/workflows/publish.yml#L47
 # use nightly build index for torch .dev pre-release versions
-ARG PYTORCH_VERSION=2.2.0
+ARG PYTORCH_VERSION=2.1.1
 
 ARG PYTHON_VERSION=3.11
 
@@ -170,6 +170,8 @@ WORKDIR /usr/src
 
 # Install specific version of torch
 RUN pip install torch=="$PYTORCH_VERSION+cpu" --index-url "${PYTORCH_INDEX}/cpu" --no-cache-dir
+# There is no rocm 6.0 wheel in the python repo as of March 1st 2023
+RUN pip install 'https://repo.radeon.com/rocm/manylinux/rocm-rel-6.0/torch-${PYTORCH_VERSION}+rocm6.0-cp311-cp311-linux_x86_64.whl' --no-cache-dir
 
 COPY server/Makefile server/Makefile
 
@@ -199,9 +201,6 @@ ARG PYTORCH_INDEX
 ARG PYTORCH_VERSION
 ARG PYTHON_VERSION
 ARG MINIFORGE_VERSION=23.11.0-0
-
-# consistent arch support anywhere we compile CUDA code
-ENV TORCH_CUDA_ARCH_LIST="8.0;8.6+PTX;8.9"
 
 RUN dnf install -y unzip git ninja-build && dnf clean all
 
