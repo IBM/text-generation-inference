@@ -1,12 +1,14 @@
 import math
+
 import numpy as np
 import torch
-import torch.nn as nn
-from torch.cuda.amp import custom_bwd, custom_fwd
+from torch import nn
+from torch.cuda.amp import custom_fwd
 
 try:
     import triton
     import triton.language as tl
+
     from . import custom_autotune
 
     # code based https://github.com/fpgaminer/GPTQ-triton
@@ -127,8 +129,7 @@ try:
         BLOCK_SIZE_K: tl.constexpr,
         GROUP_SIZE_M: tl.constexpr,
     ):
-        """
-        Compute the matrix multiplication C = A x B.
+        """Compute the matrix multiplication C = A x B.
         A is of shape (M, K) float16
         B is of shape (K//8, N) int32
         C is of shape (M, N) float16
@@ -170,15 +171,15 @@ try:
         zeros_shifter = (offs_bn % infearure_per_bits) * bits
         accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
 
-        for k in range(0, num_pid_k):
+        for k in range(num_pid_k):
             g_idx = tl.load(g_ptrs)
 
             # Fetch scales and zeros; these are per-outfeature and thus reused in the inner loop
             scales = tl.load(
-                scales_ptrs + g_idx[:, None] * stride_scales
+                scales_ptrs + g_idx[:, None] * stride_scales,
             )  # (BLOCK_SIZE_K, BLOCK_SIZE_N,)
             zeros = tl.load(
-                zeros_ptrs + g_idx[:, None] * stride_zeros
+                zeros_ptrs + g_idx[:, None] * stride_zeros,
             )  # (BLOCK_SIZE_K, BLOCK_SIZE_N,)
 
             zeros = (zeros >> zeros_shifter[None, :]) & maxq
@@ -207,7 +208,9 @@ except:
 def matmul248(input, qweight, scales, qzeros, g_idx, bits, maxq):
     with torch.cuda.device(input.device):
         output = torch.empty(
-            (input.shape[0], qweight.shape[1]), device=input.device, dtype=torch.float16
+            (input.shape[0], qweight.shape[1]),
+            device=input.device,
+            dtype=torch.float16,
         )
         grid = lambda META: (
             triton.cdiv(input.shape[0], META["BLOCK_SIZE_M"])
@@ -276,10 +279,12 @@ class QuantLinear(nn.Module):
             dtype=torch.int32,
         )
         scales = torch.zeros(
-            (math.ceil(infeatures / groupsize), outfeatures), dtype=torch.float16
+            (math.ceil(infeatures / groupsize), outfeatures),
+            dtype=torch.float16,
         )
         g_idx = torch.tensor(
-            [i // groupsize for i in range(infeatures)], dtype=torch.int32
+            [i // groupsize for i in range(infeatures)],
+            dtype=torch.int32,
         )
         if bias:
             bias = torch.zeros((outfeatures), dtype=torch.float16)
@@ -302,14 +307,15 @@ class QuantLinear(nn.Module):
             intweight.append(
                 torch.round(
                     (linear.weight.data[:, idx] + scale_zeros[self.g_idx[idx]])
-                    / self.scales[self.g_idx[idx]]
-                ).to(torch.int)[:, None]
+                    / self.scales[self.g_idx[idx]],
+                ).to(torch.int)[:, None],
             )
         intweight = torch.cat(intweight, dim=1)
         intweight = intweight.t().contiguous()
         intweight = intweight.numpy().astype(np.uint32)
         qweight = np.zeros(
-            (intweight.shape[0] // 32 * self.bits, intweight.shape[1]), dtype=np.uint32
+            (intweight.shape[0] // 32 * self.bits, intweight.shape[1]),
+            dtype=np.uint32,
         )
         i = 0
         row = 0
@@ -328,7 +334,8 @@ class QuantLinear(nn.Module):
         zeros -= 1
         zeros = zeros.numpy().astype(np.uint32)
         qzeros = np.zeros(
-            (zeros.shape[0], zeros.shape[1] // 32 * self.bits), dtype=np.uint32
+            (zeros.shape[0], zeros.shape[1] // 32 * self.bits),
+            dtype=np.uint32,
         )
         i = 0
         col = 0

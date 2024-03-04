@@ -1,18 +1,18 @@
 import contextlib
-import time
-import torch.nn as nn
-import math
 import json
+import math
 import os
+import time
 
-from texttable import Texttable
-from transformers import AutoModelForCausalLM, AutoConfig, AutoTokenizer
+import torch
 import transformers
 from huggingface_hub import HfApi
-import torch
-from text_generation_server.utils.gptq.quant_linear import QuantLinear
 from loguru import logger
-from typing import Optional
+from texttable import Texttable
+from torch import nn
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+
+from text_generation_server.utils.gptq.quant_linear import QuantLinear
 
 
 class Quantizer(nn.Module):
@@ -33,7 +33,6 @@ class Quantizer(nn.Module):
         maxshrink=0.8,
         trits=False,
     ):
-
         self.maxq = torch.tensor(2**bits - 1)
         self.perchannel = perchannel
         self.sym = sym
@@ -102,7 +101,10 @@ class Quantizer(nn.Module):
                 scale1 = (xmax1 - xmin1) / self.maxq
                 zero1 = torch.round(-xmin1 / scale1) if not self.sym else self.zero
                 q = self._quantize(
-                    x, scale1.unsqueeze(1), zero1.unsqueeze(1), self.maxq
+                    x,
+                    scale1.unsqueeze(1),
+                    zero1.unsqueeze(1),
+                    self.maxq,
                 )
                 q -= x
                 q.abs_()
@@ -177,9 +179,7 @@ class GPTQ:
         if len(inp.shape) == 2:
             inp = inp.unsqueeze(0)
         tmp = inp.shape[0]
-        if isinstance(self.layer, nn.Linear) or isinstance(
-            self.layer, transformers.Conv1D
-        ):
+        if isinstance(self.layer, nn.Linear | transformers.Conv1D):
             if len(inp.shape) == 3:
                 inp = inp.reshape((-1, inp.shape[-1]))
             inp = inp.t()
@@ -213,7 +213,7 @@ class GPTQ:
 
         # assign weight
         self.layer.weight.data = q_weight.reshape(self.layer.weight.shape).to(
-            self.layer.weight.data.dtype
+            self.layer.weight.data.dtype,
         )
 
         if self.inp1 is not None:
@@ -235,7 +235,12 @@ class GPTQ:
         print(table.draw().split("\n")[-2])
 
     def fasterquant(
-        self, blocksize=128, percdamp=0.01, groupsize=-1, act_order=False, name=""
+        self,
+        blocksize=128,
+        percdamp=0.01,
+        groupsize=-1,
+        act_order=False,
+        name="",
     ):
         self.layer.to(self.dev)
 
@@ -276,7 +281,8 @@ class GPTQ:
         except Exception:
             # Addition because Falcon fails on h_to_4h
             H = torch.linalg.cholesky(
-                H + 1e-5 * torch.eye(H.shape[0]).to(H.device), upper=True
+                H + 1e-5 * torch.eye(H.shape[0]).to(H.device),
+                upper=True,
             )
         Hinv = H
 
@@ -302,7 +308,8 @@ class GPTQ:
                 if groupsize != -1:
                     if (i1 + i) % groupsize == 0:
                         self.quantizer.find_params(
-                            W[:, (i1 + i) : (i1 + i + groupsize)], weight=True
+                            W[:, (i1 + i) : (i1 + i + groupsize)],
+                            weight=True,
                         )
 
                     if ((i1 + i) // groupsize) - now_idx == -1:
@@ -338,7 +345,10 @@ class GPTQ:
             Q = Q.t()
 
         self.print_loss(
-            name=name, q_weight=Q, weight_error=error, timecost=(time.time() - tick)
+            name=name,
+            q_weight=Q,
+            weight_error=error,
+            timecost=(time.time() - tick),
         )
 
         if scale == []:
@@ -581,8 +591,10 @@ def find_layers(module, layers=(nn.Conv2d, nn.Linear), name=""):
     for name1, child in module.named_children():
         res.update(
             find_layers(
-                child, layers=layers, name=name + "." + name1 if name != "" else name1
-            )
+                child,
+                layers=layers,
+                name=name + "." + name1 if name != "" else name1,
+            ),
         )
     return res
 
@@ -611,7 +623,8 @@ def sequential(
 
     dtype = next(iter(model.parameters())).dtype
     inps = torch.zeros(
-        (nsamples, model.seqlen, model.config.hidden_size), dtype=dtype
+        (nsamples, model.seqlen, model.config.hidden_size),
+        dtype=dtype,
     )
 
     cache = {"i": 0}
@@ -644,7 +657,8 @@ def sequential(
     outs = torch.zeros_like(inps)
 
     extra = {
-        k: v.to(inps.device) if isinstance(v, torch.Tensor) else v for k, v in extra.items()
+        k: v.to(inps.device) if isinstance(v, torch.Tensor) else v
+        for k, v in extra.items()
     }
 
     print("Ready.")
@@ -669,7 +683,10 @@ def sequential(
             for name in subset:
                 gptq[name] = GPTQ(subset[name])
                 gptq[name].quantizer.configure(
-                    bits, perchannel=True, sym=sym, mse=False
+                    bits,
+                    perchannel=True,
+                    sym=sym,
+                    mse=False,
                 )
 
             def add_batch(name):
@@ -682,7 +699,6 @@ def sequential(
             for name in subset:
                 handles.append(subset[name].register_forward_hook(add_batch(name)))
             for j in range(nsamples):
-
                 outs[j] = layer(inps[j].unsqueeze(0), **extra)[0]
             for h in handles:
                 h.remove()
@@ -743,7 +759,11 @@ def make_quant_linear(module, names, bits, groupsize, name=""):
             )
     for name1, child in module.named_children():
         make_quant_linear(
-            child, names, bits, groupsize, name + "." + name1 if name != "" else name1
+            child,
+            names,
+            bits,
+            groupsize,
+            name + "." + name1 if name != "" else name1,
         )
 
 
@@ -768,13 +788,14 @@ def quantize(
     groupsize: int,
     output_dir: str,
     trust_remote_code: bool,
-    upload_to_model_id: Optional[str],
+    upload_to_model_id: str | None,
     percdamp: float,
     act_order: bool,
 ):
-    device_context = torch.device("cuda") if torch.cuda.is_available() else contextlib.nullcontext
+    device_context = (
+        torch.device("cuda") if torch.cuda.is_available() else contextlib.nullcontext
+    )
     with device_context:
-
         print("loading model")
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
@@ -790,7 +811,11 @@ def quantize(
         seed = None
 
         dataloader, testloader = get_loaders(
-            dataset, nsamples=nsamples, seed=seed, model_name=model_name, seqlen=model.seqlen
+            dataset,
+            nsamples=nsamples,
+            seed=seed,
+            model_name=model_name,
+            seqlen=model.seqlen,
         )
 
         tick = time.time()
@@ -816,7 +841,9 @@ def quantize(
 
         max_shard_size = "10GB"
         shards, index = shard_checkpoint(
-            state_dict, max_shard_size=max_shard_size, weights_name="model.safetensors"
+            state_dict,
+            max_shard_size=max_shard_size,
+            weights_name="model.safetensors",
         )
         os.makedirs(output_dir, exist_ok=True)
         for shard_file, shard in shards.items():
@@ -841,22 +868,27 @@ def quantize(
             logger.info(
                 f"The model is bigger than the maximum size per checkpoint ({max_shard_size}) and is going to be "
                 f"split in {len(shards)} checkpoint shards. You can find where each parameters has been saved in the "
-                f"index located at {save_index_file}."
+                f"index located at {save_index_file}.",
             )
-        config = AutoConfig.from_pretrained(model_name, trust_remote_code=trust_remote_code)
+        config = AutoConfig.from_pretrained(
+            model_name,
+            trust_remote_code=trust_remote_code,
+        )
         config.save_pretrained(output_dir)
         logger.info("Saved config")
         logger.info("Saving tokenizer")
         tokenizer = AutoTokenizer.from_pretrained(
-            model_name, trust_remote_code=trust_remote_code
+            model_name,
+            trust_remote_code=trust_remote_code,
         )
         tokenizer.save_pretrained(output_dir)
         logger.info("Saved tokenizer")
 
         if upload_to_model_id:
-
             api = HfApi()
 
             api.upload_folder(
-                folder_path=output_dir, repo_id=upload_to_model_id, repo_type="model"
+                folder_path=output_dir,
+                repo_id=upload_to_model_id,
+                repo_type="model",
             )

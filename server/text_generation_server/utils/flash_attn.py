@@ -1,5 +1,4 @@
 import torch
-
 from loguru import logger
 
 if not torch.cuda.is_available():
@@ -16,7 +15,7 @@ try:
     if not (is_sm8x or is_sm90):
         raise ImportError(
             f"GPU with CUDA capability {major} {minor} is not supported for "
-            "Flash Attention V2"
+            "Flash Attention V2",
         )
 
     try:
@@ -28,7 +27,7 @@ try:
 except ImportError as e2:
     if not (is_sm75 or is_sm8x or is_sm90):
         raise ImportError(
-            f"FLASH_ATTENTION by GPU with CUDA capability {major} {minor}"
+            f"FLASH_ATTENTION by GPU with CUDA capability {major} {minor}",
         ) from e2
 
     try:

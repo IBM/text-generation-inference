@@ -13,30 +13,30 @@ patchesStrategicMerge:
   - ../../base/patches/gpus/1-gpu.yaml
   - ../../base/patches/gpus/a100-80g.yaml
   - |-
-   apiVersion: apps/v1
-   kind: Deployment
-   metadata:
-     name: inference-server
-   spec:
-     template:
-       spec:
-         containers:
-           - name: server
-             env:
-             - name: MODEL_NAME
-               value: ibm/mpt-7b-instruct2
-             - name: TRUST_REMOTE_CODE
-               value: "true"
-             - name: MAX_SEQUENCE_LENGTH
-               value: "2048"
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: inference-server
+    spec:
+      template:
+        spec:
+          containers:
+            - name: server
+              env:
+              - name: MODEL_NAME
+                value: ibm/mpt-7b-instruct2
+              - name: TRUST_REMOTE_CODE
+                value: "true"
+              - name: MAX_SEQUENCE_LENGTH
+                value: "2048"
 
-             - name: MAX_BATCH_SIZE
-               value: "64"
-             - name: MAX_CONCURRENT_REQUESTS
-               value: "100"
-             - name: MAX_NEW_TOKENS
-               value: "1024"
-             - name: MAX_PREFILL_WEIGHT
-               value: "2000000"
-             - name: MAX_BATCH_WEIGHT
-               value: "200000000"
+              - name: MAX_BATCH_SIZE
+                value: "64"
+              - name: MAX_CONCURRENT_REQUESTS
+                value: "100"
+              - name: MAX_NEW_TOKENS
+                value: "1024"
+              - name: MAX_PREFILL_WEIGHT
+                value: "2000000"
+              - name: MAX_BATCH_WEIGHT
+                value: "200000000"

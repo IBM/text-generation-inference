@@ -14,15 +14,15 @@ patchesStrategicMerge:
   - ../../base/patches/gpus/v100-16g.yaml
   - ../../base/patches/limits/t5-xl-v100.yaml
   - |-
-   apiVersion: apps/v1
-   kind: Deployment
-   metadata:
-     name: inference-server
-   spec:
-     template:
-       spec:
-         containers:
-           - name: server
-             env:
-             - name: MODEL_NAME
-               value: google/flan-t5-xl
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: inference-server
+    spec:
+      template:
+        spec:
+          containers:
+            - name: server
+              env:
+              - name: MODEL_NAME
+                value: google/flan-t5-xl

@@ -1,4 +1,4 @@
-from typing import Dict, Optional, TypeVar
+from typing import TypeVar
 
 from text_generation_server.models.types import Batch
 
@@ -7,9 +7,9 @@ B = TypeVar("B", bound=Batch)
 
 class Cache:
     def __init__(self):
-        self.cache: Dict[int, B] = {}
+        self.cache: dict[int, B] = {}
 
-    def pop(self, batch_id: int) -> Optional[B]:
+    def pop(self, batch_id: int) -> B | None:
         return self.cache.pop(batch_id, None)
 
     def set(self, entry: B):

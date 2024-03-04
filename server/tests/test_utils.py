@@ -1,10 +1,10 @@
 import pytest
 
 from text_generation_server.utils import (
-    weight_hub_files,
+    LocalEntryNotFoundError,
     download_weights,
     weight_files,
-    LocalEntryNotFoundError,
+    weight_hub_files,
 )
 
 

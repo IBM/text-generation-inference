@@ -1,12 +1,10 @@
 import glob
-import io
 import json
 import os
-from typing import Any, Optional
-
-import torch
+from typing import Any
 
 import deepspeed
+import torch
 from transformers.models.auto.auto_factory import _BaseAutoModelClass
 
 from text_generation_server.inference_engine.engine import BaseInferenceEngine
@@ -20,9 +18,9 @@ class InferenceEngine(BaseInferenceEngine):
         model_path: str,
         model_class: type[_BaseAutoModelClass],
         dtype: torch.dtype,
-        quantize: Optional[str],
-        model_config: Optional[Any],
-        max_sequence_length: Optional[int],
+        quantize: str | None,
+        model_config: Any | None,
+        max_sequence_length: int | None,
     ) -> None:
         super().__init__(model_path, model_config)
 
@@ -30,7 +28,7 @@ class InferenceEngine(BaseInferenceEngine):
             # currently ds-inference only supports fp16 CUDA kernels :(
             raise NotImplementedError(f"{dtype} is not yet supported by deepspeed")
 
-        slow_but_exact = os.getenv('BLOOM_SLOW_BUT_EXACT', 'false').lower() == 'true'
+        slow_but_exact = os.getenv("BLOOM_SLOW_BUT_EXACT", "false").lower() == "true"
         slow_but_exact = {"slow_but_exact": True} if slow_but_exact else {}
 
         # create dummy tensors for allocating space which will be filled with
@@ -38,8 +36,9 @@ class InferenceEngine(BaseInferenceEngine):
         # following code
         with deepspeed.OnDevice(dtype=torch.float16, device="meta"):
             self.model = model_class.from_config(
-                self._config, torch_dtype=torch.bfloat16,
-                **slow_but_exact
+                self._config,
+                torch_dtype=torch.bfloat16,
+                **slow_but_exact,
             )
         self.model = self.model.eval()
 
@@ -74,12 +73,14 @@ class TemporaryCheckpointsJSON:
 
     def write_checkpoints_json(self) -> None:
         os.makedirs(self.tmp_directory, exist_ok=True)
-        with io.open(self.tmp_file, "w", encoding="utf-8") as f:
+        with open(self.tmp_file, "w", encoding="utf-8") as f:
             data = {
                 "type": "BLOOM",
                 # glob in py 3.10 has a root_dir arg which would be useful here!
-                "checkpoints": [os.path.basename(f) for f in glob.iglob(f"{self.model_path}/*.bin")],
-                "version": 1.0
+                "checkpoints": [
+                    os.path.basename(f) for f in glob.iglob(f"{self.model_path}/*.bin")
+                ],
+                "version": 1.0,
             }
             json.dump(data, f)
 

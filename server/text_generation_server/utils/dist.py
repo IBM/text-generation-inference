@@ -1,14 +1,11 @@
 import os
+from datetime import timedelta
+from functools import partial
 from typing import Any
+
 import torch
 import torch.distributed
-
-from datetime import timedelta
-
-from functools import partial
-
 import torch.distributed as dist
-
 
 RANK = int(os.getenv("RANK", "0"))
 
@@ -28,7 +25,7 @@ class FakeGroup:
 
     def allgather(self, inputs, local_tensor, **kwargs):
         assert (
-                len(inputs[0]) == len(local_tensor) == 1
+            len(inputs[0]) == len(local_tensor) == 1
         ), f"{len(inputs[0])} != {len(local_tensor)} != 1, and the FakeGroup is supposed to join on simple tensors"
         for input_ in inputs:
             input_[0].data = local_tensor[0].data
@@ -44,7 +41,12 @@ class FakeGroup:
         return self._rank
 
 
-def run_rank_n(func: partial, barrier: bool = False, rank: int = 0, other_rank_output: Any = None) -> Any:
+def run_rank_n(
+    func: partial,
+    barrier: bool = False,
+    rank: int = 0,
+    other_rank_output: Any = None,
+) -> Any:
     # runs function on only process with specified rank
     if not dist.is_initialized():
         return func()
@@ -56,7 +58,7 @@ def run_rank_n(func: partial, barrier: bool = False, rank: int = 0, other_rank_o
 
 def print_rank_n(*values, rank: int = 0) -> None:
     # print on only process with specified rank
-    if RANK == rank:
+    if rank == RANK:
         print(*values)
 
 
@@ -74,6 +76,7 @@ def initialize_torch_distributed(world_size: int, rank: int):
     if not torch.distributed.is_initialized():
         if torch.cuda.is_available():
             from torch.distributed import ProcessGroupNCCL
+
             backend = "nccl"
             options = ProcessGroupNCCL.Options()
             options.is_high_priority_stream = True

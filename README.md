@@ -11,8 +11,10 @@ A number of features here are similar/equivalent but are implemented differently
 Some upstream changes were intentionally not pulled in because they weren't required for our current usage, for example OPT/Galactica model support. And we have stopped pulling in any upstream work after TGI version 1.0, following which the Apache 2.0 OSS license doesn't apply.
 
 ---
+
 ### Table of contents
 
+- [Contributing](#contributing)
 - [Some of the features in this repo not in HF TGI as of v1.0](#some-of-the-features-in-this-repo-not-in-hf-tgi-as-of-v10)
 - [Run the integration tests](#run-the-integration-tests)
 - [Build the final container image](#build-the-final-container-image)
@@ -25,7 +27,25 @@ Some upstream changes were intentionally not pulled in because they weren't requ
 - [Metrics](#metrics)
 
 ---
+
+# Contributing
+
+Style and code checks are enforced using [pre-commit](https://pre-commit.com). Follow the `pre-commit` [installation guide](https://pre-commit.com/index.html#install), then install the git hooks in the repo:
+
+```bash
+pre-commit install # sets up the pre-commit hooks in the repo
+```
+
+This will run `pre-commit` before every commit. To skip this, `git commit --no-verify` can be used. To force running all hooks:
+
+```bash
+pre-commit run --all-files --show-diff
+```
+
+---
+
 ### Some of the features in this repo not in HF TGI as of v1.0
+
 - gRPC front-end interface instead of REST, different arrangement of API parameters
 - Support for batch inputs in the API
 - Independent tokenization API
@@ -79,7 +99,7 @@ TGIS will not download model data at runtime. To populate the local HF hub cache
 ```shell
 text-generation-server download-weights model_name
 ```
-where `model_name` is the name of the model on the HF hub. Ensure that it's run with the same mounted directory and `TRANSFORMERS_CACHE` and `HUGGINGFACE_HUB_CACHE` environment variables, and that it has write access to this mounted filesystem. 
+where `model_name` is the name of the model on the HF hub. Ensure that it's run with the same mounted directory and `TRANSFORMERS_CACHE` and `HUGGINGFACE_HUB_CACHE` environment variables, and that it has write access to this mounted filesystem.
 
 This will attempt to download weights in `.safetensors` format, and if those aren't in the HF hub will download pytorch `.bin` weights and then convert them to `.safetensors`.
 
@@ -114,7 +134,7 @@ The following model types can currently be run in sharded mode where the weights
 
 (*) These require GPUs that support Flash Attention such as A100, A10
 
-1. Ensure that the model weights are in `safetensors format (see above)
+1. Ensure that the model weights are in `safetensors` format (see above)
 2. Ensure that the `CUDA_VISIBLE_DEVICES` environment variable is set appropriately (e.g. "0,1" to use the first two GPUs). The number of GPUs to use will be inferred from this or else can be set explicitly with the `NUM_GPUS` environment variable.
 3. Set the environment variable `DEPLOYMENT_FRAMEWORK=tgis_native`
 

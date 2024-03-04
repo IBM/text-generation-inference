@@ -177,7 +177,7 @@ message GenerateResult {
 
 message PrefillResponse {
     GenerateResult result = 1;
-    
+
     repeated InputTokens input_tokens = 2; // optional
 }
 

@@ -1,13 +1,11 @@
 # https://github.com/fpgaminer/GPTQ-triton
-"""
-Mostly the same as the autotuner in Triton, but with a few changes like using 40 runs instead of 100.
+"""Mostly the same as the autotuner in Triton, but with a few changes like using 40 runs instead of 100.
 """
 
 import builtins
 import inspect
 import math
 import time
-from typing import Dict
 
 import triton
 
@@ -20,15 +18,14 @@ class Autotuner(triton.KernelInterface):
         configs,
         key,
         reset_to_zero,
-        prune_configs_by: Dict = None,
+        prune_configs_by: dict = None,
         nearest_power_of_two: bool = False,
     ):
-        """
-        :param prune_configs_by: a dict of functions that are used to prune configs, fields:
-                'perf_model': performance model used to predicate running time with different configs, returns running time
-                'top_k': number of configs to bench
-                'prune_num_stages_by'(optional): a function used to prune num_stages. It take configs:List[Config] as its input, and returns pruned configs.
-                'nearest_power_of_two'(optional): whether to round key arguments to the nearest power of two when caching tuning results
+        """:param prune_configs_by: a dict of functions that are used to prune configs, fields:
+        'perf_model': performance model used to predicate running time with different configs, returns running time
+        'top_k': number of configs to bench
+        'prune_num_stages_by'(optional): a function used to prune num_stages. It take configs:List[Config] as its input, and returns pruned configs.
+        'nearest_power_of_two'(optional): whether to round key arguments to the nearest power of two when caching tuning results
         """
         if not configs:
             self.configs = [triton.Config({}, num_warps=4, num_stages=2)]
@@ -69,7 +66,7 @@ class Autotuner(triton.KernelInterface):
         if conflicts:
             raise ValueError(
                 f"Conflicting meta-parameters: {', '.join(conflicts)}."
-                " Make sure that you don't re-define auto-tuned symbols."
+                " Make sure that you don't re-define auto-tuned symbols.",
             )
         # augment meta-parameters with tunable ones
         current = dict(meta, **config.kwargs)
@@ -86,7 +83,9 @@ class Autotuner(triton.KernelInterface):
             )
 
         # This arg was renamed from percentiles to quantiles in newer triton versions
-        has_quantiles_arg = "quantiles" in inspect.signature(triton.testing.do_bench).parameters
+        has_quantiles_arg = (
+            "quantiles" in inspect.signature(triton.testing.do_bench).parameters
+        )
         quantiles_arg = "quantiles" if has_quantiles_arg else "percentiles"
 
         # In testings using only 40 reps seems to be close enough and it appears to be what PyTorch uses
@@ -99,7 +98,7 @@ class Autotuner(triton.KernelInterface):
             return float("inf"), float("inf"), float("inf")
 
     def run(self, *args, **kwargs):
-        self.nargs = dict(zip(self.arg_names, args))
+        self.nargs = dict(zip(self.arg_names, args, strict=False))
         if len(self.configs) > 1:
             key = tuple(args[i] for i in self.key_idx)
 
@@ -160,7 +159,7 @@ class Autotuner(triton.KernelInterface):
         return pruned_configs
 
     def warmup(self, *args, **kwargs):
-        self.nargs = dict(zip(self.arg_names, args))
+        self.nargs = dict(zip(self.arg_names, args, strict=False))
         for config in self.prune_configs(kwargs):
             self.fn.warmup(
                 *args,
@@ -173,10 +172,13 @@ class Autotuner(triton.KernelInterface):
 
 
 def autotune(
-    configs, key, prune_configs_by=None, reset_to_zero=None, nearest_power_of_two=False
+    configs,
+    key,
+    prune_configs_by=None,
+    reset_to_zero=None,
+    nearest_power_of_two=False,
 ):
-    """
-    Decorator for auto-tuning a :code:`triton.jit`'d function.
+    """Decorator for auto-tuning a :code:`triton.jit`'d function.
     .. highlight:: python
     .. code-block:: python
             @triton.autotune(configs=[
@@ -220,9 +222,7 @@ def autotune(
 
 
 def matmul248_kernel_config_pruner(configs, nargs):
-    """
-    The main purpose of this function is to shrink BLOCK_SIZE_* when the corresponding dimension is smaller.
-    """
+    """The main purpose of this function is to shrink BLOCK_SIZE_* when the corresponding dimension is smaller."""
     m = max(2 ** int(math.ceil(math.log2(nargs["M"]))), 16)
     n = max(2 ** int(math.ceil(math.log2(nargs["N"]))), 16)
     k = max(2 ** int(math.ceil(math.log2(nargs["K"]))), 16)
@@ -252,7 +252,7 @@ def matmul248_kernel_config_pruner(configs, nargs):
                 group_size_m,
                 config.num_stages,
                 config.num_warps,
-            )
+            ),
         )
         yield triton.Config(
             {

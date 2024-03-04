@@ -1,10 +1,8 @@
 import os
 from enum import Enum
-from typing import Optional
+from pathlib import Path
 
 import typer
-
-from pathlib import Path
 
 app = typer.Typer()
 
@@ -18,15 +16,18 @@ class Quantization(str, Enum):
 def serve(
     model_name: str,
     deployment_framework: str,
-    dtype: Optional[str] = None,
-    quantize: Optional[Quantization] = None,
+    dtype: str | None = None,
+    quantize: Quantization | None = None,
     # Max seq length, new tokens, batch size and weight
     # only used for PT2 compile warmup
     max_sequence_length: int = 2048,
     max_new_tokens: int = 1024,
     max_batch_size: int = 12,
-    batch_safety_margin: int = typer.Option(20, help="Integer from 0-100, a percentage of free GPU memory to hold back as a safety margin to avoid OOM"),
-    revision: Optional[str] = None,
+    batch_safety_margin: int = typer.Option(
+        20,
+        help="Integer from 0-100, a percentage of free GPU memory to hold back as a safety margin to avoid OOM",
+    ),
+    revision: str | None = None,
     sharded: bool = False,
     cuda_process_memory_fraction: float = 1.0,
     uds_path: Path = "/tmp/text-generation",
@@ -66,7 +67,7 @@ def serve(
             batch_safety_margin,
             sharded,
             cuda_process_memory_fraction,
-            uds_path
+            uds_path,
         )
     except Exception as e:
         # Any exceptions in the blocking server thread here should mean that
@@ -78,8 +79,8 @@ def serve(
 @app.command()
 def download_weights(
     model_name: str,
-    revision: Optional[str] = None,
-    token: Optional[str] = None,
+    revision: str | None = None,
+    token: str | None = None,
     extension: str = ".safetensors",
     auto_convert: bool = True,
 ):
@@ -92,46 +93,65 @@ def download_weights(
     if len(extensions) == 1 and extensions[0] not in meta_exts:
         extensions.extend(meta_exts)
 
-    files = utils.download_weights(model_name, extensions, revision=revision, auth_token=token)
+    files = utils.download_weights(
+        model_name,
+        extensions,
+        revision=revision,
+        auth_token=token,
+    )
 
     if auto_convert and ".safetensors" in extensions:
-        if not utils.local_weight_files(utils.get_model_path(model_name, revision), ".safetensors"):
+        if not utils.local_weight_files(
+            utils.get_model_path(model_name, revision),
+            ".safetensors",
+        ):
             if ".bin" not in extensions:
-                print(".safetensors weights not found, downloading pytorch weights to convert...")
-                utils.download_weights(model_name, ".bin", revision=revision, auth_token=token)
+                print(
+                    ".safetensors weights not found, downloading pytorch weights to convert...",
+                )
+                utils.download_weights(
+                    model_name,
+                    ".bin",
+                    revision=revision,
+                    auth_token=token,
+                )
 
             print(".safetensors weights not found, converting from pytorch weights...")
             convert_to_safetensors(model_name, revision)
         elif not any(f.endswith(".safetensors") for f in files):
-            print(".safetensors weights not found on hub, but were found locally. Remove them first to re-convert")
+            print(
+                ".safetensors weights not found on hub, but were found locally. Remove them first to re-convert",
+            )
     if auto_convert:
         convert_to_fast_tokenizer(model_name, revision)
+
 
 @app.command()
 def convert_to_onnx(
     model_name: str,
     target_model_name: str,
-    revision: Optional[str] = None,
-    merge_graphs: Optional[bool] = False,
-    optimize: Optional[bool] = False,
-    provider: Optional[str] = None,
+    revision: str | None = None,
+    merge_graphs: bool | None = False,
+    optimize: bool | None = False,
+    provider: str | None = None,
 ):
     # Onnx currently isn't included in image used for CI tests
     from text_generation_server.utils import onnx
 
     onnx.convert_model(
-        model_name, target_model_name,
+        model_name,
+        target_model_name,
         revision=revision,
         merge_graphs=merge_graphs,
         optimize=optimize,
-        provider=provider
+        provider=provider,
     )
 
 
 @app.command()
 def convert_to_safetensors(
     model_name: str,
-    revision: Optional[str] = None,
+    revision: str | None = None,
 ):
     from text_generation_server import utils
 
@@ -180,14 +200,25 @@ def convert_to_safetensors(
 
     if local_pt_index_file:
         local_pt_index_file = Path(local_pt_index_file)
-        st_prefix = local_pt_index_file.stem.removeprefix('pytorch_').rstrip('.bin.index')
-        local_st_index_file = local_pt_index_file.parent / f"{st_prefix}.safetensors.index.json"
+        st_prefix = local_pt_index_file.stem.removeprefix("pytorch_").rstrip(
+            ".bin.index",
+        )
+        local_st_index_file = (
+            local_pt_index_file.parent / f"{st_prefix}.safetensors.index.json"
+        )
 
         if os.path.exists(local_st_index_file):
-            print("Existing .safetensors.index.json file found, remove it first to reconvert")
+            print(
+                "Existing .safetensors.index.json file found, remove it first to reconvert",
+            )
             return
 
-        utils.convert_index_file(local_pt_index_file, local_st_index_file, local_pt_files, local_st_files)
+        utils.convert_index_file(
+            local_pt_index_file,
+            local_st_index_file,
+            local_pt_files,
+            local_st_files,
+        )
 
     # Convert pytorch weights to safetensors
     utils.convert_files(local_pt_files, local_st_files, discard_names)
@@ -197,13 +228,12 @@ def convert_to_safetensors(
 def quantize(
     model_name: str,
     output_dir: str,
-    revision: Optional[str] = None,
+    revision: str | None = None,
     trust_remote_code: bool = False,
-    upload_to_model_id: Optional[str] = None,
+    upload_to_model_id: str | None = None,
     percdamp: float = 0.01,
     act_order: bool = False,
 ):
-
     if not os.path.exists(model_name):
         download_weights(model_name=model_name, revision=revision)
 
@@ -224,8 +254,8 @@ def quantize(
 @app.command()
 def convert_to_fast_tokenizer(
     model_name: str,
-    revision: Optional[str] = None,
-    output_path: Optional[str] = None,
+    revision: str | None = None,
+    output_path: str | None = None,
 ):
     from text_generation_server import utils
 
@@ -244,7 +274,11 @@ def convert_to_fast_tokenizer(
         output_path = model_path
 
     import transformers
-    tokenizer = transformers.AutoTokenizer.from_pretrained(model_name, revision=revision)
+
+    tokenizer = transformers.AutoTokenizer.from_pretrained(
+        model_name,
+        revision=revision,
+    )
     tokenizer.save_pretrained(output_path)
 
     print(f"Saved tokenizer to {output_path}")

@@ -80,5 +80,3 @@ int multinomial_cpu
 );
 
 #endif
-
-

@@ -1,25 +1,25 @@
 import os
 import time
+from typing import Any
 
 import torch
-from text_generation_server.inference_engine.engine import BaseInferenceEngine
-from text_generation_server.utils.hub import TRUST_REMOTE_CODE
-from transformers import AutoModelForCausalLM, AutoModelForSeq2SeqLM
-from typing import Union, Any, Optional
-
 from optimum.onnxruntime import ORTModelForCausalLM, ORTModelForSeq2SeqLM, ORTOptimizer
 from optimum.onnxruntime.configuration import AutoOptimizationConfig
+from transformers import AutoModelForCausalLM, AutoModelForSeq2SeqLM
+
+from text_generation_server.inference_engine.engine import BaseInferenceEngine
+from text_generation_server.utils.hub import TRUST_REMOTE_CODE
 
 
 class InferenceEngine(BaseInferenceEngine):
     def __init__(
         self,
         model_path: str,
-        model_class: Union[AutoModelForCausalLM, AutoModelForSeq2SeqLM],
+        model_class: AutoModelForCausalLM | AutoModelForSeq2SeqLM,
         dtype: torch.dtype,
-        quantize: Optional[str],
-        model_config: Optional[Any],
-        max_sequence_length: Optional[int],
+        quantize: str | None,
+        model_config: Any | None,
+        max_sequence_length: int | None,
     ) -> None:
         super().__init__(model_path, model_config)
 
@@ -62,7 +62,7 @@ class InferenceEngine(BaseInferenceEngine):
             optimize = os.getenv("OPTIMIZE_ONNX_MODEL", "false").lower() == "true"
             # Note it's currently not supported for both of these to be true - optimization will fail
             print(
-                f"Converting transformers model to ONNX; merge_graphs={merge_graphs}, optimize={optimize}"
+                f"Converting transformers model to ONNX; merge_graphs={merge_graphs}, optimize={optimize}",
             )
             kwargs["export"] = True
             kwargs["use_merged"] = merge_graphs
@@ -76,7 +76,7 @@ class InferenceEngine(BaseInferenceEngine):
             convert_start = time.time()
             self.model = model_class.from_pretrained(**kwargs)
             print(
-                f"Conversion to ONNX and initial loading took {time.time() - convert_start:.3f}s"
+                f"Conversion to ONNX and initial loading took {time.time() - convert_start:.3f}s",
             )
             print(f"Providers: {self.model.providers}")
 
@@ -94,7 +94,8 @@ class InferenceEngine(BaseInferenceEngine):
                     # O4 includes fp16 weight optimization
                     # Shape inference must be disabled for onnxruntime <= 1.14.1 due to a bug
                     optimization_config = AutoOptimizationConfig.O3(
-                        for_gpu=True, disable_shape_inference=True
+                        for_gpu=True,
+                        disable_shape_inference=True,
                     )
                 else:
                     # For now just O1 for CPU
@@ -106,11 +107,13 @@ class InferenceEngine(BaseInferenceEngine):
                     optimization_config=optimization_config,
                 )
                 print(
-                    f"ORT Model optimization took {time.time() - optimize_start:.3f}s"
+                    f"ORT Model optimization took {time.time() - optimize_start:.3f}s",
                 )
 
                 load_start = time.time()
                 self.model = model_class.from_pretrained(
-                    optimized_model_path, provider=provider, local_files_only=True
+                    optimized_model_path,
+                    provider=provider,
+                    local_files_only=True,
                 )
                 print(f"Load of optimized model took {time.time() - load_start:.3f}s")

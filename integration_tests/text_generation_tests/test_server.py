@@ -18,7 +18,9 @@ from text_generation_tests.approx import approx
 
 INCLUDE_STREAMING = True
 TESTS_TIMEOUT = 300.0  # 5 mins
-TESTS_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+TESTS_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.realpath(__file__)), "..")
+)
 
 
 def start_server(
@@ -35,7 +37,13 @@ def start_server(
     # Download weights to the cache first
     print(f"Downloading files for model {model_name}...")
     cp = subprocess.run(
-        ["text-generation-server", "download-weights", "--extension", extensions,  model_name],
+        [
+            "text-generation-server",
+            "download-weights",
+            "--extension",
+            extensions,
+            model_name,
+        ],
         capture_output=True,
     )
     if cp.stderr:
@@ -47,20 +55,30 @@ def start_server(
 
     args = [
         "text-generation-launcher",
-        "--model-name", model_name_or_path,
-        "--num-shard", str(num_shard),
-        "--dtype-str", "float32",
-        "--deployment-framework", "hf_accelerate",
-        "--port", str(port),
-        "--master-port", str(master_port),
+        "--model-name",
+        model_name_or_path,
+        "--num-shard",
+        str(num_shard),
+        "--dtype-str",
+        "float32",
+        "--deployment-framework",
+        "hf_accelerate",
+        "--port",
+        str(port),
+        "--master-port",
+        str(master_port),
         "--shard-uds-path",
         f"/tmp/test-{num_shard}-{port}-{master_port}",
         # Reduce these from defaults for tests, to force more batch concats
-        "--max-batch-size", "8",
-        "--max-waiting-tokens", "10",
+        "--max-batch-size",
+        "8",
+        "--max-waiting-tokens",
+        "10",
         # Reduce this so we can more easily test limit behaviour
-        "--max-sequence-length", "200",
-        "--max-new-tokens", "169",
+        "--max-sequence-length",
+        "200",
+        "--max-new-tokens",
+        "169",
     ]
 
     if output_special_tokens:
@@ -75,13 +93,15 @@ def start_server(
         env.pop("HUGGING_FACE_HUB_CACHE", None)
 
     # Start the process
-    process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+    process = subprocess.Popen(
+        args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env
+    )
 
     # Start a thread to continuously read and print the process's stdout and stderr
     def print_output():
         while True:
             output = process.stdout.readline()
-            if output == b'' and process.poll() is not None:
+            if output == b"" and process.poll() is not None:
                 sys.stdout.flush()
                 break
             if output:
@@ -98,7 +118,7 @@ def start_server(
             t.join()
             raise Exception("Server failed to start")
         try:
-            response = requests.get(f'http://localhost:{port}/health')
+            response = requests.get(f"http://localhost:{port}/health")
             if response.status_code == 200:
                 break
         except requests.ConnectionError:
@@ -106,7 +126,7 @@ def start_server(
 
         if time.time() - start_time > timeout:
             process.terminate()
-            raise TimeoutError('Timed out waiting for process to start')
+            raise TimeoutError("Timed out waiting for process to start")
 
         time.sleep(2)
 
@@ -154,7 +174,8 @@ async def run_unary_test_case(stub, case):
     # Create gRPC message from test request
     message = json_format.ParseDict(
         request,
-        pb2.BatchedTokenizeRequest() if request_type == "tokenize"
+        pb2.BatchedTokenizeRequest()
+        if request_type == "tokenize"
         else pb2.BatchedGenerationRequest(),
     )
     print(f'================ Test: {case.get("name")}:')
@@ -174,8 +195,13 @@ async def run_unary_test_case(stub, case):
             # Check result matches expected
             assert response_dict == approx(expected)
         elif request_type == "generate":
-            assert response_dict["responses"][0]["inputTokenCount"] == expected["responses"][0]["inputTokenCount"]
-            assert response_dict["responses"][0].get("inputTokens") == expected["responses"][0].get("inputTokens")
+            assert (
+                response_dict["responses"][0]["inputTokenCount"]
+                == expected["responses"][0]["inputTokenCount"]
+            )
+            assert response_dict["responses"][0].get("inputTokens") == expected[
+                "responses"
+            ][0].get("inputTokens")
     except grpc.RpcError as e:
         _verify_error(expected_err, e)
 
@@ -200,8 +226,11 @@ async def run_streaming_test_case(stub, case, seq2seq_model):
     try:
         # Verify first response which should contain input token count
         first = json_format.MessageToDict(await response_iter.__anext__())
-        incl_input_text = "params" in request and "response" in request["params"] \
+        incl_input_text = (
+            "params" in request
+            and "response" in request["params"]
             and request["params"]["response"].get("inputText")
+        )
         assert first["inputTokenCount"] == expected["inputTokenCount"]
         if not skip_check:
             assert first.get("seed") == expected.get("seed")
@@ -213,12 +242,17 @@ async def run_streaming_test_case(stub, case, seq2seq_model):
             output = first["text"]
             assert output == request["request"]["text"]
             if seq2seq_model:
-                output += "\n\n"  # Add separator between encoder input and decoder output
+                output += (
+                    "\n\n"  # Add separator between encoder input and decoder output
+                )
         else:
             assert "text" not in first
 
-        incl_input_toks = "params" in request and "response" in request["params"] \
+        incl_input_toks = (
+            "params" in request
+            and "response" in request["params"]
             and request["params"]["response"].get("inputTokens")
+        )
         if incl_input_toks:
             # If inputTokens was specified, check for a second message containing
             # just the input token information
@@ -260,7 +294,7 @@ async def run_streaming_test_case(stub, case, seq2seq_model):
 
 
 async def run_test_cases_async(test_cases, seq2seq_model=False, sharded=False):
-    async with grpc.aio.insecure_channel('localhost:8033') as channel:
+    async with grpc.aio.insecure_channel("localhost:8033") as channel:
         stub = gpb2.GenerationServiceStub(channel)
         tasks = []
         random.shuffle(test_cases)
@@ -270,25 +304,35 @@ async def run_test_cases_async(test_cases, seq2seq_model=False, sharded=False):
                 print(f"Skipping single-shard-only test in sharded mode: {name}")
                 continue
 
-            tasks.append(asyncio.create_task(
-                run_unary_test_case(stub, case), name=f"Generate: {name}",
-            ))
+            tasks.append(
+                asyncio.create_task(
+                    run_unary_test_case(stub, case),
+                    name=f"Generate: {name}",
+                )
+            )
             # For single-input tests, try the same thing as a streaming request
-            if INCLUDE_STREAMING and len(case["request"].get("requests", [])) == 1 \
-                    and case.get("request_type", "generate") == "generate":
-                tasks.append(asyncio.create_task(
-                    run_streaming_test_case(stub, case, seq2seq_model),
-                    name=f"GenerateStream: {name}",
-                ))
+            if (
+                INCLUDE_STREAMING
+                and len(case["request"].get("requests", [])) == 1
+                and case.get("request_type", "generate") == "generate"
+            ):
+                tasks.append(
+                    asyncio.create_task(
+                        run_streaming_test_case(stub, case, seq2seq_model),
+                        name=f"GenerateStream: {name}",
+                    )
+                )
             await asyncio.sleep(0.3)
         # Add in the multi-input seed case
         tasks.append(asyncio.create_task(_test_multi_input_seeds(stub)))
         done, pending = await asyncio.wait(
-            tasks, return_when=asyncio.FIRST_EXCEPTION, timeout=TESTS_TIMEOUT,
+            tasks,
+            return_when=asyncio.FIRST_EXCEPTION,
+            timeout=TESTS_TIMEOUT,
         )
         unfinished = len(pending)
         for p in pending:  # empty in success case
-             p.cancel()
+            p.cancel()
         for p in pending:  # empty in success case
             try:
                 await p
@@ -297,10 +341,12 @@ async def run_test_cases_async(test_cases, seq2seq_model=False, sharded=False):
                 pass
         for d in done:
             d.result()  # will raise if failed
-        assert unfinished == 0, f"{unfinished} tests not finished before timeout of {TESTS_TIMEOUT}s"
+        assert (
+            unfinished == 0
+        ), f"{unfinished} tests not finished before timeout of {TESTS_TIMEOUT}s"
 
         # Verify metrics endpoint
-        response = requests.get(f'http://localhost:{3000}/metrics')
+        response = requests.get(f"http://localhost:{3000}/metrics")
         assert response.status_code == 200
 
 
@@ -326,17 +372,17 @@ async def _test_multi_input_seeds(stub):
             assert 0 <= seed <= 4294967295
 
 
-async def run_time_limit_test(stub, *, streaming=False, time_limit=200, min_generated_tokens=2):
-    generation_request = pb2.GenerationRequest(
-        text='def doit():\n'
-    )
+async def run_time_limit_test(
+    stub, *, streaming=False, time_limit=200, min_generated_tokens=2
+):
+    generation_request = pb2.GenerationRequest(text="def doit():\n")
     generation_params = pb2.Parameters(
         method=pb2.GREEDY,
         stopping=pb2.StoppingCriteria(
             max_new_tokens=169,
             min_new_tokens=169,
             time_limit_millis=time_limit,
-        )
+        ),
     )
 
     start = time.time_ns()
@@ -344,8 +390,7 @@ async def run_time_limit_test(stub, *, streaming=False, time_limit=200, min_gene
         response = pb2.GenerationResponse()
         async for resp in stub.GenerateStream(
             pb2.SingleGenerationRequest(
-                request=generation_request,
-                params=generation_params
+                request=generation_request, params=generation_params
             )
         ):
             response.generated_token_count = resp.generated_token_count
@@ -365,7 +410,7 @@ async def run_time_limit_test(stub, *, streaming=False, time_limit=200, min_gene
     # ensure that some tokens were actually generated
     assert min_generated_tokens <= response.generated_token_count < 100
     # generating all tokens takes a few seconds
-    assert time_limit < (end-start) / (10**6)  < time_limit+300
+    assert time_limit < (end - start) / (10**6) < time_limit + 300
 
 
 @pytest.mark.model("gpt2")
@@ -375,6 +420,7 @@ async def run_time_limit_test(stub, *, streaming=False, time_limit=200, min_gene
 @pytest.mark.asyncio
 async def test_gpt2(server_fixture, test_cases):
     await run_test_cases_async(test_cases)
+
 
 @pytest.mark.model("bigscience/bloom-560m")
 @pytest.mark.extensions(".safetensors,.json,.model")
@@ -393,6 +439,7 @@ async def test_bloom(server_fixture, test_cases):
 async def test_mt0(server_fixture, test_cases):
     await run_test_cases_async(test_cases, seq2seq_model=True)
 
+
 # test with tiny GPTBigCode model for the merged kv cache
 @pytest.mark.model("bigcode/tiny_starcoder_py")
 @pytest.mark.extensions(".safetensors,.json")
@@ -402,6 +449,7 @@ async def test_mt0(server_fixture, test_cases):
 async def test_gptbigcode(server_fixture, test_cases):
     await run_test_cases_async(test_cases)
 
+
 # test with Llama model which has tokenizer.add_bos_token == true
 @pytest.mark.model("Maykeye/TinyLLama-v0")
 @pytest.mark.extensions(".bin,.json,.model")
@@ -410,6 +458,7 @@ async def test_gptbigcode(server_fixture, test_cases):
 @pytest.mark.asyncio
 async def test_llama(server_fixture, test_cases):
     await run_test_cases_async(test_cases)
+
 
 # Test distributed inference - two shards
 @pytest.mark.model("bigscience/bloom-560m")
@@ -437,10 +486,10 @@ async def test_mt0_output_special_tokens(server_fixture, test_cases):
 @pytest.mark.shards(1)
 @pytest.mark.asyncio
 async def test_time_limit_stopping(server_fixture):
-    async with grpc.aio.insecure_channel('localhost:8033') as channel:
+    async with grpc.aio.insecure_channel("localhost:8033") as channel:
         stub = gpb2.GenerationServiceStub(channel)
         # verify server is up with metrics request
-        response = requests.get(f'http://localhost:{3000}/metrics')
+        response = requests.get(f"http://localhost:{3000}/metrics")
         assert response.status_code == 200
 
         # batched
@@ -451,12 +500,17 @@ async def test_time_limit_stopping(server_fixture):
         # streaming
         await run_time_limit_test(stub, streaming=True)
         # one token should always be generated
-        await run_time_limit_test(stub, streaming=True, time_limit=1, min_generated_tokens=1)
+        await run_time_limit_test(
+            stub, streaming=True, time_limit=1, min_generated_tokens=1
+        )
+
 
 # Test loading when an explicit local path is provided
 def test_explicit_path():
     # Test with and without providing TRANSFORMERS_CACHE env var
-    path = glob.glob(f'{os.environ["TRANSFORMERS_CACHE"]}/models--bigscience--mt0-small/snapshots/*')[0]
+    path = glob.glob(
+        f'{os.environ["TRANSFORMERS_CACHE"]}/models--bigscience--mt0-small/snapshots/*'
+    )[0]
     for include_env_vars in [False, True]:
         p = start_server(
             "bigscience/mt0-small",
@@ -468,9 +522,12 @@ def test_explicit_path():
             include_cache_env_vars=include_env_vars,
         )
         try:
+
             async def test_model_info() -> pb2.ModelInfoResponse:
-                async with grpc.aio.insecure_channel('localhost:8033') as channel:
-                    return await gpb2.GenerationServiceStub(channel).ModelInfo(pb2.ModelInfoRequest(model_id="unused"))
+                async with grpc.aio.insecure_channel("localhost:8033") as channel:
+                    return await gpb2.GenerationServiceStub(channel).ModelInfo(
+                        pb2.ModelInfoRequest(model_id="unused")
+                    )
 
             result = asyncio.get_event_loop().run_until_complete(test_model_info())
             assert result.max_sequence_length == 200
