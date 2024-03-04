@@ -292,9 +292,6 @@ FROM cuda-runtime as python-installations
 ARG PYTHON_VERSION
 ARG SITE_PACKAGES=/opt/tgis/lib/python${PYTHON_VERSION}/site-packages
 
-# TODO: comment why this is required
-SHELL ["/bin/bash", "-c"]
-
 COPY --from=build /opt/tgis /opt/tgis
 
 # `pip` is installed in the venv here
@@ -333,8 +330,6 @@ ARG SITE_PACKAGES=/opt/tgis/lib/python${PYTHON_VERSION}/site-packages
 # Install C++ compiler (required at runtime when PT2_COMPILE is enabled)
 RUN dnf install -y gcc-c++ && dnf clean all \
     && useradd -u 2000 tgis -m -g 0
-
-SHELL ["/bin/bash", "-c"]
 
 # Copy in the full python environment
 COPY --from=python-installations /opt/tgis /opt/tgis
