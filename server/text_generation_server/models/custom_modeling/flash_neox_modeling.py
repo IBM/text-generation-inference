@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2022 EleutherAI and the HuggingFace Inc. team. All rights reserved.
 #
 # This code is based on EleutherAI's GPT-NeoX library and the GPT-NeoX
@@ -18,23 +17,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 import torch
 import torch.distributed
-
 from torch import nn
 from transformers.activations import ACT2FN
 from transformers.modeling_utils import PreTrainedModel
 from transformers.models.gpt_neox import GPTNeoXConfig
-from typing import Optional
 
 from text_generation_server.utils.flash_attn import attention
 from text_generation_server.utils.layers import (
-    TensorParallelRowLinear,
+    FastLayerNorm,
+    PositionRotaryEmbedding,
     TensorParallelColumnLinear,
     TensorParallelEmbedding,
     TensorParallelHead,
-    FastLayerNorm,
-    PositionRotaryEmbedding,
+    TensorParallelRowLinear,
     get_linear,
 )
 
@@ -93,12 +91,13 @@ class FlashNeoxAttention(torch.nn.Module):
         if self.num_heads % weights.process_group.size() != 0:
             raise ValueError(
                 f"`num_heads` must be divisible by `num_shards` (got `num_heads`: {self.num_heads} "
-                f"and `num_shards`: {weights.process_group.size()}"
+                f"and `num_shards`: {weights.process_group.size()}",
             )
         self.num_heads = self.num_heads // weights.process_group.size()
 
         self.rotary_emb = PositionRotaryEmbedding.load(
-            prefix=f"{prefix}.rotary_emb", weights=weights
+            prefix=f"{prefix}.rotary_emb",
+            weights=weights,
         )
 
         self.softmax_scale = self.head_size ** (-0.5)
@@ -112,7 +111,10 @@ class FlashNeoxAttention(torch.nn.Module):
             hidden_size=self.hidden_size,
         )
         self.dense = load_row(
-            config, prefix=f"{prefix}.dense", weights=weights, bias=True
+            config,
+            prefix=f"{prefix}.dense",
+            weights=weights,
+            bias=True,
         )
 
     def forward(
@@ -186,10 +188,16 @@ class FlashMLP(nn.Module):
         )
 
         self.dense_h_to_4h = TensorParallelColumnLinear.load(
-            config, prefix=f"{prefix}.dense_h_to_4h", weights=weights, bias=True
+            config,
+            prefix=f"{prefix}.dense_h_to_4h",
+            weights=weights,
+            bias=True,
         )
         self.dense_4h_to_h = load_row(
-            config, prefix=f"{prefix}.dense_4h_to_h", weights=weights, bias=True
+            config,
+            prefix=f"{prefix}.dense_4h_to_h",
+            weights=weights,
+            bias=True,
         )
 
     def forward(self, hidden_states):
@@ -209,7 +217,9 @@ class FlashNeoXLayer(nn.Module):
 
         self.use_parallel_residual = config.use_parallel_residual
         self.input_layernorm = FastLayerNorm.load(
-            prefix=f"{prefix}.input_layernorm", weights=weights, eps=layer_norm_eps
+            prefix=f"{prefix}.input_layernorm",
+            weights=weights,
+            eps=layer_norm_eps,
         )
         self.post_attention_layernorm = FastLayerNorm.load(
             prefix=f"{prefix}.post_attention_layernorm",
@@ -217,7 +227,9 @@ class FlashNeoXLayer(nn.Module):
             eps=layer_norm_eps,
         )
         self.attention = FlashNeoxAttention(
-            config, prefix=f"{prefix}.attention", weights=weights
+            config,
+            prefix=f"{prefix}.attention",
+            weights=weights,
         )
 
         self.mlp = FlashMLP(config, prefix=f"{prefix}.mlp", weights=weights)
@@ -273,7 +285,8 @@ class FlashNeoXLayer(nn.Module):
             )
 
             hidden_states, residual = self.post_attention_layernorm(
-                hidden_states, residual
+                hidden_states,
+                residual,
             )
 
             mlp_output = self.mlp(hidden_states)
@@ -294,14 +307,15 @@ class FlashGPTNeoXModel(FlashGPTNeoXPreTrainedModel):
         self.config = config
 
         self.embed_in = TensorParallelEmbedding(
-            prefix="gpt_neox.embed_in", weights=weights
+            prefix="gpt_neox.embed_in",
+            weights=weights,
         )
 
         self.layers = nn.ModuleList(
             [
                 FlashNeoXLayer(layer_id, config, weights)
                 for layer_id in range(config.num_hidden_layers)
-            ]
+            ],
         )
         self.final_layer_norm = FastLayerNorm.load(
             prefix="gpt_neox.final_layer_norm",
@@ -321,13 +335,13 @@ class FlashGPTNeoXModel(FlashGPTNeoXPreTrainedModel):
         cu_seqlens,
         cu_seqlens_q,
         max_s,
-        inputs_embeds: Optional[torch.Tensor] = None,
+        inputs_embeds: torch.Tensor | None = None,
         past_key_values=None,
-        pre_allocate_past_size: Optional[int] = None,
+        pre_allocate_past_size: int | None = None,
     ):
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError(
-                "You cannot specify both input_ids and inputs_embeds at the same time"
+                "You cannot specify both input_ids and inputs_embeds at the same time",
             )
 
         if inputs_embeds is not None:
@@ -347,7 +361,7 @@ class FlashGPTNeoXModel(FlashGPTNeoXPreTrainedModel):
                     2,
                     self.num_heads,
                     self.head_size,
-                )
+                ),
             )
             layer_past_present_indices = None
             slice_past_index = len(hidden_states)
@@ -360,7 +374,9 @@ class FlashGPTNeoXModel(FlashGPTNeoXPreTrainedModel):
         # Get rotary cos and sin for this forward
         # Avoid to index in each layer
         cos, sin = self.layers[0].attention.rotary_emb.get_cos_sin(
-            position_ids, max_s, hidden_states.dtype
+            position_ids,
+            max_s,
+            hidden_states.dtype,
         )
 
         residual = None
@@ -395,7 +411,9 @@ class FlashGPTNeoXForCausalLM(FlashGPTNeoXPreTrainedModel):
         self.gpt_neox = FlashGPTNeoXModel(config, weights)
 
         self.embed_out = TensorParallelHead.load(
-            config, prefix="embed_out", weights=weights
+            config,
+            prefix="embed_out",
+            weights=weights,
         )
 
     def get_input_embeddings(self) -> nn.Module:
@@ -408,10 +426,10 @@ class FlashGPTNeoXForCausalLM(FlashGPTNeoXPreTrainedModel):
         cu_seqlens,
         cu_seqlens_q,
         max_s,
-        inputs_embeds: Optional[torch.Tensor] = None,
-        past_key_values: Optional[torch.Tensor] = None,
-        pre_allocate_past_size: Optional[int] = None,
-        lm_head_indices: Optional[torch.Tensor] = None,
+        inputs_embeds: torch.Tensor | None = None,
+        past_key_values: torch.Tensor | None = None,
+        pre_allocate_past_size: int | None = None,
+        lm_head_indices: torch.Tensor | None = None,
     ):
         hidden_states, present = self.gpt_neox(
             input_ids,

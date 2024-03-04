@@ -1,9 +1,8 @@
 """Utils for properly logging process termination"""
 
 
-def write_termination_log(msg: str, file: str="/dev/termination-log") -> None:
+def write_termination_log(msg: str, file: str = "/dev/termination-log") -> None:
     """Writes to the termination logfile."""
-
     try:
         with open(file, "w") as termination_file:
             termination_file.write(f"{msg}\n")

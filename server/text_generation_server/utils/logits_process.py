@@ -1,21 +1,18 @@
 import math
 import os
+from functools import lru_cache
 
 import torch
-
-from functools import lru_cache
-from typing import Optional, List, Dict, Union
-
 from transformers import (
-    LogitsWarper,
     LogitsProcessor,
+    LogitsWarper,
     TemperatureLogitsWarper,
     TopKLogitsWarper,
     TopPLogitsWarper,
     TypicalLogitsWarper,
 )
 
-#TODO diagnose errors seen when using CUDA Graphs with NCCL - for now we'll disable in sharded case
+# TODO diagnose errors seen when using CUDA Graphs with NCCL - for now we'll disable in sharded case
 USE_CUDA_GRAPH = torch.cuda.is_available() and int(os.getenv("WORLD_SIZE", "1")) == 1
 
 mempool = torch.cuda.graph_pool_handle() if USE_CUDA_GRAPH else None
@@ -61,9 +58,14 @@ class StaticWarper:
 
                     self.static_warped_scores = local_scores
                     # Compute logprobs
-                    self.static_next_logprob = torch.log_softmax(
-                        self.static_warped_scores, -1
-                    ) if self.return_logprobs else None
+                    self.static_next_logprob = (
+                        torch.log_softmax(
+                            self.static_warped_scores,
+                            -1,
+                        )
+                        if self.return_logprobs
+                        else None
+                    )
 
             self.static_scores.copy_(scores)
             self.cuda_graph.replay()
@@ -78,34 +80,47 @@ class StaticWarper:
 
 @lru_cache(16)
 def static_warper(
-    temperature: Optional[float],
-    top_k: Optional[int],
-    top_p: Optional[float],
-    typical_p: Optional[float],
+    temperature: float | None,
+    top_k: int | None,
+    top_p: float | None,
+    typical_p: float | None,
     return_logprobs: bool,
 ) -> StaticWarper:
     warper = StaticWarper(
-        temperature=temperature, top_k=top_k, top_p=top_p, typical_p=typical_p, return_logprobs=return_logprobs
+        temperature=temperature,
+        top_k=top_k,
+        top_p=top_p,
+        typical_p=typical_p,
+        return_logprobs=return_logprobs,
     )
     return warper if warper.warpers else None
 
 
 class HeterogeneousRepetitionPenaltyLogitsProcessor(LogitsProcessor):
-    r"""
-    [`LogitsProcessor`] enforcing an exponential penalty on repeated sequences.
+    r"""[`LogitsProcessor`] enforcing an exponential penalty on repeated sequences.
     This version allows for a separate value for each sample and runs inplace when possible.
     It doesn't validate inputs.
 
     Args:
+    ----
         repetition_penalty (`List[float]`):
             The parameter for repetition penalty. 1.0 means no penalty. See [this
             paper](https://arxiv.org/pdf/1909.05858.pdf) for more details.
+
     """
 
-    def __init__(self, penalty: List[float], dtype: torch.dtype, device: torch.device, id_to_exclude: Optional[int] = None):
+    def __init__(
+        self,
+        penalty: list[float],
+        dtype: torch.dtype,
+        device: torch.device,
+        id_to_exclude: int | None = None,
+    ):
         self.penalty = penalty
         self.penalty_tensor = torch.tensor(
-            penalty, dtype=dtype, device=device
+            penalty,
+            dtype=dtype,
+            device=device,
         ).unsqueeze(1)
         self.id_to_exclude = id_to_exclude
 
@@ -122,7 +137,9 @@ class HeterogeneousRepetitionPenaltyLogitsProcessor(LogitsProcessor):
 
         # if score < 0 then repetition penalty has to be multiplied to reduce the previous token probability
         score = torch.where(
-            score < 0, score * self.penalty_tensor, score / self.penalty_tensor
+            score < 0,
+            score * self.penalty_tensor,
+            score / self.penalty_tensor,
         )
 
         scores.scatter_(1, input_ids, score)
@@ -142,22 +159,28 @@ class HeterogeneousRepetitionPenaltyLogitsProcessor(LogitsProcessor):
 
 
 class HeterogeneousTemperatureLogitsWarper:
-    r"""
-    [`LogitsWarper`] for temperature (exponential scaling output probability distribution).
+    r"""[`LogitsWarper`] for temperature (exponential scaling output probability distribution).
     This version allows for a separate value for each sample and runs inplace when possible.
     It doesn't validate inputs.
 
     Args:
+    ----
         temperature (`float`):
             The value used to module the logits distribution.
+
     """
 
     def __init__(
-        self, temperature: List[float], dtype: torch.dtype, device: torch.device
+        self,
+        temperature: list[float],
+        dtype: torch.dtype,
+        device: torch.device,
     ):
         self.temperature = temperature
         self.temperature_tensor = torch.tensor(
-            temperature, dtype=dtype, device=device
+            temperature,
+            dtype=dtype,
+            device=device,
         ).unsqueeze(1)
 
     def __call__(self, input_ids: torch.Tensor, scores: torch.Tensor) -> torch.Tensor:
@@ -173,12 +196,12 @@ class HeterogeneousTemperatureLogitsWarper:
 
 
 class HeterogeneousTopPLogitsWarper(LogitsWarper):
-    """
-    [`LogitsWarper`] that performs top-p, i.e. restricting to top tokens summing to prob_cut_off <= prob_cut_off.
+    """[`LogitsWarper`] that performs top-p, i.e. restricting to top tokens summing to prob_cut_off <= prob_cut_off.
     This version allows for a separate value for each sample and runs inplace when possible.
     It doesn't validate inputs.
 
     Args:
+    ----
         top_p (`float`):
             If set to < 1, only the smallest set of most probable tokens with probabilities that add up to `top_p` or
             higher are kept for generation.
@@ -186,11 +209,12 @@ class HeterogeneousTopPLogitsWarper(LogitsWarper):
             All filtered values will be set to this float value.
         min_tokens_to_keep (`int`, *optional*, defaults to 1):
             Minimum number of tokens that cannot be filtered.
+
     """
 
     def __init__(
         self,
-        top_p: List[float],
+        top_p: list[float],
         dtype: torch.dtype,
         device: torch.device,
         filter_value: float = -math.inf,
@@ -198,7 +222,9 @@ class HeterogeneousTopPLogitsWarper(LogitsWarper):
     ):
         self.top_p = top_p
         self.top_p_opposite = 1 - torch.tensor(
-            top_p, dtype=dtype, device=device
+            top_p,
+            dtype=dtype,
+            device=device,
         ).unsqueeze(1)
         self.filter_value = filter_value
         self.min_tokens_to_keep = min_tokens_to_keep
@@ -217,7 +243,9 @@ class HeterogeneousTopPLogitsWarper(LogitsWarper):
 
         # scatter sorted tensors to original indexing
         indices_to_remove = sorted_indices_to_remove.scatter(
-            1, sorted_indices, sorted_indices_to_remove
+            1,
+            sorted_indices,
+            sorted_indices_to_remove,
         )
         warped_scores = scores.masked_fill_(indices_to_remove, self.filter_value)
 
@@ -232,23 +260,24 @@ class HeterogeneousTopPLogitsWarper(LogitsWarper):
 
 
 class HeterogeneousTopKLogitsWarper(LogitsWarper):
-    r"""
-    [`LogitsWarper`] that performs top-k, i.e. restricting to the k highest probability elements.
+    r"""[`LogitsWarper`] that performs top-k, i.e. restricting to the k highest probability elements.
     This version allows for a separate value for each sample and runs inplace when possible.
     It doesn't validate inputs.
 
     Args:
+    ----
         top_k (`int`):
             The number of highest probability vocabulary tokens to keep for top-k-filtering.
         filter_value (`float`, *optional*, defaults to `-float("Inf")`):
             All filtered values will be set to this float value.
         min_tokens_to_keep (`int`, *optional*, defaults to 1):
             Minimum number of tokens that cannot be filtered.
+
     """
 
     def __init__(
         self,
-        top_k: List[int],
+        top_k: list[int],
         device: torch.device,
         filter_value: float = -math.inf,
         min_tokens_to_keep: int = 1,
@@ -267,7 +296,9 @@ class HeterogeneousTopKLogitsWarper(LogitsWarper):
 
         if any(disabled):
             self.top_k_disabled_mask = torch.tensor(
-                disabled, dtype=torch.bool, device=device
+                disabled,
+                dtype=torch.bool,
+                device=device,
             ).view(-1, 1)
         else:
             self.top_k_disabled_mask = None
@@ -313,24 +344,25 @@ class HeterogeneousTopKLogitsWarper(LogitsWarper):
 
 
 class HeterogeneousTypicalLogitsWarper(LogitsWarper):
-    r"""
-    [`LogitsWarper`] that performs typical decoding. See [Typical Decoding for Natural Language
+    r"""[`LogitsWarper`] that performs typical decoding. See [Typical Decoding for Natural Language
     Generation](https://arxiv.org/abs/2202.00666) for more information.
     This version allows for a separate value for each sample and runs inplace when possible.
     It doesn't validate inputs.
 
     Args:
+    ----
         mass (`float`):
             Value of typical_p between 0 and 1 inclusive, defaults to 0.9.
         filter_value (`float`, *optional*, defaults to `-float("Inf")`):
             All filtered values will be set to this float value.
         min_tokens_to_keep (`int`, *optional*, defaults to 1):
             Minimum number of tokens that cannot be filtered.
+
     """
 
     def __init__(
         self,
-        mass: List[float],
+        mass: list[float],
         dtype: torch.dtype,
         device: torch.device,
         filter_value: float = -math.inf,
@@ -373,13 +405,16 @@ class HeterogeneousTypicalLogitsWarper(LogitsWarper):
             last_ind.masked_fill_(self.disabled_mask, scores.shape[-1] - 1)
 
         sorted_indices_to_remove = sorted_scores > sorted_scores.gather(
-            1, last_ind.view(-1, 1)
+            1,
+            last_ind.view(-1, 1),
         )
         if self.min_tokens_to_keep > 1:
             # Keep at least min_tokens_to_keep (set to min_tokens_to_keep-1 because we add the first one below)
             sorted_indices_to_remove[..., : self.min_tokens_to_keep] = 0
         indices_to_remove = sorted_indices_to_remove.scatter(
-            1, sorted_indices, sorted_indices_to_remove
+            1,
+            sorted_indices,
+            sorted_indices_to_remove,
         )
 
         warped_scores = scores.masked_fill_(indices_to_remove, self.filter_value)
@@ -396,24 +431,24 @@ class HeterogeneousTypicalLogitsWarper(LogitsWarper):
         self.mass_tensor = self.mass_tensor[indices]
 
         if self.disabled_mask is not None:
-            self.disabled_mask = (
-                self.disabled_mask[indices] if any(disabled) else None
-            )
+            self.disabled_mask = self.disabled_mask[indices] if any(disabled) else None
         return self
 
 
 # NB: This class is not currently used.
 class HeterogeneousProcessorWrapper(LogitsProcessor):
-    r"""
-    A wrapper for logit warpers or processors without heterogeneous parameter support.
+    r"""A wrapper for logit warpers or processors without heterogeneous parameter support.
+
     Args:
+    ----
         processors (`Dict[int, Union[LogitsProcessor, LogitsWarper]]`):
             A mapping of sample indices to logit warpers or processors, to be run sequentially.
+
     """
 
     def __init__(
         self,
-        processors: Dict[int, Union[LogitsProcessor, LogitsWarper]],
+        processors: dict[int, LogitsProcessor | LogitsWarper],
     ):
         self.processors = processors
 

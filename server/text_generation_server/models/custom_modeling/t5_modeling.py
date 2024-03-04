@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2018 Mesh TensorFlow authors, T5 Authors and HuggingFace Inc. team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,18 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" PyTorch T5 model."""
+"""PyTorch T5 model."""
 
 import copy
 import math
 import warnings
-from typing import Optional, Tuple, Union
 
 import torch
 import torch.distributed
 from torch import nn
 from torch.nn import CrossEntropyLoss
-
+from transformers import T5Config
 from transformers.activations import ACT2FN
 from transformers.modeling_outputs import (
     BaseModelOutput,
@@ -35,12 +33,12 @@ from transformers.pytorch_utils import ALL_LAYERNORM_LAYERS
 from transformers.utils import (
     is_torch_fx_proxy,
 )
-from transformers import T5Config
+
 from text_generation_server.utils.layers import (
     TensorParallelColumnLinear,
     TensorParallelEmbedding,
-    TensorParallelRowLinear,
     TensorParallelHead,
+    TensorParallelRowLinear,
 )
 
 
@@ -73,9 +71,7 @@ def layer_norm(hidden_states, weight, epsilon):
 
 class T5LayerNorm(nn.Module):
     def __init__(self, prefix, weights, eps=1e-6):
-        """
-        Construct a layernorm module in the T5 style. No bias and no subtraction of mean.
-        """
+        """Construct a layernorm module in the T5 style. No bias and no subtraction of mean."""
         super().__init__()
         weight = weights.get_tensor(f"{prefix}.weight")
         self.weight = nn.Parameter(weight)
@@ -88,17 +84,16 @@ class T5LayerNorm(nn.Module):
 try:
     from apex.normalization import FusedRMSNorm
 
-    T5LayerNorm = FusedRMSNorm  # noqa
+    T5LayerNorm = FusedRMSNorm
 
     logger.info(
-        "Discovered apex.normalization.FusedRMSNorm - will use it instead of T5LayerNorm"
+        "Discovered apex.normalization.FusedRMSNorm - will use it instead of T5LayerNorm",
     )
 except ImportError:
     # using the normal T5LayerNorm
     pass
 except Exception:
     logger.warning("discovered apex but it failed to load, falling back to T5LayerNorm")
-    pass
 
 ALL_LAYERNORM_LAYERS.append(T5LayerNorm)
 
@@ -107,7 +102,10 @@ class T5DenseActDense(nn.Module):
     def __init__(self, config: T5Config, prefix, weights):
         super().__init__()
         self.wi = TensorParallelColumnLinear.load(
-            config, prefix=f"{prefix}.wi", weights=weights, bias=False
+            config,
+            prefix=f"{prefix}.wi",
+            weights=weights,
+            bias=False,
         )
 
         ### XXX: T5 models do not handle well both f16 and quantization.
@@ -120,7 +118,10 @@ class T5DenseActDense(nn.Module):
         config.quantize = None
         self.wo_cast = (torch.float32, _dtype)
         self.wo = TensorParallelRowLinear.load(
-            config, prefix=f"{prefix}.wo", weights=weights, bias=False
+            config,
+            prefix=f"{prefix}.wo",
+            weights=weights,
+            bias=False,
         )
         weights.dtype = _dtype
         config.quantize = _q
@@ -149,10 +150,16 @@ class T5DenseGatedActDense(nn.Module):
     def __init__(self, config: T5Config, prefix, weights):
         super().__init__()
         self.wi_0 = TensorParallelColumnLinear.load(
-            config, prefix=f"{prefix}.wi_0", weights=weights, bias=False
+            config,
+            prefix=f"{prefix}.wi_0",
+            weights=weights,
+            bias=False,
         )
         self.wi_1 = TensorParallelColumnLinear.load(
-            config, prefix=f"{prefix}.wi_1", weights=weights, bias=False
+            config,
+            prefix=f"{prefix}.wi_1",
+            weights=weights,
+            bias=False,
         )
         ### XXX: T5 models do not handle well both f16 and quantization.
         ### Overidding specifically this layer for that reason.
@@ -164,7 +171,10 @@ class T5DenseGatedActDense(nn.Module):
         config.quantize = None
         self.wo_cast = (torch.float32, _dtype)
         self.wo = TensorParallelRowLinear.load(
-            config, prefix=f"{prefix}.wo", weights=weights, bias=False
+            config,
+            prefix=f"{prefix}.wo",
+            weights=weights,
+            bias=False,
         )
         weights.dtype = _dtype
         config.quantize = _q
@@ -195,11 +205,15 @@ class T5LayerFF(nn.Module):
         super().__init__()
         if config.is_gated_act:
             self.DenseReluDense = T5DenseGatedActDense(
-                config, prefix=f"{prefix}.DenseReluDense", weights=weights
+                config,
+                prefix=f"{prefix}.DenseReluDense",
+                weights=weights,
             )
         else:
             self.DenseReluDense = T5DenseActDense(
-                config, prefix=f"{prefix}.DenseReluDense", weights=weights
+                config,
+                prefix=f"{prefix}.DenseReluDense",
+                weights=weights,
             )
 
         self.layer_norm = T5LayerNorm(
@@ -218,7 +232,11 @@ class T5LayerFF(nn.Module):
 
 class T5Attention(nn.Module):
     def __init__(
-        self, config: T5Config, prefix, weights, has_relative_attention_bias=False
+        self,
+        config: T5Config,
+        prefix,
+        weights,
+        has_relative_attention_bias=False,
     ):
         super().__init__()
         self.is_decoder = config.is_decoder
@@ -235,36 +253,51 @@ class T5Attention(nn.Module):
         # Mesh TensorFlow initialization to avoid scaling before softmax
         assert self.n_heads % process_group.size() == 0
         self.q = TensorParallelColumnLinear.load(
-            config, prefix=f"{prefix}.q", weights=weights, bias=False
+            config,
+            prefix=f"{prefix}.q",
+            weights=weights,
+            bias=False,
         )
         self.k = TensorParallelColumnLinear.load(
-            config, prefix=f"{prefix}.k", weights=weights, bias=False
+            config,
+            prefix=f"{prefix}.k",
+            weights=weights,
+            bias=False,
         )
         self.v = TensorParallelColumnLinear.load(
-            config, prefix=f"{prefix}.v", weights=weights, bias=False
+            config,
+            prefix=f"{prefix}.v",
+            weights=weights,
+            bias=False,
         )
         self.o = TensorParallelRowLinear.load(
-            config, prefix=f"{prefix}.o", weights=weights, bias=False
+            config,
+            prefix=f"{prefix}.o",
+            weights=weights,
+            bias=False,
         )
         if self.n_heads % weights.process_group.size() != 0:
             raise ValueError(
                 f"`n_heads` must be divisible by `num_shards` (got `n_heads`: {self.n_heads} "
-                f"and `num_shards`: {weights.process_group.size()}"
+                f"and `num_shards`: {weights.process_group.size()}",
             )
         self.n_heads = self.n_heads // process_group.size()
         self.inner_dim = self.inner_dim // process_group.size()
 
         if self.has_relative_attention_bias:
             self.relative_attention_bias = PartialTPEmbedding(
-                prefix=f"{prefix}.relative_attention_bias", weights=weights
+                prefix=f"{prefix}.relative_attention_bias",
+                weights=weights,
             )
 
     @staticmethod
     def _relative_position_bucket(
-        relative_position, bidirectional=True, num_buckets=32, max_distance=128
+        relative_position,
+        bidirectional=True,
+        num_buckets=32,
+        max_distance=128,
     ):
-        """
-        Adapted from Mesh Tensorflow:
+        """Adapted from Mesh Tensorflow:
         https://github.com/tensorflow/mesh/blob/0cb87fe07da627bf0b7e60475d59f95ed6b5be3d/mesh_tensorflow/transformer/transformer_layers.py#L593
 
         Translate relative position to a bucket number for relative attention. The relative position is defined as
@@ -275,13 +308,16 @@ class T5Attention(nn.Module):
         This should allow for more graceful generalization to longer sequences than the model has been trained on
 
         Args:
+        ----
             relative_position: an int32 Tensor
             bidirectional: a boolean - whether the attention is bidirectional
             num_buckets: an integer
             max_distance: an integer
 
         Returns:
+        -------
             a Tensor with the same shape as relative_position, containing int32 values in the range [0, num_buckets)
+
         """
         relative_buckets = 0
         if bidirectional:
@@ -290,7 +326,8 @@ class T5Attention(nn.Module):
             relative_position = torch.abs(relative_position)
         else:
             relative_position = -torch.min(
-                relative_position, torch.zeros_like(relative_position)
+                relative_position,
+                torch.zeros_like(relative_position),
             )
         # now relative_position is in the range [0, inf)
 
@@ -310,7 +347,9 @@ class T5Attention(nn.Module):
         )
 
         relative_buckets += torch.where(
-            is_small, relative_position, relative_position_if_large
+            is_small,
+            relative_position,
+            relative_position_if_large,
         )
         return relative_buckets
 
@@ -319,10 +358,12 @@ class T5Attention(nn.Module):
         if device is None:
             device = self.relative_attention_bias.weight.device
         context_position = torch.arange(query_length, dtype=torch.long, device=device)[
-            :, None
+            :,
+            None,
         ]
         memory_position = torch.arange(key_length, dtype=torch.long, device=device)[
-            None, :
+            None,
+            :,
         ]
         relative_position = (
             memory_position - context_position
@@ -334,10 +375,10 @@ class T5Attention(nn.Module):
             max_distance=self.relative_attention_max_distance,
         )
         values = self.relative_attention_bias(
-            relative_position_bucket
+            relative_position_bucket,
         )  # shape (query_length, key_length, num_heads)
         values = values.permute([2, 0, 1]).unsqueeze(
-            0
+            0,
         )  # shape (1, num_heads, query_length, key_length)
         return values
 
@@ -353,9 +394,7 @@ class T5Attention(nn.Module):
         use_cache=False,
         output_attentions=False,
     ):
-        """
-        Self-attention (if key_value_states is None) or attention over source sentence (provided by key_value_states).
-        """
+        """Self-attention (if key_value_states is None) or attention over source sentence (provided by key_value_states)."""
         # Input is (batch_size, seq_length, dim)
         # Mask is (batch_size, key_length) (non-causal) or (batch_size, key_length, key_length)
         # past_key_value[0] is (batch_size, n_heads, q_len - 1, dim_per_head)
@@ -377,19 +416,22 @@ class T5Attention(nn.Module):
         )
 
         def shape(states):
-            """projection"""
+            """Projection"""
             return states.view(
-                batch_size, -1, self.n_heads, self.key_value_proj_dim
+                batch_size,
+                -1,
+                self.n_heads,
+                self.key_value_proj_dim,
             ).transpose(1, 2)
 
         def unshape(states):
-            """reshape"""
+            """Reshape"""
             return (
                 states.transpose(1, 2).contiguous().view(batch_size, -1, self.inner_dim)
             )
 
         def project(hidden_states, proj_layer, key_value_states, past_key_value):
-            """projects hidden states correctly to key/query states"""
+            """Projects hidden states correctly to key/query states"""
             if key_value_states is None:
                 # self-attn
                 # (batch_size, n_heads, seq_length, dim_per_head)
@@ -417,7 +459,7 @@ class T5Attention(nn.Module):
 
         # get query states
         query_states = shape(
-            self.q(hidden_states)
+            self.q(hidden_states),
         )  # (batch_size, n_heads, seq_length, dim_per_head)
 
         # get key/value states
@@ -436,7 +478,8 @@ class T5Attention(nn.Module):
 
         # compute scores
         scores = torch.matmul(
-            query_states, key_states.transpose(3, 2)
+            query_states,
+            key_states.transpose(3, 2),
         )  # equivalent of torch.einsum("bnqd,bnkd->bnqk", query_states, key_states), compatible with onnx op>9
 
         if position_bias is None:
@@ -448,7 +491,9 @@ class T5Attention(nn.Module):
                 )
             else:
                 position_bias = self.compute_bias(
-                    real_seq_length, key_length, device=scores.device
+                    real_seq_length,
+                    key_length,
+                    device=scores.device,
                 )
 
             # if key and values are already calculated
@@ -465,10 +510,12 @@ class T5Attention(nn.Module):
 
         scores += position_bias_masked
         attn_weights = nn.functional.softmax(scores.float(), dim=-1).type_as(
-            scores
+            scores,
         )  # (batch_size, n_heads, seq_length, key_length)
         attn_weights = nn.functional.dropout(
-            attn_weights, p=self.dropout, training=self.training
+            attn_weights,
+            p=self.dropout,
+            training=self.training,
         )  # (batch_size, n_heads, seq_length, key_length)
 
         # Mask heads if we want to
@@ -476,7 +523,7 @@ class T5Attention(nn.Module):
             attn_weights = attn_weights * layer_head_mask
 
         attn_output = unshape(
-            torch.matmul(attn_weights, value_states)
+            torch.matmul(attn_weights, value_states),
         )  # (batch_size, seq_length, dim)
         attn_output = self.o(attn_output)
 
@@ -591,20 +638,22 @@ class T5Block(nn.Module):
                 prefix=f"{prefix}.layer.0",
                 weights=weights,
                 has_relative_attention_bias=has_relative_attention_bias,
-            )
+            ),
         )
         if self.is_decoder:
             i = 2
             self.layer.append(
                 T5LayerCrossAttention(
-                    config, prefix=f"{prefix}.layer.1", weights=weights
-                )
+                    config,
+                    prefix=f"{prefix}.layer.1",
+                    weights=weights,
+                ),
             )
         else:
             i = 1
 
         self.layer.append(
-            T5LayerFF(config, prefix=f"{prefix}.layer.{i}", weights=weights)
+            T5LayerFF(config, prefix=f"{prefix}.layer.{i}", weights=weights),
         )
 
     def forward(
@@ -625,7 +674,7 @@ class T5Block(nn.Module):
         if past_key_value is not None:
             if not self.is_decoder:
                 logger.warning(
-                    "`past_key_values` is passed to the encoder. Please make sure this is intended."
+                    "`past_key_values` is passed to the encoder. Please make sure this is intended.",
                 )
             expected_num_past_key_values = 2 if encoder_hidden_states is None else 4
 
@@ -633,7 +682,7 @@ class T5Block(nn.Module):
                 raise ValueError(
                     f"There should be {expected_num_past_key_values} past states. "
                     f"{'2 (past / key) for cross attention. ' if expected_num_past_key_values == 4 else ''}"
-                    f"Got {len(past_key_value)} past key / value states"
+                    f"Got {len(past_key_value)} past key / value states",
                 )
 
             self_attn_past_key_value = past_key_value[:2]
@@ -663,7 +712,9 @@ class T5Block(nn.Module):
                 torch.finfo(hidden_states.dtype).max,
             )
             hidden_states = torch.clamp(
-                hidden_states, min=-clamp_value, max=clamp_value
+                hidden_states,
+                min=-clamp_value,
+                max=clamp_value,
             )
 
         do_cross_attention = self.is_decoder and encoder_hidden_states is not None
@@ -696,7 +747,9 @@ class T5Block(nn.Module):
                     torch.finfo(hidden_states.dtype).max,
                 )
                 hidden_states = torch.clamp(
-                    hidden_states, min=-clamp_value, max=clamp_value
+                    hidden_states,
+                    min=-clamp_value,
+                    max=clamp_value,
                 )
 
             # Combine self attn and cross attn key value states
@@ -719,7 +772,9 @@ class T5Block(nn.Module):
                 torch.finfo(hidden_states.dtype).max,
             )
             hidden_states = torch.clamp(
-                hidden_states, min=-clamp_value, max=clamp_value
+                hidden_states,
+                min=-clamp_value,
+                max=clamp_value,
             )
 
         outputs = (hidden_states,)
@@ -733,8 +788,7 @@ class T5Block(nn.Module):
 
 
 class T5PreTrainedModel(PreTrainedModel):
-    """
-    An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
+    """An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
     models.
     """
 
@@ -753,10 +807,12 @@ class T5PreTrainedModel(PreTrainedModel):
         if is_torch_fx_proxy(input_ids):
             # Item assignment is not supported natively for proxies.
             shifted_input_ids = torch.full(
-                input_ids.shape[:-1] + (1,), decoder_start_token_id
+                input_ids.shape[:-1] + (1,),
+                decoder_start_token_id,
             )
             shifted_input_ids = torch.cat(
-                [shifted_input_ids, input_ids[..., :-1]], dim=-1
+                [shifted_input_ids, input_ids[..., :-1]],
+                dim=-1,
             )
         else:
             shifted_input_ids = input_ids.new_zeros(input_ids.shape)
@@ -788,7 +844,7 @@ class T5Stack(T5PreTrainedModel):
                     has_relative_attention_bias=(layer_id == 0),
                 )
                 for layer_id in range(config.num_layers)
-            ]
+            ],
         )
         self.final_layer_norm = T5LayerNorm(
             prefix=f"{prefix}.final_layer_norm",
@@ -831,7 +887,7 @@ class T5Stack(T5PreTrainedModel):
         if input_ids is not None and inputs_embeds is not None:
             err_msg_prefix = "decoder_" if self.is_decoder else ""
             raise ValueError(
-                f"You cannot specify both {err_msg_prefix}input_ids and {err_msg_prefix}inputs_embeds at the same time"
+                f"You cannot specify both {err_msg_prefix}input_ids and {err_msg_prefix}inputs_embeds at the same time",
             )
         elif input_ids is not None:
             input_shape = input_ids.size()
@@ -841,7 +897,7 @@ class T5Stack(T5PreTrainedModel):
         else:
             err_msg_prefix = "decoder_" if self.is_decoder else ""
             raise ValueError(
-                f"You have to specify either {err_msg_prefix}input_ids or {err_msg_prefix}inputs_embeds"
+                f"You have to specify either {err_msg_prefix}input_ids or {err_msg_prefix}inputs_embeds",
             )
 
         if inputs_embeds is None:
@@ -866,7 +922,9 @@ class T5Stack(T5PreTrainedModel):
 
         if attention_mask is None:
             attention_mask = torch.ones(
-                batch_size, mask_seq_length, device=inputs_embeds.device
+                batch_size,
+                mask_seq_length,
+                device=inputs_embeds.device,
             )
         if (
             self.is_decoder
@@ -888,7 +946,8 @@ class T5Stack(T5PreTrainedModel):
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
         extended_attention_mask = self.get_extended_attention_mask(
-            attention_mask, input_shape
+            attention_mask,
+            input_shape,
         )
 
         # If a 2D or 3D attention mask is provided for the cross-attention
@@ -902,10 +961,11 @@ class T5Stack(T5PreTrainedModel):
             encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
             if encoder_attention_mask is None:
                 encoder_attention_mask = torch.ones(
-                    encoder_hidden_shape, device=inputs_embeds.device
+                    encoder_hidden_shape,
+                    device=inputs_embeds.device,
                 )
             encoder_extended_attention_mask = self.invert_attention_mask(
-                encoder_attention_mask
+                encoder_attention_mask,
             )
         else:
             encoder_extended_attention_mask = None
@@ -913,7 +973,8 @@ class T5Stack(T5PreTrainedModel):
         # Prepare head mask if needed
         head_mask = self.get_head_mask(head_mask, self.config.num_layers)
         cross_attn_head_mask = self.get_head_mask(
-            cross_attn_head_mask, self.config.num_layers
+            cross_attn_head_mask,
+            self.config.num_layers,
         )
         present_key_value_states = () if use_cache else None
         all_hidden_states = () if output_hidden_states else None
@@ -925,7 +986,7 @@ class T5Stack(T5PreTrainedModel):
         hidden_states = self.dropout(inputs_embeds)
 
         for i, (layer_module, past_key_value) in enumerate(
-            zip(self.block, past_key_values)
+            zip(self.block, past_key_values, strict=False),
         ):
             layer_head_mask = head_mask[i]
             cross_attn_layer_head_mask = cross_attn_head_mask[i]
@@ -1005,7 +1066,11 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
     _keys_to_ignore_on_load_unexpected = [
         "decoder.block.0.layer.1.EncDecAttention.relative_attention_bias.weight",
     ]
-    _tied_weights_keys = ["encoder.embed_tokens.weight", "decoder.embed_tokens.weight", "lm_head.weight"]
+    _tied_weights_keys = [
+        "encoder.embed_tokens.weight",
+        "decoder.embed_tokens.weight",
+        "lm_head.weight",
+    ]
 
     def __init__(self, config: T5Config, weights):
         super().__init__(config)
@@ -1015,7 +1080,8 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
             self.shared = TensorParallelEmbedding(prefix="shared", weights=weights)
         except RuntimeError:
             self.shared = TensorParallelEmbedding(
-                prefix="encoder.embed_tokens", weights=weights
+                prefix="encoder.embed_tokens",
+                weights=weights,
             )
 
         encoder_config = copy.deepcopy(config)
@@ -1041,7 +1107,9 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
         )
 
         self.lm_head = TensorParallelHead.load(
-            config, prefix="lm_head", weights=weights
+            config,
+            prefix="lm_head",
+            weights=weights,
         )
 
     def get_input_embeddings(self) -> nn.Module:
@@ -1049,23 +1117,23 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
 
     def forward(
         self,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        decoder_input_ids: Optional[torch.LongTensor] = None,
-        decoder_attention_mask: Optional[torch.BoolTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        decoder_head_mask: Optional[torch.FloatTensor] = None,
-        cross_attn_head_mask: Optional[torch.Tensor] = None,
-        encoder_outputs: Optional[Tuple[Tuple[torch.Tensor]]] = None,
-        past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        decoder_inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-    ) -> Union[Tuple[torch.FloatTensor], Seq2SeqLMOutput]:
+        input_ids: torch.LongTensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
+        decoder_input_ids: torch.LongTensor | None = None,
+        decoder_attention_mask: torch.BoolTensor | None = None,
+        head_mask: torch.FloatTensor | None = None,
+        decoder_head_mask: torch.FloatTensor | None = None,
+        cross_attn_head_mask: torch.Tensor | None = None,
+        encoder_outputs: tuple[tuple[torch.Tensor]] | None = None,
+        past_key_values: tuple[tuple[torch.Tensor]] | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        decoder_inputs_embeds: torch.FloatTensor | None = None,
+        labels: torch.LongTensor | None = None,
+        use_cache: bool | None = None,
+        output_attentions: bool | None = None,
+        output_hidden_states: bool | None = None,
+        return_dict: bool | None = None,
+    ) -> tuple[torch.FloatTensor] | Seq2SeqLMOutput:
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = (
             return_dict if return_dict is not None else self.config.use_return_dict
@@ -1201,7 +1269,7 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
         # speedy decoding is disabled and no need to reorder
         if past_key_values is None:
             logger.warning(
-                "You might want to consider setting `use_cache=True` to speed up decoding"
+                "You might want to consider setting `use_cache=True` to speed up decoding",
             )
             return past_key_values
 
@@ -1214,7 +1282,8 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
                 # need to set correct `past` for each of the four key / value states
                 reordered_layer_past_states = reordered_layer_past_states + (
                     layer_past_state.index_select(
-                        0, beam_idx.to(layer_past_state.device)
+                        0,
+                        beam_idx.to(layer_past_state.device),
                     ),
                 )
 

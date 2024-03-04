@@ -1,37 +1,49 @@
-from text_generation_server.pb import generate_pb2
-from text_generation_server.prompt_cache import PROMPT_CACHE_SIZE_MB
+import gc
+import os
+import sys
+
 import numpy as np
 import torch
 import torch.cuda
 import torch.distributed
 from scipy.optimize import curve_fit
-import gc, os, sys
+
+from text_generation_server.pb import generate_pb2
+from text_generation_server.prompt_cache import PROMPT_CACHE_SIZE_MB
 
 # Set the memory estimation method to auto, manual or off. If PT2C is used, auto will be forced.
-ESTIMATE_MEMORY                   = os.getenv("ESTIMATE_MEMORY", "auto")
-assert ESTIMATE_MEMORY in ["auto", "manual", "off"], "valid options for ESTIMATE_MEMORY are auto, manual, and off"
+ESTIMATE_MEMORY = os.getenv("ESTIMATE_MEMORY", "auto")
+assert ESTIMATE_MEMORY in [
+    "auto",
+    "manual",
+    "off",
+], "valid options for ESTIMATE_MEMORY are auto, manual, and off"
 # Select the batch size that is used to run the tests. The idea is to make the
 # batch large enough so that the measurement is more accurate, i.e. improve signal to
 # noise ratio. If set too large it could prevent the estimator from finding a quadratic
 # curve after an initial linear part.
-ESTIMATE_MEMORY_BATCH_SIZE        = int(os.getenv("ESTIMATE_MEMORY_BATCH_SIZE", "16"))
+ESTIMATE_MEMORY_BATCH_SIZE = int(os.getenv("ESTIMATE_MEMORY_BATCH_SIZE", "16"))
 # Select the minimum amount of samples that is required to interpolate the quadratic curve
-ESTIMATE_MEMORY_MIN_SAMPLES       = int(os.getenv("ESTIMATE_MEMORY_MIN_SAMPLES", "5"))
+ESTIMATE_MEMORY_MIN_SAMPLES = int(os.getenv("ESTIMATE_MEMORY_MIN_SAMPLES", "5"))
 # Select the shortest sequence length used in the tests. The idea is to make the
 # sequence large enough so that the measurement is more accurate.
-ESTIMATE_MEMORY_START_SEQ_LEN     = int(os.getenv("ESTIMATE_MEMORY_START_SEQ_LEN", "100"))
+ESTIMATE_MEMORY_START_SEQ_LEN = int(os.getenv("ESTIMATE_MEMORY_START_SEQ_LEN", "100"))
 # Select the longest sequence length used in the tests. It is adjusted down if an OOM is detected
-ESTIMATE_MEMORY_STOP_SEQ_LEN      = int(os.getenv("ESTIMATE_MEMORY_STOP_SEQ_LEN", "1500"))
+ESTIMATE_MEMORY_STOP_SEQ_LEN = int(os.getenv("ESTIMATE_MEMORY_STOP_SEQ_LEN", "1500"))
 # This parameter is used while searching for a linear part. It determines how close the points
 # must be to be considered part of a candidate line.
-ESTIMATE_MEMORY_FIT_THRESHOLD     = float(os.getenv("ESTIMATE_MEMORY_FIT_THRESHOLD", "0.02"))
+ESTIMATE_MEMORY_FIT_THRESHOLD = float(
+    os.getenv("ESTIMATE_MEMORY_FIT_THRESHOLD", "0.02"),
+)
 # Sets how many tokens should be generated to estimate the memory usage for each new
 # token after prefill. Setting this too low will affect precision, setting it too high
 # makes the estimation slow.
-ESTIMATE_MEMORY_NEW_TOKENS        = int(os.getenv("ESTIMATE_MEMORY_NEW_TOKENS", "50"))
+ESTIMATE_MEMORY_NEW_TOKENS = int(os.getenv("ESTIMATE_MEMORY_NEW_TOKENS", "50"))
 # Sets how many data points we need to estimate the next token memory usage. Since it
 # is a line, only 2 should be needed, but if the data is noisy more can be added.
-ESTIMATE_MEMORY_NEW_TOKEN_SAMPLES = int(os.getenv("ESTIMATE_MEMORY_NEW_TOKEN_SAMPLES", "2"))
+ESTIMATE_MEMORY_NEW_TOKEN_SAMPLES = int(
+    os.getenv("ESTIMATE_MEMORY_NEW_TOKEN_SAMPLES", "2"),
+)
 
 
 # Considering that each sample is expensive and that absolute precision is not that important,
@@ -39,14 +51,24 @@ ESTIMATE_MEMORY_NEW_TOKEN_SAMPLES = int(os.getenv("ESTIMATE_MEMORY_NEW_TOKEN_SAM
 # than this constant.
 STOPPING_DISTANCE = 10
 
+
 class MemoryScalingModel:
-    def __init__(self, free_memory, safety_margin, linear_fit_params, quadratic_fit_params, next_token_params):
+    def __init__(
+        self,
+        free_memory,
+        safety_margin,
+        linear_fit_params,
+        quadratic_fit_params,
+        next_token_params,
+    ):
         self.free_memory = free_memory
         self.safety_margin = safety_margin
         self.linear_fit_params = linear_fit_params
         self.quadratic_fit_params = quadratic_fit_params
         self.next_token_params = next_token_params
-        self.weight_limit = np.floor((1.0 - self.safety_margin / 100.0) * self.free_memory).astype(np.uint64)
+        self.weight_limit = np.floor(
+            (1.0 - self.safety_margin / 100.0) * self.free_memory,
+        ).astype(np.uint64)
 
     def as_pb(self):
         return generate_pb2.MemoryScalingModel(
@@ -61,41 +83,69 @@ class MemoryScalingModel:
     def prefill_memory_usage(self, batch_size, input_len):
         out1 = batch_size * self.linear_fit_params[0] * input_len
         bs_seq = input_len * batch_size
-        out2 = self.quadratic_fit_params[0] * bs_seq + input_len * self.quadratic_fit_params[1] * bs_seq
+        out2 = (
+            self.quadratic_fit_params[0] * bs_seq
+            + input_len * self.quadratic_fit_params[1] * bs_seq
+        )
         return np.maximum(out1, out2)
 
     def inverse_linear_prefill(self, batch, mem):
-        return mem/(self.linear_fit_params[0]*batch)
+        return mem / (self.linear_fit_params[0] * batch)
 
     def inverse_quadratic_prefill(self, batch, mem):
         c0, c1 = self.quadratic_fit_params
-        return (np.sqrt(c0**2 + 4*c1*(mem/batch)) - c0)/(2*c1)
+        return (np.sqrt(c0**2 + 4 * c1 * (mem / batch)) - c0) / (2 * c1)
 
-    def inverse_prefill(self,batch, mem):
-        linear = self.inverse_linear_prefill(batch,mem)
-        quad   = self.inverse_quadratic_prefill(batch, mem)
+    def inverse_prefill(self, batch, mem):
+        linear = self.inverse_linear_prefill(batch, mem)
+        quad = self.inverse_quadratic_prefill(batch, mem)
         return min(linear, quad)
 
     def nt_memory_usage(self, batch_size, input_len, output_len):
-        return batch_size * self.next_token_params[0] * input_len + batch_size * self.next_token_params[1] * output_len
+        return (
+            batch_size * self.next_token_params[0] * input_len
+            + batch_size * self.next_token_params[1] * output_len
+        )
 
     def inverse_next_token_output(self, batch, in_seq, mem):
-        return (mem - self.next_token_params[0]*batch*in_seq)/(batch*self.next_token_params[1])
+        return (mem - self.next_token_params[0] * batch * in_seq) / (
+            batch * self.next_token_params[1]
+        )
 
     def inverse_next_token_input(self, batch, out_seq, mem):
-        return (mem - self.next_token_params[1]*batch*out_seq)/(batch*self.next_token_params[0])
+        return (mem - self.next_token_params[1] * batch * out_seq) / (
+            batch * self.next_token_params[0]
+        )
 
     def max_input_len_for_prefill(self, batch_size, max_input_len):
         mem_max = np.floor(self.inverse_prefill(batch_size, self.weight_limit))
         return int(min(mem_max, max_input_len))
 
     def max_input_len_for_nt(self, batch_size, output_len, max_input_len):
-        nt = max(0, np.floor(self.inverse_next_token_input(batch_size, output_len, self.weight_limit)))
+        nt = max(
+            0,
+            np.floor(
+                self.inverse_next_token_input(
+                    batch_size,
+                    output_len,
+                    self.weight_limit,
+                ),
+            ),
+        )
         prefill = self.max_input_len_for_prefill(batch_size, max_input_len)
-        return int(min(nt,prefill,max_input_len))
+        return int(min(nt, prefill, max_input_len))
 
     def max_output_len_for_nt(self, batch_size, input_len, max_output_len):
-        nt = max(0, np.floor(self.inverse_next_token_output(batch_size, input_len, self.weight_limit)))
+        nt = max(
+            0,
+            np.floor(
+                self.inverse_next_token_output(
+                    batch_size,
+                    input_len,
+                    self.weight_limit,
+                ),
+            ),
+        )
         return int(min(nt, max_output_len))
 
     @classmethod
@@ -103,7 +153,12 @@ class MemoryScalingModel:
         return cls(sys.maxsize, 0, [0], [0, 0], [0, 0])
 
     @classmethod
-    def manual_quadratic(cls, safety_margin: int, max_seq_len: int, max_batch_size: int):
+    def manual_quadratic(
+        cls,
+        safety_margin: int,
+        max_seq_len: int,
+        max_batch_size: int,
+    ):
         # In this mode the size limit for batches is not given by an measurement
         # of the hardware capacity and the scaling of memory usage w.r.t.
         # sequence length and batch size. The total token capacity here is given by
@@ -114,12 +169,18 @@ class MemoryScalingModel:
         # The percentages here are numbers from 0 to 100 rather than 0.0 to 1.0 because
         # the variables are integers.
 
-        TOTAL_MEMORY = 100 # 100%
+        TOTAL_MEMORY = 100  # 100%
         assert 0 <= safety_margin <= 100
         P = (100.0 - safety_margin) / 100.0
-        linear_param = 100.0 / (P * max_seq_len*max_batch_size)
-        quadratic_param = 100.0 / (P * max_seq_len*max_seq_len*max_batch_size)
-        return cls(TOTAL_MEMORY, safety_margin, [0], [0, quadratic_param], [linear_param, linear_param])
+        linear_param = 100.0 / (P * max_seq_len * max_batch_size)
+        quadratic_param = 100.0 / (P * max_seq_len * max_seq_len * max_batch_size)
+        return cls(
+            TOTAL_MEMORY,
+            safety_margin,
+            [0],
+            [0, quadratic_param],
+            [linear_param, linear_param],
+        )
 
     @classmethod
     def manual_linear(cls, safety_margin: int, max_seq_len: int, max_batch_size: int):
@@ -132,23 +193,32 @@ class MemoryScalingModel:
         # The percentages here are numbers from 0 to 100 rather than 0.0 to 1.0 because
         # the variables are integers.
 
-        TOTAL_MEMORY = 100 # 100%
+        TOTAL_MEMORY = 100  # 100%
         assert 0 <= safety_margin <= 100
         P = (100.0 - safety_margin) / 100.0
-        linear_param = 100.0 / (P * max_seq_len*max_batch_size)
-        return cls(TOTAL_MEMORY, safety_margin, [linear_param], [0, 0], [linear_param, linear_param])
+        linear_param = 100.0 / (P * max_seq_len * max_batch_size)
+        return cls(
+            TOTAL_MEMORY,
+            safety_margin,
+            [linear_param],
+            [0, 0],
+            [linear_param, linear_param],
+        )
 
 
 def is_oom(e: BaseException):
     # type: ignore
-    return isinstance(e, torch.cuda.OutOfMemoryError) or \
-           isinstance(e, RuntimeError) and "Failed to allocate memory" in str(e)
+    return (
+        isinstance(e, torch.cuda.OutOfMemoryError)
+        or isinstance(e, RuntimeError)
+        and "Failed to allocate memory" in str(e)
+    )
 
 
 class Estimator:
     def __init__(
         self,
-        model: 'Model',
+        model: "Model",
         batch_size: int,
         min_samples: int,
         start_seq_len: int,
@@ -179,49 +249,62 @@ class Estimator:
         self.max_new_tokens = new_tokens
         self.remaining_new_token_samples = new_token_samples
         self.enable_nt_sampling = False
-        self.nt_upper_input_limit = int(0.75 * self.stop_seq_len)  # testing above this range is expensive
+        self.nt_upper_input_limit = int(
+            0.75 * self.stop_seq_len,
+        )  # testing above this range is expensive
         self.safety_margin = safety_margin
 
     @classmethod
-    def build_from_env(cls, model: 'Model', safety_margin: int):
+    def build_from_env(cls, model: "Model", safety_margin: int):
         return cls(
-                model,
-                ESTIMATE_MEMORY_BATCH_SIZE,
-                ESTIMATE_MEMORY_MIN_SAMPLES,
-                ESTIMATE_MEMORY_START_SEQ_LEN,
-                ESTIMATE_MEMORY_STOP_SEQ_LEN,
-                ESTIMATE_MEMORY_FIT_THRESHOLD,
-                ESTIMATE_MEMORY_NEW_TOKENS,
-                ESTIMATE_MEMORY_NEW_TOKEN_SAMPLES,
-                safety_margin,
-            )
+            model,
+            ESTIMATE_MEMORY_BATCH_SIZE,
+            ESTIMATE_MEMORY_MIN_SAMPLES,
+            ESTIMATE_MEMORY_START_SEQ_LEN,
+            ESTIMATE_MEMORY_STOP_SEQ_LEN,
+            ESTIMATE_MEMORY_FIT_THRESHOLD,
+            ESTIMATE_MEMORY_NEW_TOKENS,
+            ESTIMATE_MEMORY_NEW_TOKEN_SAMPLES,
+            safety_margin,
+        )
 
     @staticmethod
     def __quadratic_f(x, a, b):
         batch, seq = x
-        return a*batch*seq + b*batch*seq**2
+        return a * batch * seq + b * batch * seq**2
 
     @staticmethod
     def __linear_f(x, a):
         batch, seq = x
-        return a*batch*seq
+        return a * batch * seq
 
     @staticmethod
     def __next_token_model(X, a, b):
         batch, in_seq, out_seq = X
-        return a*batch*in_seq + b*batch*out_seq
+        return a * batch * in_seq + b * batch * out_seq
 
     @staticmethod
-    def __generate_batch(model, batch_size: int, in_text: str, in_tokens: int, num_new_tokens: int):
+    def __generate_batch(
+        model,
+        batch_size: int,
+        in_text: str,
+        in_tokens: int,
+        num_new_tokens: int,
+    ):
         request = generate_pb2.PrefillRequest(
             batch=generate_pb2.Batch(
                 id=0,
                 requests=[
                     generate_pb2.Request(
-                        id=i, inputs=in_text, input_length=in_tokens, truncate=True, max_output_length=num_new_tokens
-                    ) for i in range(batch_size)
-                ]
-            )
+                        id=i,
+                        inputs=in_text,
+                        input_length=in_tokens,
+                        truncate=True,
+                        max_output_length=num_new_tokens,
+                    )
+                    for i in range(batch_size)
+                ],
+            ),
         )
 
         batch, _ = model.batch_type.from_pb(
@@ -242,7 +325,6 @@ class Estimator:
 
     def needs_nt(self):
         return self.remaining_new_token_samples > 0 and self.enable_nt_sampling
-
 
     def _run_prefill_test(self, seq_length, min_max_tokens):
         try:
@@ -268,7 +350,7 @@ class Estimator:
     def _run_next_token_test(self, batch, out_seq):
         ret = []
         try:
-            for _ in range(1,out_seq):
+            for _ in range(1, out_seq):
                 gc.collect()
                 torch.cuda.reset_peak_memory_stats(self.model.device)
                 self.model.generate_token(batch)
@@ -286,8 +368,10 @@ class Estimator:
 
         results = self._run_next_token_test(batch, self.max_new_tokens)
 
-        if len(results) < (self.max_new_tokens-1):
-            print(f"got less results than expected {len(results)=}, {self.max_new_tokens=}")
+        if len(results) < (self.max_new_tokens - 1):
+            print(
+                f"got less results than expected {len(results)=}, {self.max_new_tokens=}",
+            )
             self.nt_upper_input_limit = input_seq_len
             return
 
@@ -296,16 +380,19 @@ class Estimator:
 
             y = result - self.baseline
 
-            self.nt_X = np.append(self.nt_X, [[self.batch_size], [input_seq_len], [out_seq]], axis=1)
+            self.nt_X = np.append(
+                self.nt_X,
+                [[self.batch_size], [input_seq_len], [out_seq]],
+                axis=1,
+            )
             self.nt_Y = np.append(self.nt_Y, y)
         self.remaining_new_token_samples -= 1
 
     def take_n_samples(self, n, start, stop):
         x_data = np.array([[], []], dtype=np.int64)
         y_data = np.array([], dtype=np.int64)
-        stride = int((stop-start)/n)
+        stride = int((stop - start) / n)
         for s in range(start, stop, stride):
-
             tokens = self.max_new_tokens if self.needs_nt() else 1
 
             _, mem_allocated, batch = self._run_prefill_test(s, tokens)
@@ -338,10 +425,12 @@ class Estimator:
         # If the model contains a prefix cache, then reduce available memory by the max size of the cache
         if self.model.prefix_cache is not None:
             max_cache_size = PROMPT_CACHE_SIZE_MB * 1024 * 1024
-            print(f"Prefix cache enabled, reducing available memory by {max_cache_size}")
+            print(
+                f"Prefix cache enabled, reducing available memory by {max_cache_size}",
+            )
             self.free_memory = device_free_memory - max_cache_size
         else:
-            print(f"Prefix cache disabled, using all available memory")
+            print("Prefix cache disabled, using all available memory")
             self.free_memory = device_free_memory
 
         print("Baseline: %d, Free memory: %d" % (self.baseline, self.free_memory))
@@ -352,7 +441,6 @@ class Estimator:
         lower = self.start_seq_len
         upper = s = self.stop_seq_len
         while (upper - lower) > STOPPING_DISTANCE:
-
             is_oom, mem_allocated, _ = self._run_prefill_test(s, 1)
 
             if is_oom:
@@ -380,21 +468,20 @@ class Estimator:
 
         longest_linear = 0
 
-        while lower_x <= (upper_x-1):
-
+        while lower_x <= (upper_x - 1):
             gradient = upper_y / upper_x
-            target = int((lower_x + upper_x)/2)
+            target = int((lower_x + upper_x) / 2)
 
-            x_samples, y_samples = self.take_n_samples(1, target, target+1)
+            x_samples, y_samples = self.take_n_samples(1, target, target + 1)
 
             self.X = np.append(self.X, x_samples, axis=1)
             self.Y = np.append(self.Y, y_samples)
 
-            measured  = y_samples[0]
+            measured = y_samples[0]
             projected = gradient * target
 
             error = self.__reduce_error(
-                np.absolute(measured-projected) / measured
+                np.absolute(measured - projected) / measured,
             )
 
             if error <= self.fit_threshold:
@@ -416,9 +503,9 @@ class Estimator:
         higher_indices = np.where(self.X[1] > longest_linear)[0]
         if higher_indices.size > 0:
             for i in range(higher_indices[0], self.X.shape[1]):
-                new_gradient = self.Y[i]/self.X[1, i]
+                new_gradient = self.Y[i] / self.X[1, i]
                 error = self.__reduce_error(
-                    np.absolute(new_gradient-gradient)/gradient
+                    np.absolute(new_gradient - gradient) / gradient,
                 )
                 if error <= self.fit_threshold:
                     longest_linear = self.X[1, i]
@@ -427,7 +514,10 @@ class Estimator:
                     break
 
         self.linear_fit_params, _ = curve_fit(
-            Estimator.__linear_f, self.X[:, :last_index], self.Y[:last_index], bounds=([0], [np.inf])
+            Estimator.__linear_f,
+            self.X[:, :last_index],
+            self.Y[:last_index],
+            bounds=([0], [np.inf]),
         )
         return longest_linear
 
@@ -436,22 +526,28 @@ class Estimator:
         lower = longest_linear
         upper = self.stop_seq_len
 
-        s = int((lower + upper)/2)
+        s = int((lower + upper) / 2)
 
         while (upper - lower) > STOPPING_DISTANCE:
-            x_samples, y_samples = self.take_n_samples(1, s, s+1)
+            x_samples, y_samples = self.take_n_samples(1, s, s + 1)
             self.X = np.append(self.X, x_samples, axis=1)
             self.Y = np.append(self.Y, y_samples)
 
             error = self.__reduce_error(
-                np.absolute((y_samples-Estimator.__linear_f(x_samples, *self.linear_fit_params)) / y_samples)[0]
+                np.absolute(
+                    (
+                        y_samples
+                        - Estimator.__linear_f(x_samples, *self.linear_fit_params)
+                    )
+                    / y_samples,
+                )[0],
             )
 
             if error <= self.fit_threshold:
                 lower = s
             else:
                 upper = s
-            s = int((lower + upper)/2)
+            s = int((lower + upper) / 2)
         self._sort_samples()
 
         return self.stop_seq_len if (self.stop_seq_len - s) < STOPPING_DISTANCE else s
@@ -460,17 +556,26 @@ class Estimator:
         print(f"Estimating quadratic part, starting at {start}")
         X = self.X[:, self.X[1, :] > start]
 
-        existing_samples  = X.shape[1]
+        existing_samples = X.shape[1]
         remaining_samples = self.min_samples - existing_samples
 
         Y = self.Y[-existing_samples:]
 
         if remaining_samples > 0:
-            x_samples, y_samples = self.take_n_samples(remaining_samples, start + 1, self.stop_seq_len)
+            x_samples, y_samples = self.take_n_samples(
+                remaining_samples,
+                start + 1,
+                self.stop_seq_len,
+            )
             X = np.append(X, x_samples, axis=1)
             Y = np.append(Y, y_samples)
 
-        self.quadratic_fit_params, _ = curve_fit(Estimator.__quadratic_f, X, Y, bounds=([0, 0], [np.inf, np.inf]))
+        self.quadratic_fit_params, _ = curve_fit(
+            Estimator.__quadratic_f,
+            X,
+            Y,
+            bounds=([0, 0], [np.inf, np.inf]),
+        )
 
     def init_nt_sampling(self):
         self.enable_nt_sampling = True
@@ -478,19 +583,28 @@ class Estimator:
 
     def estimate_nt(self):
         if self.needs_nt():
-            if self.nt_upper_input_limit - self.start_seq_len < self.remaining_new_token_samples:
+            if (
+                self.nt_upper_input_limit - self.start_seq_len
+                < self.remaining_new_token_samples
+            ):
                 raise RuntimeError(
                     f"Unable to fit next token memory model; try using smaller value"
-                    f" for ESTIMATE_MEMORY_BATCH_SIZE (currently set to {self.batch_size})"
+                    f" for ESTIMATE_MEMORY_BATCH_SIZE (currently set to {self.batch_size})",
                 )
-            self.take_n_samples(self.remaining_new_token_samples, self.start_seq_len, self.nt_upper_input_limit)
+            self.take_n_samples(
+                self.remaining_new_token_samples,
+                self.start_seq_len,
+                self.nt_upper_input_limit,
+            )
 
         self.next_token_params, _ = curve_fit(
-            Estimator.__next_token_model, self.nt_X, self.nt_Y, bounds=([0, 0], [np.inf, np.inf])
+            Estimator.__next_token_model,
+            self.nt_X,
+            self.nt_Y,
+            bounds=([0, 0], [np.inf, np.inf]),
         )
 
     def run(self):
-
         if not torch.cuda.is_available():
             print("Disabling memory usage estimation for CPU-only execution")
             return MemoryScalingModel.disabled()
@@ -503,7 +617,7 @@ class Estimator:
         if not found:
             raise Exception(
                 f"Couldn't find prefill sequence in range {self.start_seq_len}-{self.stop_seq_len}"
-                f" that doesn't run OOM"
+                f" that doesn't run OOM",
             )
 
         longest_linear = self.find_linear_part()

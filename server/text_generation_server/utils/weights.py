@@ -1,12 +1,11 @@
+import json
 import os
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple, Any
+from typing import Any
 
 import torch
-from safetensors import safe_open, SafetensorError
 from loguru import logger
-import json
-
+from safetensors import SafetensorError, safe_open
 
 QUANTIZE_CONFIG_FILENAME = "quantize_config.json"
 
@@ -14,11 +13,11 @@ QUANTIZE_CONFIG_FILENAME = "quantize_config.json"
 class Weights:
     def __init__(
         self,
-        filenames: List[Path],
+        filenames: list[Path],
         device,
         dtype,
         process_group,
-        aliases: Optional[Dict[str, List[str]]] = None,
+        aliases: dict[str, list[str]] | None = None,
     ):
         routing = {}
         for filename in filenames:
@@ -26,7 +25,7 @@ class Weights:
                 for k in f.keys():
                     if k in routing:
                         raise RuntimeError(
-                            f"Key {k} was found in multiple files: {filename} and {routing[k]}"
+                            f"Key {k} was found in multiple files: {filename} and {routing[k]}",
                         )
                     routing[k] = filename
         if aliases is None:
@@ -112,15 +111,26 @@ class Weights:
         ), f"The chosen size {size} is not compatible with sharding on {world_size} shards"
         return self.get_partial_sharded(tensor_name, dim)
 
-    def get_multi_weights_col(self, prefixes: List[str], quantize: str, dim: int):
+    def get_multi_weights_col(self, prefixes: list[str], quantize: str, dim: int):
         if quantize == "gptq":
             try:
-                qweight = torch.cat([self.get_sharded(f"{p}.qweight", dim=1) for p in prefixes], dim=1)
+                qweight = torch.cat(
+                    [self.get_sharded(f"{p}.qweight", dim=1) for p in prefixes],
+                    dim=1,
+                )
             except RuntimeError:
-                raise RuntimeError("Cannot load `gptq` weight, make sure the model is already quantized, or quantize it with `text-generation-server quantize ORIGINAL_MODEL_ID NEW_MODEL_ID`")
+                raise RuntimeError(
+                    "Cannot load `gptq` weight, make sure the model is already quantized, or quantize it with `text-generation-server quantize ORIGINAL_MODEL_ID NEW_MODEL_ID`",
+                )
 
-            qzeros = torch.cat([self.get_sharded(f"{p}.qzeros", dim=1) for p in prefixes], dim=1)
-            scales = torch.cat([self.get_sharded(f"{p}.scales", dim=1) for p in prefixes], dim=1)
+            qzeros = torch.cat(
+                [self.get_sharded(f"{p}.qzeros", dim=1) for p in prefixes],
+                dim=1,
+            )
+            scales = torch.cat(
+                [self.get_sharded(f"{p}.scales", dim=1) for p in prefixes],
+                dim=1,
+            )
             w = [self.get_tensor(f"{p}.g_idx") for p in prefixes]
             for w2 in w[1:]:
                 torch.testing.assert_close(w2, w[0])
@@ -150,7 +160,16 @@ class Weights:
             if self.process_group.size() > 1:
                 g_idx = self.get_tensor(f"{prefix}.g_idx")
                 if g_idx is not None:
-                    if not torch.equal(g_idx.cpu(), torch.tensor([i // groupsize for i in range(g_idx.shape[0])], dtype=torch.int32)) and not (g_idx == 0).all():
+                    if (
+                        not torch.equal(
+                            g_idx.cpu(),
+                            torch.tensor(
+                                [i // groupsize for i in range(g_idx.shape[0])],
+                                dtype=torch.int32,
+                            ),
+                        )
+                        and not (g_idx == 0).all()
+                    ):
                         # Exllama implementation does not support row tensor parallelism with act-order, as
                         # it would require to reorder input activations that are split unto several GPUs
                         use_exllama = False
@@ -158,9 +177,12 @@ class Weights:
             try:
                 qweight = self.get_sharded(f"{prefix}.qweight", dim=0)
             except RuntimeError:
-                raise RuntimeError("Cannot load `gptq` weight, make sure the model is already quantized, or quantize it with `text-generation-server quantize ORIGINAL_MODEL_ID NEW_MODEL_ID`")
+                raise RuntimeError(
+                    "Cannot load `gptq` weight, make sure the model is already quantized, or quantize it with `text-generation-server quantize ORIGINAL_MODEL_ID NEW_MODEL_ID`",
+                )
 
             from text_generation_server.utils.layers import HAS_EXLLAMA
+
             if use_exllama:
                 use_exllama = HAS_EXLLAMA
                 if self.process_group.rank == 0:
@@ -169,7 +191,7 @@ class Weights:
                     else:
                         logger.warning(
                             "Exllama GPTQ cuda kernels (which are faster) could have been used, but are disabled via the DISABLE_EXLLAMA env var,"
-                            " or not currently installed, try using BUILD_EXTENSIONS=True"
+                            " or not currently installed, try using BUILD_EXTENSIONS=True",
                         )
 
             if use_exllama:
@@ -200,7 +222,7 @@ class Weights:
             weight = self.get_sharded(f"{prefix}.weight", dim=1)
         return weight
 
-    def _get_gptq_params(self) -> Tuple[int, int]:
+    def _get_gptq_params(self) -> tuple[int, int]:
         try:
             bits = self.get_tensor("gptq_bits").item()
             groupsize = self.get_tensor("gptq_groupsize").item()
@@ -222,7 +244,7 @@ class Weights:
             filename = os.path.join(model_path, QUANTIZE_CONFIG_FILENAME)
             if not os.path.exists(filename):
                 return
-            with open(filename, "r") as f:
+            with open(filename) as f:
                 quantize_config = json.load(f)
 
         self.gptq_bits = quantize_config["bits"]

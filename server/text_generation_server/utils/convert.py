@@ -1,21 +1,20 @@
 import datetime
-import torch
-import os
 import json
-
-from loguru import logger
-from pathlib import Path
-from safetensors.torch import save_file, load_file, _find_shared_tensors, _is_complete
-from typing import List, Dict
+import os
 from collections import defaultdict
+from pathlib import Path
+
+import torch
+from loguru import logger
+from safetensors.torch import _find_shared_tensors, _is_complete, load_file, save_file
 
 
 def _remove_duplicate_names(
-    state_dict: Dict[str, torch.Tensor],
+    state_dict: dict[str, torch.Tensor],
     *,
-    preferred_names: List[str] = None,
-    discard_names: List[str] = None,
-) -> Dict[str, List[str]]:
+    preferred_names: list[str] = None,
+    discard_names: list[str] = None,
+) -> dict[str, list[str]]:
     if preferred_names is None:
         preferred_names = []
     preferred_names = set(preferred_names)
@@ -27,11 +26,11 @@ def _remove_duplicate_names(
     to_remove = defaultdict(list)
     for shared in shareds:
         complete_names = set(
-            [name for name in shared if _is_complete(state_dict[name])]
+            [name for name in shared if _is_complete(state_dict[name])],
         )
         if not complete_names:
             raise RuntimeError(
-                f"Error while trying to find names to remove to save state dict, but found no suitable name to keep for saving amongst: {shared}. None is covering the entire storage.Refusing to save/load the model since you could be storing much more memory than needed. Please refer to https://huggingface.co/docs/safetensors/torch_shared_tensors for more information. Or open an issue."
+                f"Error while trying to find names to remove to save state dict, but found no suitable name to keep for saving amongst: {shared}. None is covering the entire storage.Refusing to save/load the model since you could be storing much more memory than needed. Please refer to https://huggingface.co/docs/safetensors/torch_shared_tensors for more information. Or open an issue.",
             )
 
         keep_name = sorted(list(complete_names))[0]
@@ -54,9 +53,8 @@ def _remove_duplicate_names(
     return to_remove
 
 
-def convert_file(pt_file: Path, sf_file: Path, discard_names: List[str]):
-    """
-    Convert a pytorch file to a safetensors file
+def convert_file(pt_file: Path, sf_file: Path, discard_names: list[str]):
+    """Convert a pytorch file to a safetensors file
     This will remove duplicate tensors from the file.
 
     Unfortunately, this might not respect *transformers* convention.
@@ -88,26 +86,49 @@ def convert_file(pt_file: Path, sf_file: Path, discard_names: List[str]):
             raise RuntimeError(f"The output tensors do not match for key {k}")
 
 
-def convert_index_file(source_file: Path, dest_file: Path, pt_files: List[Path], sf_files: List[Path]):
-    weight_file_map = {s.name: d.name for s, d in zip(pt_files, sf_files)}
+def convert_index_file(
+    source_file: Path,
+    dest_file: Path,
+    pt_files: list[Path],
+    sf_files: list[Path],
+):
+    weight_file_map = {s.name: d.name for s, d in zip(pt_files, sf_files, strict=False)}
 
-    logger.info(f"Converting pytorch .bin.index.json files to .safetensors.index.json")
-    with open(source_file, "r") as f:
+    logger.info("Converting pytorch .bin.index.json files to .safetensors.index.json")
+    with open(source_file) as f:
         index = json.load(f)
 
-    index["weight_map"] = {k: weight_file_map[v] for k, v in index["weight_map"].items()}
+    index["weight_map"] = {
+        k: weight_file_map[v] for k, v in index["weight_map"].items()
+    }
 
     with open(dest_file, "w") as f:
         json.dump(index, f, indent=4)
 
 
-def convert_files(pt_files: List[Path], sf_files: List[Path], discard_names: List[str] = None):
+def convert_files(
+    pt_files: list[Path],
+    sf_files: list[Path],
+    discard_names: list[str] = None,
+):
     assert len(pt_files) == len(sf_files)
 
     # Filter non-inference files
-    pairs = [p for p in zip(pt_files, sf_files) if not any(
-        s in p[0].name for s in ["arguments", "args", "training", "optimizer", "scheduler", "index"]
-    )]
+    pairs = [
+        p
+        for p in zip(pt_files, sf_files, strict=False)
+        if not any(
+            s in p[0].name
+            for s in [
+                "arguments",
+                "args",
+                "training",
+                "optimizer",
+                "scheduler",
+                "index",
+            ]
+        )
+    ]
 
     N = len(pairs)
 
@@ -118,8 +139,8 @@ def convert_files(pt_files: List[Path], sf_files: List[Path], discard_names: Lis
     logger.info(f"Converting {N} pytorch .bin files to .safetensors...")
 
     for i, (pt_file, sf_file) in enumerate(pairs):
-        logger.info(f"Converting: [{i + 1}/{N}] \"{pt_file.name}\"")
+        logger.info(f'Converting: [{i + 1}/{N}] "{pt_file.name}"')
         start = datetime.datetime.now()
         convert_file(pt_file, sf_file, discard_names)
         elapsed = datetime.datetime.now() - start
-        logger.info(f"Converted: [{i + 1}/{N}] \"{sf_file.name}\" -- Took: {elapsed}")
+        logger.info(f'Converted: [{i + 1}/{N}] "{sf_file.name}" -- Took: {elapsed}')

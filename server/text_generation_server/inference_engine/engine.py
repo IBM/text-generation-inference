@@ -1,19 +1,30 @@
 import os
 from abc import ABC
-from typing import Tuple, Union, Any, Optional, List
+from typing import Any
 
 import torch
-from transformers import AutoConfig, AutoTokenizer, AutoModelForCausalLM, AutoModelForSeq2SeqLM
+from transformers import (
+    AutoConfig,
+    AutoModelForCausalLM,
+    AutoModelForSeq2SeqLM,
+    AutoTokenizer,
+)
 
 from text_generation_server.utils.hub import TRUST_REMOTE_CODE
 
 
 class BaseInferenceEngine(ABC):
-    def __init__(self, model_path: str, model_config: Optional[Any]) -> None:
-        self._config = AutoConfig.from_pretrained(model_path, trust_remote_code=TRUST_REMOTE_CODE) \
-            if model_config is None else model_config
+    def __init__(self, model_path: str, model_config: Any | None) -> None:
+        self._config = (
+            AutoConfig.from_pretrained(model_path, trust_remote_code=TRUST_REMOTE_CODE)
+            if model_config is None
+            else model_config
+        )
         self.tokenizer = AutoTokenizer.from_pretrained(
-            model_path, padding_side="left", truncation_side="left", trust_remote_code=TRUST_REMOTE_CODE
+            model_path,
+            padding_side="left",
+            truncation_side="left",
+            trust_remote_code=TRUST_REMOTE_CODE,
         )
         self.model = None
 
@@ -30,7 +41,9 @@ class BaseInferenceEngine(ABC):
         else:
             self.device = torch.device("cpu")
 
-    def get_components(self) -> Tuple[AutoConfig, AutoTokenizer, Union[AutoModelForCausalLM, AutoModelForSeq2SeqLM]]:
+    def get_components(
+        self,
+    ) -> tuple[AutoConfig, AutoTokenizer, AutoModelForCausalLM | AutoModelForSeq2SeqLM]:
         return self.model.config, self.tokenizer, self.model
 
     def get_device(self) -> torch.device:

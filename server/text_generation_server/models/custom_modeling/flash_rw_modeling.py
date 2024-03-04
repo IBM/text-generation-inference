@@ -1,19 +1,17 @@
 import torch
 import torch.distributed
-
 from torch import nn
-from transformers.modeling_utils import PreTrainedModel
 from transformers.configuration_utils import PretrainedConfig
-from typing import Optional
+from transformers.modeling_utils import PreTrainedModel
 
 from text_generation_server.utils.flash_attn import attention
 from text_generation_server.utils.layers import (
-    TensorParallelRowLinear,
+    FastLayerNorm,
+    PositionRotaryEmbedding,
     TensorParallelColumnLinear,
     TensorParallelEmbedding,
     TensorParallelHead,
-    FastLayerNorm,
-    PositionRotaryEmbedding,
+    TensorParallelRowLinear,
     get_linear,
 )
 
@@ -64,7 +62,7 @@ class RWConfig(PretrainedConfig):
     ):
         if alibi:
             raise NotImplementedError(
-                "alibi is not supported by this version of the model"
+                "alibi is not supported by this version of the model",
             )
 
         self.model_type = model_type
@@ -108,7 +106,7 @@ class RWConfig(PretrainedConfig):
         if new_decoder_architecture is not None:
             self.new_decoder_architecture = new_decoder_architecture
         else:
-            self.new_decoder_architecture = (model_type == "RefinedWeb")
+            self.new_decoder_architecture = model_type == "RefinedWeb"
 
         super().__init__(bos_token_id=bos_token_id, eos_token_id=eos_token_id, **kwargs)
 
@@ -127,14 +125,16 @@ class FlashRWAttention(torch.nn.Module):
         self.head_size = self.hidden_size // self.num_heads
 
         self.rotary_emb = PositionRotaryEmbedding.static(
-            dim=self.head_size, base=10000.0, device=weights.device
+            dim=self.head_size,
+            base=10000.0,
+            device=weights.device,
         )
         self.softmax_scale = self.head_size ** (-0.5)
 
         if self.num_heads % weights.process_group.size() != 0:
             raise ValueError(
                 f"`num_heads` must be divisible by `num_shards` (got `num_heads`: {self.num_heads} "
-                f"and `num_shards`: {weights.process_group.size()}"
+                f"and `num_shards`: {weights.process_group.size()}",
             )
         self.num_heads = self.num_heads // weights.process_group.size()
 
@@ -145,7 +145,10 @@ class FlashRWAttention(torch.nn.Module):
             bias=config.bias,
         )
         self.dense = load_row(
-            config, prefix=f"{prefix}.dense", weights=weights, bias=config.bias
+            config,
+            prefix=f"{prefix}.dense",
+            weights=weights,
+            bias=config.bias,
         )
 
     def forward(
@@ -229,7 +232,9 @@ class FlashRWLargeAttention(torch.nn.Module):
         self.num_heads = num_heads // self.num_groups
 
         self.rotary_emb = PositionRotaryEmbedding.static(
-            self.head_size, base=10000.0, device=weights.device
+            self.head_size,
+            base=10000.0,
+            device=weights.device,
         )
         self.softmax_scale = self.head_size ** (-0.5)
 
@@ -237,11 +242,11 @@ class FlashRWLargeAttention(torch.nn.Module):
 
         if process_group.size() > self.num_groups:
             raise NotImplementedError(
-                "Tensor Parallelism is not implemented for world_size > n groups"
+                "Tensor Parallelism is not implemented for world_size > n groups",
             )
         if self.num_groups % process_group.size() != 0:
             raise NotImplementedError(
-                f"Tensor Parallelism is not implemented for {self.num_groups} not divisible by {process_group.size()}"
+                f"Tensor Parallelism is not implemented for {self.num_groups} not divisible by {process_group.size()}",
             )
         self.num_groups = self.num_groups // process_group.size()
 
@@ -252,7 +257,10 @@ class FlashRWLargeAttention(torch.nn.Module):
             bias=config.bias,
         )
         self.dense = load_row(
-            config, prefix=f"{prefix}.dense", weights=weights, bias=config.bias
+            config,
+            prefix=f"{prefix}.dense",
+            weights=weights,
+            bias=config.bias,
         )
 
     def forward(
@@ -314,7 +322,7 @@ class FlashRWLargeAttention(torch.nn.Module):
             )
 
         return self.dense(
-            attn_output.view(-1, self.num_groups * self.num_heads * self.head_size)
+            attn_output.view(-1, self.num_groups * self.num_heads * self.head_size),
         )
 
 
@@ -324,10 +332,16 @@ class FlashMLP(nn.Module):
         self.act = torch.nn.functional.gelu
 
         self.dense_h_to_4h = TensorParallelColumnLinear.load(
-            config, prefix=f"{prefix}.dense_h_to_4h", weights=weights, bias=config.bias
+            config,
+            prefix=f"{prefix}.dense_h_to_4h",
+            weights=weights,
+            bias=config.bias,
         )
         self.dense_4h_to_h = load_row(
-            config, prefix=f"{prefix}.dense_4h_to_h", weights=weights, bias=config.bias
+            config,
+            prefix=f"{prefix}.dense_4h_to_h",
+            weights=weights,
+            bias=config.bias,
         )
 
     def forward(self, hidden_states):
@@ -427,7 +441,8 @@ class FlashRWLayer(nn.Module):
             )
 
             hidden_states, residual = self.post_attention_layernorm(
-                hidden_states, residual
+                hidden_states,
+                residual,
             )
 
             mlp_output = self.mlp(hidden_states)
@@ -509,14 +524,15 @@ class FlashRWModel(FlashRWPreTrainedModel):
         self.config = config
 
         self.word_embeddings = TensorParallelEmbedding(
-            prefix="transformer.word_embeddings", weights=weights
+            prefix="transformer.word_embeddings",
+            weights=weights,
         )
         if config.new_decoder_architecture:  # "RefinedWeb"
             self.h = nn.ModuleList(
                 [
                     FlashRWLargeLayer(layer_id, config, weights)
                     for layer_id in range(config.num_hidden_layers)
-                ]
+                ],
             )
             self.cache_size = (
                 self.h[0].self_attention.num_groups,
@@ -528,7 +544,7 @@ class FlashRWModel(FlashRWPreTrainedModel):
                 [
                     FlashRWLayer(layer_id, config, weights)
                     for layer_id in range(config.num_hidden_layers)
-                ]
+                ],
             )
             self.cache_size = (
                 2,
@@ -551,13 +567,13 @@ class FlashRWModel(FlashRWPreTrainedModel):
         cu_seqlens,
         cu_seqlens_q,
         max_s,
-        inputs_embeds: Optional[torch.Tensor] = None,
+        inputs_embeds: torch.Tensor | None = None,
         past_key_values=None,
-        pre_allocate_past_size: Optional[int] = None,
+        pre_allocate_past_size: int | None = None,
     ):
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError(
-                "You cannot specify both input_ids and inputs_embeds at the same time"
+                "You cannot specify both input_ids and inputs_embeds at the same time",
             )
 
         if inputs_embeds is not None:
@@ -575,7 +591,7 @@ class FlashRWModel(FlashRWPreTrainedModel):
                     if pre_allocate_past_size is None
                     else pre_allocate_past_size,
                     *self.cache_size,
-                )
+                ),
             )
             layer_past_present_indices = None
             slice_past_index = len(hidden_states)
@@ -588,7 +604,9 @@ class FlashRWModel(FlashRWPreTrainedModel):
         # Get rotary cos and sin for this forward
         # Avoid to index in each layer
         cos, sin = self.h[0].self_attention.rotary_emb.get_cos_sin(
-            position_ids, max_s, hidden_states.dtype
+            position_ids,
+            max_s,
+            hidden_states.dtype,
         )
 
         residual = None
@@ -624,7 +642,9 @@ class FlashRWForCausalLM(FlashRWPreTrainedModel):
         self.transformer = FlashRWModel(config, weights)
 
         self.lm_head = TensorParallelHead.load(
-            config, prefix="lm_head", weights=weights
+            config,
+            prefix="lm_head",
+            weights=weights,
         )
 
     def get_input_embeddings(self) -> nn.Module:
@@ -637,10 +657,10 @@ class FlashRWForCausalLM(FlashRWPreTrainedModel):
         cu_seqlens,
         cu_seqlens_q,
         max_s,
-        inputs_embeds: Optional[torch.Tensor] = None,
-        past_key_values: Optional[torch.Tensor] = None,
-        pre_allocate_past_size: Optional[int] = None,
-        lm_head_indices: Optional[torch.Tensor] = None,
+        inputs_embeds: torch.Tensor | None = None,
+        past_key_values: torch.Tensor | None = None,
+        pre_allocate_past_size: int | None = None,
+        lm_head_indices: torch.Tensor | None = None,
     ):
         hidden_states, present = self.transformer(
             input_ids,

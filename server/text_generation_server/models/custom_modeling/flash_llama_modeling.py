@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2022 EleutherAI and the HuggingFace Inc. team. All rights reserved.
 #
 # This code is based on EleutherAI's GPT-NeoX library and the GPT-NeoX
@@ -18,24 +17,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
-import torch.distributed
-
-from torch import nn
-from transformers.activations import ACT2FN
-from transformers.configuration_utils import PretrainedConfig
-from typing import Optional
 
 # Flash attention imports
 import dropout_layer_norm
+import torch
+import torch.distributed
+from torch import nn
+from transformers.activations import ACT2FN
+from transformers.configuration_utils import PretrainedConfig
 
 from text_generation_server.utils.flash_attn import attention
 from text_generation_server.utils.layers import (
-    TensorParallelRowLinear,
+    PositionRotaryEmbedding,
     TensorParallelColumnLinear,
     TensorParallelEmbedding,
-    PositionRotaryEmbedding,
     TensorParallelHead,
+    TensorParallelRowLinear,
     get_linear,
 )
 
@@ -96,9 +93,7 @@ class LlamaConfig(PretrainedConfig):
 
 class LlamaRMSNorm(nn.Module):
     def __init__(self, prefix, weights, eps=1e-6):
-        """
-        LlamaRMSNorm is equivalent to T5LayerNorm
-        """
+        """LlamaRMSNorm is equivalent to T5LayerNorm"""
         super().__init__()
 
         weight = weights.get_tensor(f"{prefix}.weight")
@@ -114,7 +109,7 @@ class LlamaRMSNorm(nn.Module):
             hidden_states = hidden_states.to(torch.float32)
             variance = hidden_states.pow(2).mean(-1, keepdim=True)
             hidden_states = hidden_states * torch.rsqrt(
-                variance + self.variance_epsilon
+                variance + self.variance_epsilon,
             )
 
             # convert into half-precision if necessary
@@ -154,7 +149,7 @@ def _load_gqa(config, prefix: str, weights):
     weight = weights.get_multi_weights_col(
         prefixes=[f"{prefix}.q_proj", f"{prefix}.k_proj", f"{prefix}.v_proj"],
         quantize=config.quantize,
-        dim=0
+        dim=0,
     )
 
     if config.quantize != "gptq":
@@ -163,12 +158,17 @@ def _load_gqa(config, prefix: str, weights):
         head_size = config.hidden_size // config.num_attention_heads
         num_heads = config.num_attention_heads // weights.process_group.size()
         num_key_value_heads = config.num_key_value_heads // weights.process_group.size()
-        assert list(weight.shape) == [
-            (num_heads + 2 * num_key_value_heads) * head_size,
-            config.hidden_size,
-            ], f"{list(weight.shape)} != {[(num_heads + 2 * config.num_key_value_heads) * head_size, config.hidden_size]}"
+        assert (
+            list(weight.shape)
+            == [
+                (num_heads + 2 * num_key_value_heads) * head_size,
+                config.hidden_size,
+            ]
+        ), f"{list(weight.shape)} != {[(num_heads + 2 * config.num_key_value_heads) * head_size, config.hidden_size]}"
 
-    return TensorParallelColumnLinear(get_linear(weight, bias=None, quantize=config.quantize))
+    return TensorParallelColumnLinear(
+        get_linear(weight, bias=None, quantize=config.quantize),
+    )
 
 
 class FlashLlamaAttention(torch.nn.Module):
@@ -187,7 +187,9 @@ class FlashLlamaAttention(torch.nn.Module):
         #     prefix=f"{prefix}.rotary_emb", weights=weights
         # )
         self.rotary_emb = PositionRotaryEmbedding.static(
-            dim=self.head_size, base=config.rope_theta, device=weights.device
+            dim=self.head_size,
+            base=config.rope_theta,
+            device=weights.device,
         )
 
         self.softmax_scale = self.head_size**-0.5
@@ -195,7 +197,7 @@ class FlashLlamaAttention(torch.nn.Module):
         if self.num_heads % weights.process_group.size() != 0:
             raise ValueError(
                 f"`num_heads` must be divisible by `num_shards` (got `num_heads`: {self.num_heads} "
-                f"and `num_shards`: {weights.process_group.size()}"
+                f"and `num_shards`: {weights.process_group.size()}",
             )
         self.num_heads = self.num_heads // weights.process_group.size()
         self.num_key_value_heads = (
@@ -321,12 +323,16 @@ class FlashLlamaLayer(nn.Module):
         super().__init__()
         prefix = f"model.layers.{layer_id}"
         self.self_attn = FlashLlamaAttention(
-            prefix=f"{prefix}.self_attn", config=config, weights=weights
+            prefix=f"{prefix}.self_attn",
+            config=config,
+            weights=weights,
         )
         self.mlp = LlamaMLP(prefix=f"{prefix}.mlp", config=config, weights=weights)
 
         self.input_layernorm = LlamaRMSNorm(
-            prefix=f"{prefix}.input_layernorm", weights=weights, eps=config.rms_norm_eps
+            prefix=f"{prefix}.input_layernorm",
+            weights=weights,
+            eps=config.rms_norm_eps,
         )
         self.post_attention_layernorm = LlamaRMSNorm(
             prefix=f"{prefix}.post_attention_layernorm",
@@ -362,7 +368,8 @@ class FlashLlamaLayer(nn.Module):
 
         # faster post attention rms norm
         normed_attn_res_output, attn_res = self.post_attention_layernorm(
-            attn_output, res
+            attn_output,
+            res,
         )
 
         mlp_output = self.mlp(normed_attn_res_output)
@@ -379,7 +386,8 @@ class FlashLlamaModel(torch.nn.Module):
         self.tp_rank = process_group.rank()
         self.tp_world_size = process_group.size()
         self.embed_tokens = TensorParallelEmbedding(
-            prefix="model.embed_tokens", weights=weights
+            prefix="model.embed_tokens",
+            weights=weights,
         )
         self.layers = nn.ModuleList(
             [
@@ -389,10 +397,12 @@ class FlashLlamaModel(torch.nn.Module):
                     weights,
                 )
                 for layer_id in range(config.num_hidden_layers)
-            ]
+            ],
         )
         self.norm = LlamaRMSNorm(
-            prefix="model.norm", weights=weights, eps=config.rms_norm_eps
+            prefix="model.norm",
+            weights=weights,
+            eps=config.rms_norm_eps,
         )
 
         self.gradient_checkpointing = False
@@ -410,13 +420,13 @@ class FlashLlamaModel(torch.nn.Module):
         cu_seqlens,
         cu_seqlens_q,
         max_s,
-        inputs_embeds: Optional[torch.Tensor] = None,
-        past_key_values: Optional[torch.Tensor] = None,
-        pre_allocate_past_size: Optional[int] = None,
+        inputs_embeds: torch.Tensor | None = None,
+        past_key_values: torch.Tensor | None = None,
+        pre_allocate_past_size: int | None = None,
     ):
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError(
-                "You cannot specify both input_ids and inputs_embeds at the same time"
+                "You cannot specify both input_ids and inputs_embeds at the same time",
             )
 
         if inputs_embeds is not None:
@@ -436,7 +446,7 @@ class FlashLlamaModel(torch.nn.Module):
                     2,
                     self.num_key_value_heads,
                     self.head_size,
-                )
+                ),
             )
             layer_past_present_indices = None
             slice_past_index = len(hidden_states)
@@ -449,7 +459,9 @@ class FlashLlamaModel(torch.nn.Module):
         # Get rotary cos and sin for this forward
         # Avoid to index in each layer
         cos, sin = self.layers[0].self_attn.rotary_emb.get_cos_sin(
-            position_ids, max_s, hidden_states.dtype
+            position_ids,
+            max_s,
+            hidden_states.dtype,
         )
 
         residual = None
@@ -499,12 +511,11 @@ class FlashLlamaForCausalLM(torch.nn.Module):
         cu_seqlens,
         cu_seqlens_q,
         max_s,
-        inputs_embeds: Optional[torch.Tensor] = None,
-        past_key_values: Optional[torch.Tensor] = None,
-        pre_allocate_past_size: Optional[int] = None,
-        lm_head_indices: Optional[torch.Tensor] = None,
+        inputs_embeds: torch.Tensor | None = None,
+        past_key_values: torch.Tensor | None = None,
+        pre_allocate_past_size: int | None = None,
+        lm_head_indices: torch.Tensor | None = None,
     ):
-
         hidden_states, present = self.model(
             input_ids,
             position_ids,

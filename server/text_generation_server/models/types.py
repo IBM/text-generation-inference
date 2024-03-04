@@ -1,11 +1,8 @@
-from functools import total_ordering
-
-import torch
-
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Optional
 
+import torch
 from transformers import PreTrainedTokenizerBase
 
 from text_generation_server.pb import generate_pb2
@@ -36,25 +33,25 @@ class Batch(ABC):
     @classmethod
     @abstractmethod
     def from_pb(
-            cls,
-            pb: generate_pb2.Batch,
-            tokenizer: PreTrainedTokenizerBase,
-            dtype: torch.dtype,
-            device: torch.device,
-            embeddings_lookup: Optional,
-            prefix_cache: Optional[PrefixCache],
-            use_position_ids: bool = False,
-    ) -> Tuple["Batch", List[GenerateError]]:
+        cls,
+        pb: generate_pb2.Batch,
+        tokenizer: PreTrainedTokenizerBase,
+        dtype: torch.dtype,
+        device: torch.device,
+        embeddings_lookup: Optional,
+        prefix_cache: PrefixCache | None,
+        use_position_ids: bool = False,
+    ) -> tuple["Batch", list[GenerateError]]:
         raise NotImplementedError
 
     @classmethod
     @abstractmethod
-    def concatenate(cls, batches: List["Batch"]) -> "Batch":
+    def concatenate(cls, batches: list["Batch"]) -> "Batch":
         raise NotImplementedError
 
     @classmethod
     @abstractmethod
-    def prune(cls, batch: "Batch", completed_ids: List[int]) -> Optional["Batch"]:
+    def prune(cls, batch: "Batch", completed_ids: list[int]) -> Optional["Batch"]:
         raise NotImplementedError
 
     def compact(self):

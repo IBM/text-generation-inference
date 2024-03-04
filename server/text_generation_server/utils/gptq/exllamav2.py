@@ -4,7 +4,7 @@
 import torch
 from torch import nn
 
-from exllamav2_kernels import make_q_matrix, gemm_half_q_half
+from exllamav2_kernels import gemm_half_q_half, make_q_matrix
 from text_generation_server.utils import print_rank_n
 
 # Dummy tensor to pass instead of g_idx since there is no way to pass "None" to a C++ extension
@@ -21,17 +21,18 @@ def ext_gemm_half_q_half(x, q_handle, q4_width, force_cuda):
 
 
 def ext_make_q_matrix(w: dict, temp_dq, key: str = None):
-    """
-    Create Q matrix
-    """
-
+    """Create Q matrix"""
     if w["scales"].dtype == torch.float:
         w["scales"] = w["scales"].half()
 
     # GPTQ with g_idx (act_order)
     g_idx = w.get("g_idx")
     if g_idx is not None and g_idx.any():
-        w["q_perm"] = torch.empty((w["qweight"].shape[0] * 8,), dtype=torch.short, device=w["qweight"].device)
+        w["q_perm"] = torch.empty(
+            (w["qweight"].shape[0] * 8,),
+            dtype=torch.short,
+            device=w["qweight"].device,
+        )
         w["q_invperm"] = torch.empty_like(w["q_perm"])
         # make_q4 segfaults if g_idx is not on cpu in the act-order case. In the non act-order case, None needs to be passed for g_idx.
         return make_q_matrix(
@@ -74,9 +75,13 @@ def _elements(size_bytes):
 class ExLlamaV2DeviceTensor:
     def __init__(self, device, scratch_bytes):
         self.device = device
-        print_rank_n(f"Allocating {scratch_bytes // (1024 * 1024)} MiB for exllama v2 scratch space")
+        print_rank_n(
+            f"Allocating {scratch_bytes // (1024 * 1024)} MiB for exllama v2 scratch space",
+        )
         self.scratch = torch.empty(
-            _elements(scratch_bytes), dtype=torch.half, device=self.device
+            _elements(scratch_bytes),
+            dtype=torch.half,
+            device=self.device,
         )
 
     def get_scratch_slice(self, size_bytes):
@@ -99,6 +104,7 @@ def set_device(device):
 
 class Ex4bitLinearV2(nn.Module):
     """Linear layer implementation with per-group 4-bit quantization of the weights"""
+
     def __init__(self, qweight, qzeros, scales, g_idx, bias, bits, groupsize):
         global MAX_INOUT_PRODUCT
         super().__init__()
@@ -116,7 +122,7 @@ class Ex4bitLinearV2(nn.Module):
 
         assert self.device.type == "cuda"
         assert self.height % 32 == 0
-        assert self.width  % 32 == 0
+        assert self.width % 32 == 0
 
         # Update max outfeatures & inout_product so far for later call to set_device
         MAX_INOUT_PRODUCT = max(MAX_INOUT_PRODUCT, self.width * self.height)
@@ -128,12 +134,14 @@ class Ex4bitLinearV2(nn.Module):
             "qweight": self.qweight,
             "qzeros": self.qzeros,
             "scales": self.scales,
-            "g_idx": self.g_idx
+            "g_idx": self.g_idx,
         }
 
         self.q_handle = ext_make_q_matrix(
             self.q_tensors,
-            DEVICE_TENSOR.get_scratch_slice(temp_dq_size(self.height * self.width)),  # temp_dq
+            DEVICE_TENSOR.get_scratch_slice(
+                temp_dq_size(self.height * self.width),
+            ),  # temp_dq
         )
 
     def forward(self, x, force_cuda=False):

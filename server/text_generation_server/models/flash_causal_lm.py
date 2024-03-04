@@ -1,19 +1,15 @@
 import logging
 import time
+from dataclasses import dataclass
 from operator import itemgetter
+from typing import Any, Optional
 
 import torch
 import torch.distributed
-
-from torch.nn import functional as F
-
-from dataclasses import dataclass
 from transformers import PreTrainedTokenizerBase
-from typing import Optional, Tuple, List, Type, Union, Any
 
 from text_generation_server.inference_engine import get_inference_engine_class
 from text_generation_server.models import Model
-
 from text_generation_server.models.types import Batch, GenerateError
 from text_generation_server.pb import generate_pb2
 from text_generation_server.pb.generate_pb2 import InputTokens
@@ -21,14 +17,16 @@ from text_generation_server.prompt_cache import PrefixCache
 from text_generation_server.utils.hub import get_model_path
 from text_generation_server.utils.token_types import TokenInfo
 from text_generation_server.utils.tokens import (
-    HeterogeneousNextTokenChooser, get_token_info, get_input_tokens_info,
+    HeterogeneousNextTokenChooser,
+    get_input_tokens_info,
+    get_token_info,
 )
 
 
 @dataclass
 class FlashCausalLMBatch(Batch):
     batch_id: int
-    requests: List[generate_pb2.Request]
+    requests: list[generate_pb2.Request]
 
     # Decoder values
     # tensors have sequences from the batch concatenated
@@ -36,13 +34,13 @@ class FlashCausalLMBatch(Batch):
     input_ids: torch.Tensor
     position_ids: torch.Tensor
     # shape is [sum(seq_lengths), embedding_size]
-    inputs_embeds: Optional[torch.Tensor]
+    inputs_embeds: torch.Tensor | None
     # cumulative sequence lengths
     cu_seqlens: torch.Tensor
     # cumulative query sequence lengths, only used in decode
-    cu_seqlens_q: Optional[torch.Tensor]
+    cu_seqlens_q: torch.Tensor | None
     # past key values, only used in decode
-    past_key_values: Optional[torch.Tensor]
+    past_key_values: torch.Tensor | None
     # maximum of the input tokens across the batch (including prefix)
     max_seqlen: int
 
@@ -50,12 +48,12 @@ class FlashCausalLMBatch(Batch):
     all_input_ids_tensor: torch.Tensor
 
     # Lengths of all generations present in the batch
-    input_lengths: List[int]
+    input_lengths: list[int]
 
     # Maximum possible number of tokens for each request:
     #   (truncated) original input length + prefix length + max output tokens
     # Used for sizing/preallocating kv cache and all_input_ids_tensor
-    total_lengths: List[int]
+    total_lengths: list[int]
     pad_token_id: int
 
     # Generation helpers
@@ -72,9 +70,9 @@ class FlashCausalLMBatch(Batch):
         dtype: torch.dtype,
         device: torch.device,
         embeddings_lookup: Optional,
-        prefix_cache: Optional[PrefixCache],
+        prefix_cache: PrefixCache | None,
         use_position_ids: bool = True,
-    ) -> Tuple[Optional["FlashCausalLMBatch"], List[GenerateError]]:
+    ) -> tuple[Optional["FlashCausalLMBatch"], list[GenerateError]]:
         errors = []
         batch_inputs = []
         requests = pb.requests
@@ -99,7 +97,7 @@ class FlashCausalLMBatch(Batch):
                     prefix_embeds = prefix_cache.get(r.prefix_id)
                 except Exception:
                     message = f"Prefix lookup error for request #{r.id}, prefix id {r.prefix_id}"
-                    logging.error(message)
+                    logging.exception(message)
                     # Exclude this request from the batch, return an error
                     errors.append(GenerateError(request_id=r.id, message=message))
                     continue
@@ -115,7 +113,11 @@ class FlashCausalLMBatch(Batch):
 
         # remove errored requests
         if errors:
-            requests = [r for r in pb.requests if not any(r.id == er.request_id for er in errors)]
+            requests = [
+                r
+                for r in pb.requests
+                if not any(r.id == er.request_id for er in errors)
+            ]
             # early exit if no requests are valid
             if not requests:
                 return None, errors
@@ -123,7 +125,10 @@ class FlashCausalLMBatch(Batch):
         # return as lists to avoid unnecessary padding;
         # sequences will be concatenated across the batch
         batch_tokenized_inputs = tokenizer(
-            batch_inputs, truncation=True, max_length=max_seqlen, return_token_type_ids=False
+            batch_inputs,
+            truncation=True,
+            max_length=max_seqlen,
+            return_token_type_ids=False,
         )["input_ids"]
 
         # Process inputs to generate the needed tensors
@@ -135,11 +140,14 @@ class FlashCausalLMBatch(Batch):
         all_input_ids_tensor = torch.full(
             (len(batch_inputs), max(total_lengths)),
             tokenizer.pad_token_id,
-            dtype=torch.int64, device=device,
+            dtype=torch.int64,
+            device=device,
         )
-        for i, (r, tokenized_input, input_length) in enumerate(zip(requests, batch_tokenized_inputs, input_lengths)):
+        for i, (r, tokenized_input, input_length) in enumerate(
+            zip(requests, batch_tokenized_inputs, input_lengths, strict=False),
+        ):
             if r.truncate:
-                tokenized_input = tokenized_input[-r.input_length:]
+                tokenized_input = tokenized_input[-r.input_length :]
                 # Fill in bos token in truncation case if needed
                 if getattr(tokenizer, "add_bos_token", False):
                     tokenized_input[0] = tokenizer.bos_token_id
@@ -147,8 +155,15 @@ class FlashCausalLMBatch(Batch):
             # Instead of adding the padding for prefix tokens to
             # tokenized_input, just embed it in all_input_ids_tensor and copy
             # the padding from it when appending to input_ids (if needed)
-            all_input_ids_tensor[i, input_length - r.input_length:input_length] = tokenized_input
-            input_ids.append(tokenized_input if input_length == r.input_length else all_input_ids_tensor[i, :input_length])
+            all_input_ids_tensor[
+                i,
+                input_length - r.input_length : input_length,
+            ] = tokenized_input
+            input_ids.append(
+                tokenized_input
+                if input_length == r.input_length
+                else all_input_ids_tensor[i, :input_length],
+            )
             next_token_chooser_parameters.append(r.parameters)
             return_logprobs.append(r.details.logprobs)
             position_ids.append(torch.arange(0, input_length))
@@ -163,13 +178,17 @@ class FlashCausalLMBatch(Batch):
             for i, p in prefix_ids.items():
                 start = cu_seqlens[i]
                 prefix_length = p.shape[0]
-                inputs_embeds[start:start+prefix_length, :] = p
+                inputs_embeds[start : start + prefix_length, :] = p
         else:
             inputs_embeds = None
 
         next_token_chooser = HeterogeneousNextTokenChooser.from_pb(
             pb=next_token_chooser_parameters,
-            model_eos_token_id=getattr(tokenizer, 'model_eos_token_id', tokenizer.eos_token_id),
+            model_eos_token_id=getattr(
+                tokenizer,
+                "model_eos_token_id",
+                tokenizer.eos_token_id,
+            ),
             model_pad_token_id=tokenizer.pad_token_id,
             return_logprobs=return_logprobs,
             dtype=dtype,
@@ -194,7 +213,7 @@ class FlashCausalLMBatch(Batch):
         ), errors
 
     @classmethod
-    def concatenate(cls, batches: List["FlashCausalLMBatch"]) -> "FlashCausalLMBatch":
+    def concatenate(cls, batches: list["FlashCausalLMBatch"]) -> "FlashCausalLMBatch":
         # Batch attributes
         requests = []
         input_lengths = []
@@ -240,14 +259,16 @@ class FlashCausalLMBatch(Batch):
             input_ids.append(batch.input_ids)
             position_ids.append(batch.position_ids)
             past_key_values.append(
-                batch.past_key_values if len(batch) != 1
-                else batch.past_key_values[:, :batch.cu_seqlens[-1]]
+                batch.past_key_values
+                if len(batch) != 1
+                else batch.past_key_values[:, : batch.cu_seqlens[-1]],
             )
             batch.past_key_values = None
 
             end_index = start_index + len(batch)
             all_input_ids_tensor[
-                start_index:end_index, :batch.all_input_ids_tensor.shape[1]
+                start_index:end_index,
+                : batch.all_input_ids_tensor.shape[1],
             ] = batch.all_input_ids_tensor
             start_index = end_index
 
@@ -273,7 +294,11 @@ class FlashCausalLMBatch(Batch):
             inputs_embeds=None,
             position_ids=torch.cat(position_ids),
             cu_seqlens=torch.cat(cu_seqlens),
-            cu_seqlens_q=torch.arange(len(requests) + 1, device=device, dtype=torch.int32),
+            cu_seqlens_q=torch.arange(
+                len(requests) + 1,
+                device=device,
+                dtype=torch.int32,
+            ),
             max_seqlen=max_seqlen,
             # Concat on dim=1 as first dim represents the model layers
             past_key_values=torch.cat(past_key_values, dim=1),
@@ -289,10 +314,11 @@ class FlashCausalLMBatch(Batch):
 
     @classmethod
     def prune(
-        cls, batch: "FlashCausalLMBatch", completed_ids: List[int]
+        cls,
+        batch: "FlashCausalLMBatch",
+        completed_ids: list[int],
     ) -> Optional["FlashCausalLMBatch"]:
         """Prune completed entries from a batch"""
-
         if not completed_ids:
             # Nothing to prune
             return batch
@@ -311,17 +337,17 @@ class FlashCausalLMBatch(Batch):
             def slice_list(l):
                 return (l[index],)
 
-            start, end = batch.cu_seqlens[index], batch.cu_seqlens[index+1]
+            start, end = batch.cu_seqlens[index], batch.cu_seqlens[index + 1]
             past_slice = batch.past_key_values[:, start:end]
             shape = list(batch.past_key_values.shape)
             # Preallocate single-batch tensor to maximum size
             shape[1] = batch.total_lengths[index]
             batch.past_key_values = batch.past_key_values.new_zeros(shape)
-            batch.past_key_values[:, :(end - start)] = past_slice
+            batch.past_key_values[:, : (end - start)] = past_slice
         else:
             slice_list = itemgetter(*keep_indices)
             sliced = [
-                batch.past_key_values[:, batch.cu_seqlens[i]: batch.cu_seqlens[i+1]]
+                batch.past_key_values[:, batch.cu_seqlens[i] : batch.cu_seqlens[i + 1]]
                 for i in keep_indices
             ]
             batch.past_key_values = torch.cat(sliced, dim=1)
@@ -337,18 +363,21 @@ class FlashCausalLMBatch(Batch):
         batch.input_ids = batch.input_ids[keep_indices]
         batch.position_ids = batch.position_ids[keep_indices]
 
-        batch.all_input_ids_tensor = batch.all_input_ids_tensor[keep_indices, :max(batch.total_lengths)]
+        batch.all_input_ids_tensor = batch.all_input_ids_tensor[
+            keep_indices,
+            : max(batch.total_lengths),
+        ]
 
         if new_size == 1:
             batch.cu_seqlens = batch.cu_seqlens.new_tensor([0, batch.input_lengths[0]])
         else:
             # Recalculate cumulative seq lengths
-            batch.cu_seqlens = batch.cu_seqlens[:new_size + 1]
+            batch.cu_seqlens = batch.cu_seqlens[: new_size + 1]
             batch.cu_seqlens[1:] = batch.position_ids
             batch.cu_seqlens[1:].add_(1)
             torch.cumsum(batch.cu_seqlens, dim=0, out=batch.cu_seqlens)
 
-        batch.cu_seqlens_q = batch.cu_seqlens_q[:new_size + 1]
+        batch.cu_seqlens_q = batch.cu_seqlens_q[: new_size + 1]
 
         return batch
 
@@ -369,10 +398,10 @@ class FlashCausalLM(Model):
         revision: str,
         deployment_framework: str,
         dtype: torch.dtype,
-        quantize: Optional[str],
-        model_config: Union[Any] = None,
+        quantize: str | None,
+        model_config: Any = None,
         auto_model_class=None,
-        max_sequence_length: Optional[int] = None,
+        max_sequence_length: int | None = None,
     ):
         if not torch.cuda.is_available():
             raise NotImplementedError("FlashCausalLM is only available on GPU")
@@ -382,10 +411,19 @@ class FlashCausalLM(Model):
         model_path = get_model_path(model_name, revision)
 
         inference_engine = get_inference_engine_class(deployment_framework)(
-            model_path, auto_model_class, dtype, quantize, model_config, max_sequence_length
+            model_path,
+            auto_model_class,
+            dtype,
+            quantize,
+            model_config,
+            max_sequence_length,
         )
 
-        super(FlashCausalLM, self).__init__(inference_engine, dtype, max_sequence_length)
+        super(FlashCausalLM, self).__init__(
+            inference_engine,
+            dtype,
+            max_sequence_length,
+        )
         self.use_position_ids = True
 
         if self.model.config.pad_token_id is not None:
@@ -399,16 +437,21 @@ class FlashCausalLM(Model):
                 self.tokenizer.add_special_tokens({"pad_token": "[PAD]"})
 
     @property
-    def batch_type(self) -> Type[FlashCausalLMBatch]:
+    def batch_type(self) -> type[FlashCausalLMBatch]:
         return FlashCausalLMBatch
 
     def generate_token(
-        self, batch: FlashCausalLMBatch, first: bool = False, for_concat: bool = False,
-    ) -> Tuple[List[TokenInfo], Optional[List[InputTokens]], List[GenerateError], int]:
-
+        self,
+        batch: FlashCausalLMBatch,
+        first: bool = False,
+        for_concat: bool = False,
+    ) -> tuple[list[TokenInfo], list[InputTokens] | None, list[GenerateError], int]:
         batch_size = len(batch)
-        past_key_values = batch.past_key_values if first or batch_size > 1 \
-            else batch.past_key_values[:, :batch.cu_seqlens[-1]]
+        past_key_values = (
+            batch.past_key_values
+            if first or batch_size > 1
+            else batch.past_key_values[:, : batch.cu_seqlens[-1]]
+        )
 
         if first and batch_size == 1:
             # Preallocate past_key_value tensor for batch size == 1
@@ -434,7 +477,11 @@ class FlashCausalLM(Model):
         # Update present
         present_pad = self.present_pad
         if present_pad is None:
-            present_pad = self.present_pad = present.new_zeros(present.shape[0], 1, *present.shape[2:])
+            present_pad = self.present_pad = present.new_zeros(
+                present.shape[0],
+                1,
+                *present.shape[2:],
+            )
 
         if batch_size > 1:
             new_past = []
@@ -449,7 +496,10 @@ class FlashCausalLM(Model):
         if first:
             if batch_size == 1:
                 batch.past_key_values = present
-            generated_tokens, input_token_infos, decode_errors = self._process_prefill(batch, out)
+            generated_tokens, input_token_infos, decode_errors = self._process_prefill(
+                batch,
+                out,
+            )
         else:
             generated_tokens, decode_errors = self._process_decode(batch, out)
             input_token_infos = None
@@ -460,19 +510,21 @@ class FlashCausalLM(Model):
         return generated_tokens, input_token_infos, decode_errors, forward_time_ns
 
     def _process_prefill(
-        self, batch: FlashCausalLMBatch, out,
-    ) -> Tuple[List[TokenInfo], List[InputTokens], List[GenerateError]]:
-
+        self,
+        batch: FlashCausalLMBatch,
+        out,
+    ) -> tuple[list[TokenInfo], list[InputTokens], list[GenerateError]]:
         # Generated tokens
-        generated_tokens: List[TokenInfo] = []
-        input_token_infos: List[InputTokens] = []
-        decode_errors: List[GenerateError] = []
+        generated_tokens: list[TokenInfo] = []
+        input_token_infos: list[InputTokens] = []
+        decode_errors: list[GenerateError] = []
 
         # Create position_ids tensor before incrementing input lengths
         batch.position_ids = batch.position_ids.new_tensor(batch.input_lengths)
 
         batch.input_ids = self._process_new_tokens(
-            batch, out,
+            batch,
+            out,
             generated_tokens,
             decode_errors,
             input_token_infos,
@@ -483,22 +535,31 @@ class FlashCausalLM(Model):
         batch.inputs_embeds = None
         batch_size = len(batch)
         batch.cu_seqlens_q = torch.arange(
-            batch_size + 1, device=self.device, dtype=torch.int32
+            batch_size + 1,
+            device=self.device,
+            dtype=torch.int32,
         )
 
         return generated_tokens, input_token_infos, decode_errors
 
     def _process_decode(
-        self, batch: FlashCausalLMBatch, out,
-    ) -> Tuple[List[TokenInfo], List[GenerateError]]:
+        self,
+        batch: FlashCausalLMBatch,
+        out,
+    ) -> tuple[list[TokenInfo], list[GenerateError]]:
         # These are appended to in _process_new_tokens
-        generated_tokens: List[TokenInfo] = []
-        decode_errors: List[GenerateError] = []
+        generated_tokens: list[TokenInfo] = []
+        decode_errors: list[GenerateError] = []
 
         # position_ids are used in _process_new_tokens and must be incremented first
         batch.position_ids += 1
         batch.input_ids = self._process_new_tokens(
-            batch, out, generated_tokens, decode_errors, None, False,
+            batch,
+            out,
+            generated_tokens,
+            decode_errors,
+            None,
+            False,
         )
 
         return generated_tokens, decode_errors
@@ -507,9 +568,9 @@ class FlashCausalLM(Model):
         self,
         batch: FlashCausalLMBatch,
         out,
-        generated_tokens: List[TokenInfo],
-        decode_errors: List[GenerateError],
-        input_token_infos: List[InputTokens],
+        generated_tokens: list[TokenInfo],
+        decode_errors: list[GenerateError],
+        input_token_infos: list[InputTokens],
         prefill: bool,
     ):
         if prefill:
@@ -522,8 +583,13 @@ class FlashCausalLM(Model):
             # out is of shape [batch_size, vocab_size] already (1 token per request in batch)
             logits = out
 
-        next_token_ids, next_token_scores, next_token_logprobs = batch.next_token_chooser(
-            input_ids=batch.all_input_ids_tensor[:, :batch.max_seqlen], scores=logits,
+        (
+            next_token_ids,
+            next_token_scores,
+            next_token_logprobs,
+        ) = batch.next_token_chooser(
+            input_ids=batch.all_input_ids_tensor[:, : batch.max_seqlen],
+            scores=logits,
         )
 
         # add the next token ids to all_input_ids_tensor
@@ -531,7 +597,9 @@ class FlashCausalLM(Model):
         # before the loop. Just in terms of it being more likely for things to
         # run in parallel (since cuda ops happen async when possible)
         batch.all_input_ids_tensor.scatter_(
-            dim=1, index=batch.position_ids[:, None], src=next_token_ids[:, None]
+            dim=1,
+            index=batch.position_ids[:, None],
+            src=next_token_ids[:, None],
         )
 
         iterator = zip(
@@ -541,12 +609,13 @@ class FlashCausalLM(Model):
             next_token_ids,
             next_token_scores,
             next_token_logprobs,
-            batch.all_input_ids_tensor
+            batch.all_input_ids_tensor,
+            strict=False,
         )
         for i, (
             request,
             input_length,
-            start_index, # cu_seqlens contains the start index for each request
+            start_index,  # cu_seqlens contains the start index for each request
             next_token,
             scores,
             logprobs,
@@ -556,10 +625,19 @@ class FlashCausalLM(Model):
                 # Ensure tok view is 1st order, everything else is second.
                 tok_view = next_token.view(-1)
                 scores_view = scores.view(-1, scores.shape[-1])
-                logprobs_view = logprobs.view(-1, logprobs.shape[-1]) if request.details.logprobs else None
+                logprobs_view = (
+                    logprobs.view(-1, logprobs.shape[-1])
+                    if request.details.logprobs
+                    else None
+                )
 
                 # Get next token info
-                token_info = get_token_info(request, scores_view, tok_view, logprobs_view)
+                token_info = get_token_info(
+                    request,
+                    scores_view,
+                    tok_view,
+                    logprobs_view,
+                )
                 # Add to the tokens to return
                 generated_tokens.append(token_info)
 
@@ -568,21 +646,24 @@ class FlashCausalLM(Model):
                 if prefill and request.details.input_toks:
                     end_index = start_index + input_length
                     # we don't want to pass the last logits in to get_input_tokens_info
-                    input_token_logits = out[start_index:end_index-1, :]
+                    input_token_logits = out[start_index : end_index - 1, :]
                     input_token_infos.append(
                         get_input_tokens_info(
                             request,
                             all_input_ids[:input_length],
                             input_token_logits,
-                        )
+                        ),
                     )
 
             except Exception as e:
                 logging.exception(f"token decoding error for request #{request.id}")
                 # Add to the errors to return
-                decode_errors.append(GenerateError(
-                    request_id=request.id, message=f"Token decoding error: {str(e)}"
-                ))
+                decode_errors.append(
+                    GenerateError(
+                        request_id=request.id,
+                        message=f"Token decoding error: {e!s}",
+                    ),
+                )
             batch.input_lengths[i] += 1
 
         return next_token_ids

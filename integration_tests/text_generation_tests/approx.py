@@ -21,9 +21,7 @@ class ApproxNestedMapping(ApproxMapping):
         return
 
     def __repr__(self) -> str:
-        return "approx({!r})".format(
-            {k: approx(v) for k, v in self.expected.items()}
-        )
+        return "approx({!r})".format({k: approx(v) for k, v in self.expected.items()})
 
     def _yield_comparisons(self, actual):
         if set(self.expected.keys()) != set(actual.keys()):
@@ -31,7 +29,7 @@ class ApproxNestedMapping(ApproxMapping):
         return _yield_comparisons(self, super(), actual)
 
     def _repr_compare(self, other_side) -> List[str]:
-        #TODO impl more useful explanation here
+        # TODO impl more useful explanation here
         try:
             return super()._repr_compare(other_side)
         except:
@@ -46,9 +44,7 @@ class ApproxNestedSequenceLike(ApproxSequenceLike):
         seq_type = type(self.expected)
         if seq_type not in (tuple, list):
             seq_type = list
-        return "approx({!r})".format(
-            seq_type(approx(x) for x in self.expected)
-        )
+        return "approx({!r})".format(seq_type(approx(x) for x in self.expected))
 
     def _yield_comparisons(self, actual):
         if len(self.expected) != len(actual):
@@ -56,7 +52,7 @@ class ApproxNestedSequenceLike(ApproxSequenceLike):
         return _yield_comparisons(self, super(), actual)
 
     def _repr_compare(self, other_side) -> List[str]:
-        #TODO impl more useful explanation here
+        # TODO impl more useful explanation here
         try:
             return super()._repr_compare(other_side)
         except:
@@ -74,11 +70,14 @@ def _yield_nested(actual, expected, **kwargs):
 def _yield_comparisons(self, supr, actual):
     for actual, expected in supr._yield_comparisons(actual):
         for a, e in _yield_nested(
-                actual, expected, rel=self.rel, abs=self.abs, nan_ok=self.nan_ok
+            actual, expected, rel=self.rel, abs=self.abs, nan_ok=self.nan_ok
         ):
             yield a, e
 
 
 def is_seq_like(obj):
-    return hasattr(obj, "__getitem__") and isinstance(obj, Sized) \
+    return (
+        hasattr(obj, "__getitem__")
+        and isinstance(obj, Sized)
         and not isinstance(obj, (bytes, str))
+    )

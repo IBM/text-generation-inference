@@ -1,6 +1,5 @@
 import os
 from itertools import chain, repeat
-from typing import List, Optional, Tuple, Union
 
 import torch
 from transformers import PreTrainedTokenizerBase
@@ -8,15 +7,15 @@ from transformers.generation.logits_process import RepetitionPenaltyLogitsProces
 
 from text_generation_server.pb import generate_pb2
 from text_generation_server.utils.dist import RANK
-from text_generation_server.utils.token_types import TokenInfo, TopToken, InputTokens
 from text_generation_server.utils.logits_process import (
-    static_warper,
     HeterogeneousRepetitionPenaltyLogitsProcessor,
     HeterogeneousTemperatureLogitsWarper,
     HeterogeneousTopKLogitsWarper,
     HeterogeneousTopPLogitsWarper,
     HeterogeneousTypicalLogitsWarper,
+    static_warper,
 )
+from text_generation_server.utils.token_types import InputTokens, TokenInfo, TopToken
 
 FP32_LOGITS = os.getenv("FP32_LOGITS_PROCESS") == "true"
 
@@ -30,8 +29,10 @@ SINGLE_NAN = [float("nan")]
 
 
 class Sampling:
-    def __init__(self, seed: Optional[int] = None, device: str = "cpu"):
-        self.generator = None if seed is None else torch.Generator(device).manual_seed(seed)
+    def __init__(self, seed: int | None = None, device: str = "cpu"):
+        self.generator = (
+            None if seed is None else torch.Generator(device).manual_seed(seed)
+        )
 
     def __call__(self, logits):
         probs = torch.nn.functional.softmax(logits, -1)
@@ -48,10 +49,17 @@ class Greedy:
 
 class NextTokenChooser:
     def __init__(
-        self, temperature=1.0, top_k=None, top_p=None, typical_p=None, seed=None,
-        repetition_penalty: Optional[float] = None,
-        length_penalty: Optional[Tuple[int, float]] = None,
-        min_new_tokens=0, eos_token_id=None, device=None,
+        self,
+        temperature=1.0,
+        top_k=None,
+        top_p=None,
+        typical_p=None,
+        seed=None,
+        repetition_penalty: float | None = None,
+        length_penalty: tuple[int, float] | None = None,
+        min_new_tokens=0,
+        eos_token_id=None,
+        device=None,
         return_logprobs=False,
     ):
         if min_new_tokens > 0 and eos_token_id is None:
@@ -62,9 +70,14 @@ class NextTokenChooser:
         self.eos_token_id = eos_token_id
         self.repetition_processor = (
             RepetitionPenaltyLogitsProcessor(penalty=float(repetition_penalty))
-            if repetition_penalty is not None else None
+            if repetition_penalty is not None
+            else None
         )
-        self.length_penalty = length_penalty if length_penalty is not None and length_penalty[1] > 1.0 else None
+        self.length_penalty = (
+            length_penalty
+            if length_penalty is not None and length_penalty[1] > 1.0
+            else None
+        )
 
         if temperature == 0.0:
             self.static_warper = None
@@ -89,7 +102,8 @@ class NextTokenChooser:
             tokens_past = self.current_tokens - self.length_penalty[0]
             if tokens_past > 0:
                 scores[:, self.eos_token_id] = scores[:, self.eos_token_id] * pow(
-                    self.length_penalty[1], tokens_past
+                    self.length_penalty[1],
+                    tokens_past,
                 )
             self.current_tokens += 1
 
@@ -100,8 +114,10 @@ class NextTokenChooser:
         return scores
 
     def __call__(
-        self, input_ids: torch.LongTensor, scores: torch.FloatTensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        self,
+        input_ids: torch.LongTensor,
+        scores: torch.FloatTensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         if FP32_LOGITS:
             scores = scores.to(torch.float32)
 
@@ -112,9 +128,11 @@ class NextTokenChooser:
             final_scores, logprobs = self.static_warper(scores)
         else:
             # Compute logprobs if requested
-            logprobs = torch.log_softmax(final_scores, -1) if self.return_logprobs else None
+            logprobs = (
+                torch.log_softmax(final_scores, -1) if self.return_logprobs else None
+            )
 
-        #self._log_invalid_scores(final_scores, scores)
+        # self._log_invalid_scores(final_scores, scores)
 
         # Choose tokens
         final_scores = final_scores[-1:, :]
@@ -134,12 +152,22 @@ class NextTokenChooser:
             top_k=pb.top_k,
             top_p=pb.top_p,
             typical_p=pb.typical_p,
-            seed=pb.seed if pb.HasField('seed') else None,
-            repetition_penalty=pb.repetition_penalty if pb.HasField('repetition_penalty') else None,
-            length_penalty=(pb.length_penalty.start_index, pb.length_penalty.decay_factor)
-            if pb.HasField('length_penalty') else None,
+            seed=pb.seed if pb.HasField("seed") else None,
+            repetition_penalty=pb.repetition_penalty
+            if pb.HasField("repetition_penalty")
+            else None,
+            length_penalty=(
+                pb.length_penalty.start_index,
+                pb.length_penalty.decay_factor,
+            )
+            if pb.HasField("length_penalty")
+            else None,
             min_new_tokens=pb.min_new_tokens,
-            eos_token_id=getattr(tokenizer, 'model_eos_token_id', tokenizer.eos_token_id),
+            eos_token_id=getattr(
+                tokenizer,
+                "model_eos_token_id",
+                tokenizer.eos_token_id,
+            ),
             device=device,
             return_logprobs=return_logprobs,
         )
@@ -160,31 +188,34 @@ class HeterogeneousNextTokenChooser:
     """Port of TGI's HeterogeneousNextTokenChooser. Note that we
     currently don't port the watermark processor.
     """
+
     def __init__(
         self,
-        temperature: List[float],
-        top_k: List[float],
-        top_p: List[float],
-        typical_p: List[float],
+        temperature: list[float],
+        top_k: list[float],
+        top_p: list[float],
+        typical_p: list[float],
         # allow passing in existing Samplings to preserve RNG state
-        seeds: List[Optional[Union[int, Sampling]]],
-        repetition_penalty: List[float],
-        length_penalty: List[Tuple[int, float]],
-        min_new_tokens: List[int],
-        return_logprobs: List[bool],
-        eos_token_id: Optional[int] = None,
-        pad_token_id: Optional[int] = None,
-        device: Optional[torch.device] = None,
+        seeds: list[int | Sampling | None],
+        repetition_penalty: list[float],
+        length_penalty: list[tuple[int, float]],
+        min_new_tokens: list[int],
+        return_logprobs: list[bool],
+        eos_token_id: int | None = None,
+        pad_token_id: int | None = None,
+        device: torch.device | None = None,
         dtype: torch.dtype = None,
         # allow passing in existing values to support combining HNTC instances
-        current_tokens: Optional[List[int]] = None,
+        current_tokens: list[int] | None = None,
     ):
         warpers = []
         self.repetition_processor = (
             HeterogeneousRepetitionPenaltyLogitsProcessor(
-                repetition_penalty, dtype, device,
+                repetition_penalty,
+                dtype,
+                device,
                 # do not penalize the eos token if it is the same id as the pad token
-                id_to_exclude = eos_token_id if eos_token_id == pad_token_id else None,
+                id_to_exclude=eos_token_id if eos_token_id == pad_token_id else None,
             )
             if any(x != 1.0 for x in repetition_penalty)
             else None
@@ -199,18 +230,24 @@ class HeterogeneousNextTokenChooser:
             if any(x != 1.0 for x in temperature):
                 corrected_temps = [temp if temp != 0 else 1 for temp in temperature]
                 warpers.append(
-                    HeterogeneousTemperatureLogitsWarper(corrected_temps, dtype, device)
+                    HeterogeneousTemperatureLogitsWarper(
+                        corrected_temps,
+                        dtype,
+                        device,
+                    ),
                 )
             if any(x != 0 for x in top_k):
                 warpers.append(HeterogeneousTopKLogitsWarper(top_k, device))
 
             if any(x < 1.0 for x in top_p):
-                #assert all(x != 0 for x in top_p)
+                # assert all(x != 0 for x in top_p)
                 warpers.append(HeterogeneousTopPLogitsWarper(top_p, dtype, device))
 
             if any(x < 1.0 for x in typical_p):
-                #assert all(x != 0 for x in typical_p)
-                warpers.append(HeterogeneousTypicalLogitsWarper(typical_p, dtype, device))
+                # assert all(x != 0 for x in typical_p)
+                warpers.append(
+                    HeterogeneousTypicalLogitsWarper(typical_p, dtype, device),
+                )
 
             self.choice = HeterogeneousSampling(do_sample, seeds, device)
         else:
@@ -221,7 +258,9 @@ class HeterogeneousNextTokenChooser:
         self.pad_token_id = pad_token_id
         self.length_penalty = length_penalty
         self.min_new_tokens = min_new_tokens
-        self.current_tokens = current_tokens if current_tokens is not None else [0] * len(do_sample)
+        self.current_tokens = (
+            current_tokens if current_tokens is not None else [0] * len(do_sample)
+        )
         self.do_sample = do_sample
         self.dtype = dtype
         self.device = device
@@ -230,14 +269,21 @@ class HeterogeneousNextTokenChooser:
     @property
     def samplings(self):
         if isinstance(self.choice, Greedy):
-            return [None]*len(self.do_sample)
+            return [None] * len(self.do_sample)
         return self.choice.samplings
 
     def __call__(self, input_ids: torch.Tensor, scores: torch.Tensor):
         # TODO: Add vectorized implementation for EOS / length penalty; API should be similar to
         # logit processors, e.g., repetition penalty, with some extra args from current tokens.
         # Then, we should be able to .filter() it to prune it like we do for everything else.
-        for idx, (current_tokens, min_new_tokens, length_penalty) in enumerate(zip(self.current_tokens, self.min_new_tokens, self.length_penalty)):
+        for idx, (current_tokens, min_new_tokens, length_penalty) in enumerate(
+            zip(
+                self.current_tokens,
+                self.min_new_tokens,
+                self.length_penalty,
+                strict=False,
+            ),
+        ):
             # Penalize EOS token if we have not yet generated the minimum
             if current_tokens < min_new_tokens:
                 scores[idx, self.eos_token_id] = -float("inf")
@@ -246,8 +292,12 @@ class HeterogeneousNextTokenChooser:
             elif length_penalty is not None:
                 tokens_past = current_tokens - length_penalty[0]
                 if tokens_past > 0:
-                    scores[idx, self.eos_token_id] = scores[idx, self.eos_token_id] * pow(
-                        length_penalty[1], tokens_past
+                    scores[idx, self.eos_token_id] = scores[
+                        idx,
+                        self.eos_token_id,
+                    ] * pow(
+                        length_penalty[1],
+                        tokens_past,
                     )
                 self.current_tokens[idx] += 1
         # Apply the repetition penalty if we have one
@@ -269,21 +319,28 @@ class HeterogeneousNextTokenChooser:
     @classmethod
     def from_pb(
         cls,
-        pb: List[generate_pb2.NextTokenChooserParameters],
-        model_eos_token_id: Optional[int],
-        model_pad_token_id: Optional[int],
-        return_logprobs: List[bool],
+        pb: list[generate_pb2.NextTokenChooserParameters],
+        model_eos_token_id: int | None,
+        model_pad_token_id: int | None,
+        return_logprobs: list[bool],
         dtype: torch.dtype,
         device: torch.device,
         # allow passing in internal HNTC state to support combining instances
-        samplings: Optional[List[Sampling]] = None,
-        current_tokens: Optional[List[int]] = None,
+        samplings: list[Sampling] | None = None,
+        current_tokens: list[int] | None = None,
     ) -> "HeterogeneousNextTokenChooser":
-        seeds = samplings if samplings else [pb_.seed if pb_.HasField('seed') else None for pb_ in pb]
+        seeds = (
+            samplings
+            if samplings
+            else [pb_.seed if pb_.HasField("seed") else None for pb_ in pb]
+        )
 
         return HeterogeneousNextTokenChooser(
             temperature=[pb_.temperature for pb_ in pb],
-            repetition_penalty=[pb_.repetition_penalty if pb_.HasField('repetition_penalty') else 1.0 for pb_ in pb],
+            repetition_penalty=[
+                pb_.repetition_penalty if pb_.HasField("repetition_penalty") else 1.0
+                for pb_ in pb
+            ],
             top_k=[pb_.top_k for pb_ in pb],
             # Ensure that default (zero) values for top_p and typical_p are converted to 1.0
             # (which corresponds to disabled in both cases)
@@ -291,7 +348,9 @@ class HeterogeneousNextTokenChooser:
             typical_p=[pb_.typical_p if pb_.typical_p > 0 else 1.0 for pb_ in pb],
             length_penalty=[
                 (pb_.length_penalty.start_index, pb_.length_penalty.decay_factor)
-                if pb_.HasField('length_penalty') else None for pb_ in pb
+                if pb_.HasField("length_penalty")
+                else None
+                for pb_ in pb
             ],
             seeds=seeds,
             min_new_tokens=[pb_.min_new_tokens for pb_ in pb],
@@ -330,23 +389,23 @@ class HeterogeneousNextTokenChooser:
 
 
 class HeterogeneousSampling:
-    """
-    Mixed greedy and probabilistic sampling. Compute both and pick the right one for each sample.
-    """
+    """Mixed greedy and probabilistic sampling. Compute both and pick the right one for each sample."""
 
     def __init__(
-            self,
-            do_sample: List[bool],
-            # allow passing in seeds or existing Samplings to preserve RNG state
-            seeds: List[Optional[Union[int, Sampling]]],
-            device: torch.device,
-        ):
+        self,
+        do_sample: list[bool],
+        # allow passing in seeds or existing Samplings to preserve RNG state
+        seeds: list[int | Sampling | None],
+        device: torch.device,
+    ):
         self.greedy_indices = []
         self.sampling_mapping = {}
         self.samplings = []
-        for i, (sample, seed) in enumerate(zip(do_sample, seeds)):
+        for i, (sample, seed) in enumerate(zip(do_sample, seeds, strict=False)):
             if sample:
-                sampling = seed if isinstance(seed, Sampling) else Sampling(seed, device)
+                sampling = (
+                    seed if isinstance(seed, Sampling) else Sampling(seed, device)
+                )
                 self.sampling_mapping[i] = sampling
                 self.samplings.append(sampling)
             else:
@@ -385,7 +444,7 @@ def get_token_info(
     request: generate_pb2.Request,
     scores: torch.Tensor,  # Assumes shape is [1, vocab_size]
     next_token: torch.Tensor,
-    logprobs: Optional[torch.Tensor],  # Assumes shape matches logits
+    logprobs: torch.Tensor | None,  # Assumes shape matches logits
 ) -> TokenInfo:
     next_token = next_token.item()
     token_info = TokenInfo(request_id=request.id, token_id=next_token)
@@ -405,17 +464,27 @@ def get_token_info(
         torch.nan_to_num_(nth_highest, neginf=torch.finfo(flat_scores.dtype).min)
         # Get indices (token ids) of all scores >= nth highest value,
         # cap length at 4 * top_n as a precaution
-        top_n_indices = (flat_scores >= nth_highest).nonzero().squeeze(-1)[:(top_n * 4)]
-        token_info.top_tokens = [
-            #TODO possibly also sort top n in no-logprobs case
-            TopToken(token_id=tid.item()) for tid in top_n_indices
-        ] if (logprobs is None) else _sort([
-            TopToken(token_id=tid.item(), logprob=logprobs[-1, tid].item()) for tid in top_n_indices
-        ])
+        top_n_indices = (
+            (flat_scores >= nth_highest).nonzero().squeeze(-1)[: (top_n * 4)]
+        )
+        token_info.top_tokens = (
+            [
+                # TODO possibly also sort top n in no-logprobs case
+                TopToken(token_id=tid.item())
+                for tid in top_n_indices
+            ]
+            if (logprobs is None)
+            else _sort(
+                [
+                    TopToken(token_id=tid.item(), logprob=logprobs[-1, tid].item())
+                    for tid in top_n_indices
+                ],
+            )
+        )
 
     # Token ranks if requested
     if request.details.ranks:
-        #TODO if we're also returning top_n perhaps search those first
+        # TODO if we're also returning top_n perhaps search those first
         token_info.rank = (scores > scores[0, next_token]).sum() + 1
 
     return token_info
@@ -423,8 +492,7 @@ def get_token_info(
 
 # Extract requested input token information from model output
 def get_input_tokens_info(request, input_token_ids, all_input_logits) -> InputTokens:
-
-    #TODO optimize this ... can do single gather for chosen and topn logprobs
+    # TODO optimize this ... can do single gather for chosen and topn logprobs
 
     # Collect logprobs if requested
     return_logprobs = request.details.logprobs
@@ -442,11 +510,17 @@ def get_input_tokens_info(request, input_token_ids, all_input_logits) -> InputTo
     if request.details.ranks:
         if return_logprobs:
             # Use logprobs that are already gathered
-            ranks_gen = chain(SINGLE_ZERO, ((all_input_logprobs > input_logprobs).sum(dim=1) + 1))
+            ranks_gen = chain(
+                SINGLE_ZERO,
+                ((all_input_logprobs > input_logprobs).sum(dim=1) + 1),
+            )
         else:
             # Otherwise use logits
             input_logits = all_input_logits.gather(1, input_token_ids[1:].unsqueeze(-1))
-            ranks_gen = chain(SINGLE_ZERO, ((all_input_logits > input_logits).sum(dim=1) + 1))
+            ranks_gen = chain(
+                SINGLE_ZERO,
+                ((all_input_logits > input_logits).sum(dim=1) + 1),
+            )
     else:
         ranks_gen = INT_ZEROS
 
@@ -458,20 +532,28 @@ def get_input_tokens_info(request, input_token_ids, all_input_logits) -> InputTo
         # Get the nth highest value for each input token's set of logits
         nth_highest_values = torch.topk(all_input_logits, top_n).values[..., -1, None]
         # Construct bool tensor marking all scores >= nth highest value for each token
-        diff = (all_input_logits >= nth_highest_values)
+        diff = all_input_logits >= nth_highest_values
         # Gather set of marked indices for each token (correspond to top token ids)
         # Slice each tensor to max length of top_n * 4 as a precaution
         max_per_token = top_n * 4
-        top_n_indices = [diff[i].nonzero().squeeze(-1)[:max_per_token] for i in range(diff.shape[0])]
+        top_n_indices = [
+            diff[i].nonzero().squeeze(-1)[:max_per_token] for i in range(diff.shape[0])
+        ]
 
         if return_logprobs:
             if len(top_n_indices) != 0:
-                combined = torch.nn.utils.rnn.pad_sequence(top_n_indices, batch_first=True)
+                combined = torch.nn.utils.rnn.pad_sequence(
+                    top_n_indices,
+                    batch_first=True,
+                )
                 top_n_logprobs = all_input_logprobs.gather(1, combined)
-                topn_gen = chain(SINGLE_NONE, (
-                    (tni := top_n_indices[i], top_n_logprobs[i][:len(tni)])
-                    for i in range(len(top_n_indices))
-                ))
+                topn_gen = chain(
+                    SINGLE_NONE,
+                    (
+                        (tni := top_n_indices[i], top_n_logprobs[i][: len(tni)])
+                        for i in range(len(top_n_indices))
+                    ),
+                )
             else:
                 topn_gen = SINGLE_NONE
         else:
@@ -479,7 +561,7 @@ def get_input_tokens_info(request, input_token_ids, all_input_logits) -> InputTo
     else:
         topn_gen = NONES
 
-    all_zipped = zip(input_token_ids, logprobs_gen, ranks_gen, topn_gen)
+    all_zipped = zip(input_token_ids, logprobs_gen, ranks_gen, topn_gen, strict=False)
 
     return InputTokens(
         request_id=request.id,
@@ -488,20 +570,25 @@ def get_input_tokens_info(request, input_token_ids, all_input_logits) -> InputTo
                 token_id=int(tok_id),
                 logprob=float(logprob),
                 rank=int(rank),
-                top_tokens=None if top_toks is None
+                top_tokens=None
+                if top_toks is None
+                # TODO possibly also sort top n in no-logprobs case
                 else (
-                    #TODO possibly also sort top n in no-logprobs case
-                    [TopToken(int(ttid)) for ttid in top_toks] if not return_logprobs
-                    else _sort([
-                        TopToken(int(ttid), float(ttlp)) for (ttid, ttlp) in zip(*top_toks)
-                    ])
+                    [TopToken(int(ttid)) for ttid in top_toks]
+                    if not return_logprobs
+                    else _sort(
+                        [
+                            TopToken(int(ttid), float(ttlp))
+                            for (ttid, ttlp) in zip(*top_toks, strict=False)
+                        ],
+                    )
                 ),
             )
             for (tok_id, logprob, rank, top_toks) in all_zipped
-        ]
+        ],
     )
 
 
-def _sort(tts: List[TopToken]) -> List[TopToken]:
+def _sort(tts: list[TopToken]) -> list[TopToken]:
     tts.sort(reverse=True)
     return tts

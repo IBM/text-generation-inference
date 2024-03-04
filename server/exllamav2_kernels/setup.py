@@ -20,9 +20,9 @@ setup(
                 "exllamav2_kernels/cuda/rope.cu",
                 "exllamav2_kernels/cuda/cache.cu",
                 "exllamav2_kernels/cpp/quantize_func.cpp",
-                "exllamav2_kernels/cpp/sampling.cpp"
+                "exllamav2_kernels/cpp/sampling.cpp",
             ],
-        )
+        ),
     ],
     cmdclass={"build_ext": BuildExtension},
 )

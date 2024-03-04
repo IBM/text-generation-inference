@@ -1,14 +1,11 @@
 import os
 import time
-from typing import Optional
 
 import torch.cuda
-from transformers import AutoTokenizer, AutoConfig
-from transformers.models.auto import modeling_auto
-
 from optimum.onnxruntime import ORTModelForCausalLM, ORTModelForSeq2SeqLM, ORTOptimizer
 from optimum.onnxruntime.configuration import AutoOptimizationConfig
-
+from transformers import AutoConfig, AutoTokenizer
+from transformers.models.auto import modeling_auto
 
 TRUST_REMOTE_CODE = os.getenv("TRUST_REMOTE_CODE") == "true"
 
@@ -16,10 +13,10 @@ TRUST_REMOTE_CODE = os.getenv("TRUST_REMOTE_CODE") == "true"
 def convert_model(
     model_name: str,
     target_model_path: str,
-    revision: Optional[str] = None,
-    merge_graphs: Optional[bool] = False,
-    optimize: Optional[bool] = False,
-    provider: Optional[str] = None,
+    revision: str | None = None,
+    merge_graphs: bool | None = False,
+    optimize: bool | None = False,
+    provider: str | None = None,
 ):
     if provider is None:
         provider = (
@@ -40,7 +37,7 @@ def convert_model(
     )
     print(
         f"Model type: {model_type}, "
-        f"supports_causal_lm = {supports_causal_lm}, supports_seq2seq_lm = {supports_seq2seq_lm}"
+        f"supports_causal_lm = {supports_causal_lm}, supports_seq2seq_lm = {supports_seq2seq_lm}",
     )
 
     # For now special-casing bart
@@ -49,11 +46,11 @@ def convert_model(
 
     model_class = ORTModelForCausalLM if supports_causal_lm else ORTModelForSeq2SeqLM
 
-    print(f"Copying tokenizer")
+    print("Copying tokenizer")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     tokenizer.save_pretrained(target_model_path)
 
-    print(f"Converting model")
+    print("Converting model")
     model = model_class.from_pretrained(
         model_name,
         revision=revision,
@@ -76,7 +73,8 @@ def convert_model(
             # O4 includes fp16 weight optimization
             # Shape inference must be disabled for onnxruntime <= 1.14.1 due to a bug
             optimization_config = AutoOptimizationConfig.O3(
-                for_gpu=True, disable_shape_inference=True
+                for_gpu=True,
+                disable_shape_inference=True,
             )
         else:
             # For now just O1 for CPU
@@ -84,6 +82,7 @@ def convert_model(
 
         print("Starting model optimization step")
         optimizer.optimize(
-            save_dir=target_model_path, optimization_config=optimization_config
+            save_dir=target_model_path,
+            optimization_config=optimization_config,
         )
         print(f"ORT Model optimization took {time.time() - optimize_start:.3f}s")

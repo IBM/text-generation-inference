@@ -1,31 +1,47 @@
 import torch
 import torch.distributed
-
 from torch import nn
 from transformers.activations import ACT2FN
-from typing import Optional
 
 from text_generation_server.utils.flash_attn import attention
 from text_generation_server.utils.layers import (
-    TensorParallelRowLinear,
-    TensorParallelColumnLinear,
-    TensorParallelHead,
-    TensorParallelEmbedding,
     FastLayerNorm,
+    TensorParallelColumnLinear,
+    TensorParallelEmbedding,
+    TensorParallelHead,
+    TensorParallelRowLinear,
     get_linear,
 )
 
 
 def load_multi_mqa(
-    config, prefix: str, weights, bias: bool, head_size, num_heads, hidden_size
+    config,
+    prefix: str,
+    weights,
+    bias: bool,
+    head_size,
+    num_heads,
+    hidden_size,
 ):
     return (_load_multi_mqa_gptq if config.quantize == "gptq" else _load_multi_mqa)(
-        config, prefix, weights, bias, head_size, num_heads, hidden_size
+        config,
+        prefix,
+        weights,
+        bias,
+        head_size,
+        num_heads,
+        hidden_size,
     )
 
 
 def _load_multi_mqa_gptq(
-    config, prefix: str, weights, bias: bool, head_size, num_heads, hidden_size
+    config,
+    prefix: str,
+    weights,
+    bias: bool,
+    head_size,
+    num_heads,
+    hidden_size,
 ):
     if any("c_attn" in k for k in weights.routing.keys()) and not config.transpose:
         world_size = weights.process_group.size()
@@ -69,6 +85,7 @@ def _load_multi_mqa_gptq(
         bits, groupsize = weights._get_gptq_params()
 
         from text_generation_server.utils.layers import HAS_EXLLAMA
+
         weight = (qweight, qzeros, scales, g_idx, bits, groupsize, HAS_EXLLAMA)
 
         if bias:
@@ -76,7 +93,7 @@ def _load_multi_mqa_gptq(
             shape = slice_.get_shape()
             block_size = (shape[0] - 2 * head_size) // world_size
             assert (shape[0] - 2 * head_size) % world_size == 0
-            #q_tensor = slice_[start:stop]
+            # q_tensor = slice_[start:stop]
             start = rank * block_size
             stop = (rank + 1) * block_size
             q_tensor = slice_[start:stop]
@@ -90,7 +107,13 @@ def _load_multi_mqa_gptq(
 
 
 def _load_multi_mqa(
-    config, prefix: str, weights, bias: bool, head_size, num_heads, hidden_size
+    config,
+    prefix: str,
+    weights,
+    bias: bool,
+    head_size,
+    num_heads,
+    hidden_size,
 ):
     if any("c_attn" in k for k in weights.routing.keys()):
         slice_ = weights._get_slice(f"{prefix}.c_attn.weight")
@@ -118,7 +141,7 @@ def _load_multi_mqa(
             shape = slice_.get_shape()
             block_size = (shape[0] - 2 * head_size) // world_size
             assert (shape[0] - 2 * head_size) % world_size == 0
-            #q_tensor = slice_[start:stop]
+            # q_tensor = slice_[start:stop]
             start = rank * block_size
             stop = (rank + 1) * block_size
             q_tensor = slice_[start:stop]
@@ -155,7 +178,7 @@ def _load_multi_mqa(
     if bias is not None:
         bias = bias.to(dtype=weights.dtype).to(device=weights.device)
         assert list(bias.shape) == [
-            (num_heads + 2) * head_size
+            (num_heads + 2) * head_size,
         ], f"{weight.shape} != {[(num_heads + 2) * head_size]}"
     return TensorParallelColumnLinear(get_linear(weight, bias, config.quantize))
 
@@ -165,7 +188,9 @@ def load_col(config, prefix: str, weights, bias: bool):
         weight = weights.get_sharded(f"{prefix}.weight", dim=1).T
     else:
         weight = weights.get_multi_weights_col(
-            [prefix], quantize=config.quantize, dim=0
+            [prefix],
+            quantize=config.quantize,
+            dim=0,
         )
 
     if bias:
@@ -187,7 +212,8 @@ def load_row(config, prefix: str, weights, bias: bool):
     else:
         bias = None
     return TensorParallelRowLinear(
-        get_linear(weight, bias, config.quantize), process_group=weights.process_group
+        get_linear(weight, bias, config.quantize),
+        process_group=weights.process_group,
     )
 
 
@@ -204,7 +230,7 @@ class FlashMQAttention(torch.nn.Module):
         if self.num_heads % weights.process_group.size() != 0:
             raise ValueError(
                 f"`num_heads` must be divisible by `num_shards` (got `num_heads`: {self.num_heads} "
-                f"and `num_shards`: {weights.process_group.size()}"
+                f"and `num_shards`: {weights.process_group.size()}",
             )
         self.num_heads = self.num_heads // weights.process_group.size()
 
@@ -220,7 +246,10 @@ class FlashMQAttention(torch.nn.Module):
             num_heads=self.num_heads,
         )
         self.c_proj = load_row(
-            config, prefix=f"{prefix}.c_proj", weights=weights, bias=True
+            config,
+            prefix=f"{prefix}.c_proj",
+            weights=weights,
+            bias=True,
         )
 
     def forward(
@@ -236,7 +265,8 @@ class FlashMQAttention(torch.nn.Module):
 
         # Split query from key_value
         query, key_value = qkv.split(
-            [self.head_size * self.num_heads, 2 * self.head_size], dim=1
+            [self.head_size * self.num_heads, 2 * self.head_size],
+            dim=1,
         )
 
         # Prepare query and key_value for indexing
@@ -294,10 +324,16 @@ class MLP(nn.Module):
         )
 
         self.c_fc = load_col(
-            config, prefix=f"{prefix}.c_fc", weights=weights, bias=True
+            config,
+            prefix=f"{prefix}.c_fc",
+            weights=weights,
+            bias=True,
         )
         self.c_proj = load_row(
-            config, prefix=f"{prefix}.c_proj", weights=weights, bias=True
+            config,
+            prefix=f"{prefix}.c_proj",
+            weights=weights,
+            bias=True,
         )
 
     def forward(self, hidden_states):
@@ -312,10 +348,14 @@ class Block(nn.Module):
         super().__init__()
         prefix = f"transformer.h.{layer_id}"
         self.ln_1 = FastLayerNorm.load(
-            prefix=f"{prefix}.ln_1", weights=weights, eps=config.layer_norm_epsilon
+            prefix=f"{prefix}.ln_1",
+            weights=weights,
+            eps=config.layer_norm_epsilon,
         )
         self.ln_2 = FastLayerNorm.load(
-            prefix=f"{prefix}.ln_2", weights=weights, eps=config.layer_norm_epsilon
+            prefix=f"{prefix}.ln_2",
+            weights=weights,
+            eps=config.layer_norm_epsilon,
         )
         self.attn = FlashMQAttention(
             prefix=f"{prefix}.attn",
@@ -380,10 +420,12 @@ class FlashSantacoderModel(nn.Module):
                     weights,
                 )
                 for layer_id in range(config.num_hidden_layers)
-            ]
+            ],
         )
         self.ln_f = FastLayerNorm.load(
-            prefix="transformer.ln_f", weights=weights, eps=config.layer_norm_epsilon
+            prefix="transformer.ln_f",
+            weights=weights,
+            eps=config.layer_norm_epsilon,
         )
 
         self.head_size = self.h[0].attn.head_size
@@ -396,13 +438,13 @@ class FlashSantacoderModel(nn.Module):
         cu_seqlens,
         cu_seqlens_q,
         max_s,
-        inputs_embeds: Optional[torch.Tensor] = None,
-        past_key_values: Optional[torch.Tensor] = None,
-        pre_allocate_past_size: Optional[int] = None,
+        inputs_embeds: torch.Tensor | None = None,
+        past_key_values: torch.Tensor | None = None,
+        pre_allocate_past_size: int | None = None,
     ):
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError(
-                "You cannot specify both input_ids and inputs_embeds at the same time"
+                "You cannot specify both input_ids and inputs_embeds at the same time",
             )
 
         if inputs_embeds is not None:
@@ -425,7 +467,7 @@ class FlashSantacoderModel(nn.Module):
                     2,
                     1,
                     self.head_size,
-                )
+                ),
             )
             layer_past_present_indices = None
             slice_past_index = len(hidden_states)
@@ -464,7 +506,9 @@ class FlashSantacoderForCausalLM(nn.Module):
         super().__init__()
         self.transformer = FlashSantacoderModel(config, weights)
         self.lm_head = TensorParallelHead.load(
-            config, prefix="transformer.wte", weights=weights
+            config,
+            prefix="transformer.wte",
+            weights=weights,
         )
 
     def get_input_embeddings(self) -> nn.Module:
@@ -477,10 +521,10 @@ class FlashSantacoderForCausalLM(nn.Module):
         cu_seqlens,
         cu_seqlens_q,
         max_s,
-        inputs_embeds: Optional[torch.Tensor] = None,
-        past_key_values: Optional[torch.Tensor] = None,
-        pre_allocate_past_size: Optional[int] = None,
-        lm_head_indices: Optional[torch.Tensor] = None,
+        inputs_embeds: torch.Tensor | None = None,
+        past_key_values: torch.Tensor | None = None,
+        pre_allocate_past_size: int | None = None,
+        lm_head_indices: torch.Tensor | None = None,
     ):
         hidden_states, present = self.transformer(
             input_ids,

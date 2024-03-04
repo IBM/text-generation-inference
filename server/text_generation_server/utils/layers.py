@@ -1,14 +1,12 @@
 import os
+
 import torch
 import torch.distributed
-
+from accelerate import init_empty_weights
 from torch import nn
 from torch.nn import functional as F
-from typing import List
 
 from text_generation_server.utils import print_rank_n
-
-from accelerate import init_empty_weights
 
 HAS_BITS_AND_BYTES = False
 HAS_EXLLAMA = False
@@ -18,6 +16,7 @@ if torch.cuda.is_available():
     try:
         import bitsandbytes as bnb
         from bitsandbytes.nn import Int8Params
+
         HAS_BITS_AND_BYTES = False
     except ImportError:
         pass
@@ -26,20 +25,26 @@ if torch.cuda.is_available():
 
     if os.getenv("DISABLE_EXLLAMA", "False").lower() != "true":
         try:
-            EXLLAMA_VERSION = os.getenv("EXLLAMA_VERSION", "2") # Use v2 as default
+            EXLLAMA_VERSION = os.getenv("EXLLAMA_VERSION", "2")  # Use v2 as default
             if EXLLAMA_VERSION == "1":
-                from text_generation_server.utils.gptq.exllama import Ex4bitLinear as ExllamaQuantLinear
+                from text_generation_server.utils.gptq.exllama import (
+                    Ex4bitLinear as ExllamaQuantLinear,
+                )
             elif EXLLAMA_VERSION == "2":
-                from text_generation_server.utils.gptq.exllamav2 import Ex4bitLinearV2 as ExllamaQuantLinear
+                from text_generation_server.utils.gptq.exllamav2 import (
+                    Ex4bitLinearV2 as ExllamaQuantLinear,
+                )
             else:
-                raise ValueError(f"Unsupported value for EXLLAMA_VERSION: {EXLLAMA_VERSION}")
+                raise ValueError(
+                    f"Unsupported value for EXLLAMA_VERSION: {EXLLAMA_VERSION}",
+                )
             HAS_EXLLAMA = True
         except ImportError as e:
             print_rank_n(f"Error importing ExllamaV{EXLLAMA_VERSION} kernels: {e}")
             EXLLAMA_VERSION = None
 
     print_rank_n(
-        f"HAS_BITS_AND_BYTES={HAS_BITS_AND_BYTES}, HAS_EXLLAMA={HAS_EXLLAMA}, EXLLAMA_VERSION={EXLLAMA_VERSION}"
+        f"HAS_BITS_AND_BYTES={HAS_BITS_AND_BYTES}, HAS_EXLLAMA={HAS_EXLLAMA}, EXLLAMA_VERSION={EXLLAMA_VERSION}",
     )
 
 
@@ -108,9 +113,7 @@ class Linear8bitLt(nn.Module):
         index=None,
     ):
         super().__init__()
-        assert (
-            not memory_efficient_backward
-        ), "memory_efficient_backward is no longer required and the argument is deprecated in 0.37.0 and will be removed in 0.39.0"
+        assert not memory_efficient_backward, "memory_efficient_backward is no longer required and the argument is deprecated in 0.37.0 and will be removed in 0.39.0"
         self.state = bnb.MatmulLtState()
         self.index = index
 
@@ -172,7 +175,7 @@ def get_linear(weight, bias, quantize):
             qweight, qzeros, scales, g_idx, bits, groupsize, use_exllama = weight
         except Exception:
             raise NotImplementedError(
-                f"The passed weight is not `gptq` compatible, loader needs to be updated."
+                "The passed weight is not `gptq` compatible, loader needs to be updated.",
             )
 
         linear = (ExllamaQuantLinear if use_exllama else QuantLinear)(
@@ -247,7 +250,9 @@ class TensorParallelHead(SuperLayer):
             torch.mm(input, self.linear.weight.T, out=local_out)
 
             torch.distributed.all_gather_into_tensor(
-                world_out, gather_input, group=self.process_group
+                world_out,
+                gather_input,
+                group=self.process_group,
             )
 
             if input.shape[0] == 1:
@@ -269,9 +274,11 @@ class TensorParallelColumnLinear(SuperLayer):
         return cls.load_multi(config, [prefix], weights, bias, dim=0)
 
     @classmethod
-    def load_multi(cls, config, prefixes: List[str], weights, bias: bool, dim: int):
+    def load_multi(cls, config, prefixes: list[str], weights, bias: bool, dim: int):
         weight = weights.get_multi_weights_col(
-            prefixes, quantize=config.quantize, dim=dim
+            prefixes,
+            quantize=config.quantize,
+            dim=dim,
         )
 
         if bias:
@@ -386,8 +393,8 @@ except ImportError:
 
 
 try:
-    from flash_attn.layers.rotary import RotaryEmbedding
     import rotary_emb
+    from flash_attn.layers.rotary import RotaryEmbedding
 
     class PositionRotaryEmbedding(nn.Module):
         def __init__(self, inv_freq):
@@ -434,12 +441,12 @@ try:
                 self._sin_cached = torch.sin(freqs).to(dtype)
 
         def get_cos_sin(
-            self, position_ids: torch.Tensor, max_s: int, dtype: torch.dtype
+            self,
+            position_ids: torch.Tensor,
+            max_s: int,
+            dtype: torch.dtype,
         ):
-            """
-            Return cos and sin for the asked position ids
-            """
-
+            """Return cos and sin for the asked position ids"""
             self._update_cos_sin_cache(dtype, position_ids.device, max_s)
 
             cos = torch.index_select(self._cos_cached, 0, position_ids)
