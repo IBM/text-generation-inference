@@ -285,19 +285,16 @@ FROM base as auto-gptq-cache
 COPY --from=auto-gptq-installer /usr/src/auto-gptq-wheel /usr/src/auto-gptq-wheel
 
 
-## Final Inference Server image ################################################
-FROM cuda-runtime as server-release
+## Full set of python installations for server release #########################
+
+FROM cuda-runtime as python-installations
+
 ARG PYTHON_VERSION
 ARG SITE_PACKAGES=/opt/tgis/lib/python${PYTHON_VERSION}/site-packages
 
-# Install C++ compiler (required at runtime when PT2_COMPILE is enabled)
-RUN dnf install -y gcc-c++ git && dnf clean all \
-    && useradd -u 2000 tgis -m -g 0
-
-SHELL ["/bin/bash", "-c"]
-
 COPY --from=build /opt/tgis /opt/tgis
 
+# `pip` is installed in the venv here
 ENV PATH=/opt/tgis/bin:$PATH
 
 # Install flash attention v2 from the cache build
@@ -315,12 +312,29 @@ RUN --mount=type=bind,from=auto-gptq-cache,src=/usr/src/auto-gptq-wheel,target=/
     pip install /usr/src/auto-gptq-wheel/*.whl --no-cache-dir
 
 # Install server
+# git is required to pull the fms-extras dependency
+RUN dnf install -y git && dnf clean all
 COPY proto proto
 COPY server server
 RUN cd server && make gen-server && pip install ".[accelerate, ibm-fms, onnx-gpu, quantize]" --no-cache-dir
 
 # Patch codegen model changes into transformers 4.35
 RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py
+
+
+## Final Inference Server image ################################################
+FROM cuda-runtime as server-release
+ARG PYTHON_VERSION
+ARG SITE_PACKAGES=/opt/tgis/lib/python${PYTHON_VERSION}/site-packages
+
+# Install C++ compiler (required at runtime when PT2_COMPILE is enabled)
+RUN dnf install -y gcc-c++ && dnf clean all \
+    && useradd -u 2000 tgis -m -g 0
+
+# Copy in the full python environment
+COPY --from=python-installations /opt/tgis /opt/tgis
+
+ENV PATH=/opt/tgis/bin:$PATH
 
 # Print a list of all installed packages and versions
 RUN pip list -v --disable-pip-version-check --no-python-version-warning
