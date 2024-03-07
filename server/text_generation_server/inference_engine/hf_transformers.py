@@ -72,7 +72,11 @@ class InferenceEngine(BaseInferenceEngine):
         if slow_but_exact:
             kwargs["slow_but_exact"] = True
 
+
         with self.device:
-            self.model = model_class.from_pretrained(**kwargs).requires_grad_(False).eval()
+            self.model = model_class.from_pretrained(
+                    low_cpu_mem_usage=True,
+                    **kwargs,
+            ).requires_grad_(False).eval()
             # This seems to be necessary even with with self.device
             self.model.to(self.device)
