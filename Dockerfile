@@ -323,7 +323,7 @@ RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transforme
 
 
 ## Final Inference Server image ################################################
-FROM cuda-runtime as server-release
+FROM base as server-release
 ARG PYTHON_VERSION
 ARG SITE_PACKAGES=/opt/tgis/lib/python${PYTHON_VERSION}/site-packages
 
