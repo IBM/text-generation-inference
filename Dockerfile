@@ -3,6 +3,7 @@ ARG BASE_UBI_IMAGE_TAG=9.3-1552
 ARG PROTOC_VERSION=25.2
 ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
 # ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
+ARG AUTO_GPTQ_VERSION=0.7.1
 
 # match PyTorch version that was used to compile flash-attention v2 pre-built wheels
 # e.g. flash-attn v2.5.2 => torch ['1.12.1', '1.13.1', '2.0.1', '2.1.2', '2.2.0', '2.3.0.dev20240126']
@@ -218,7 +219,7 @@ RUN MAX_JOBS=2  pip --verbose wheel --no-deps flash-attn==${FLASH_ATT_VERSION} \
 
 ## Install auto-gptq ###########################################################
 FROM python-builder as auto-gptq-installer
-ARG AUTO_GPTQ_REF=ccb6386ebfde63c17c45807d38779a93cd25846f
+ARG AUTO_GPTQ_REF=896d8204bc89a7cfbda42bf3314e13cf4ce20b02
 
 WORKDIR /usr/src/auto-gptq-wheel
 
