@@ -26,6 +26,11 @@ def _remove_duplicate_names(
     shareds = _find_shared_tensors(state_dict)
     to_remove = defaultdict(list)
     for shared in shareds:
+        # _find_shared_tensors returns a list of sets of names of tensors that
+        # have the same data, including sets with one element that aren't shared
+        if len(shared) == 1:
+            continue
+
         complete_names = set(
             [name for name in shared if _is_complete(state_dict[name])]
         )
