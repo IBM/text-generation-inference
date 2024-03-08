@@ -15,7 +15,7 @@ from accelerate import init_empty_weights
 HAS_BITS_AND_BYTES = False
 EXLLAMA_VERSION = None
 HAS_GPTQ_CUDA = False
-GPTQ_CUDA_TYPE = os.getenv("GPTQ_CUDA_TYPE", "exllama").lower()
+GPTQ_CUDA_TYPE = os.getenv("GPTQ_CUDA_TYPE", "marlin").lower()
 GPTQ_CUDA_LINEAR = None
 
 if torch.cuda.is_available():
