@@ -7,7 +7,7 @@ use std::{
     io,
     io::{BufRead, BufReader, ErrorKind, Write},
     os::unix::process::{CommandExt, ExitStatusExt},
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, ExitCode, ExitStatus, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -25,7 +25,8 @@ use nix::{
     sys::signal::{self, Signal},
     unistd::Pid,
 };
-use tracing::{info, warn};
+use tracing::{error, info, warn};
+use uuid::Uuid;
 
 // In most cases this gives the best performance for inferencing
 const DEFAULT_PYTORCH_CUDA_ALLOC_CONF: &str = "expandable_segments:True";
@@ -135,13 +136,27 @@ fn main() -> ExitCode {
     // Determine number of shards based on command line arg and env vars
     let num_shard = find_num_shards(args.num_shard);
 
-    // Resolve fast tokenizer path
-    let tokenizer_path = resolve_tokenizer_path(&args.model_name, args.revision.as_deref())
-        .expect("Could not find tokenizer for model");
+    let config_path: PathBuf = resolve_config_path(&args.model_name, args.revision.as_deref())
+        .expect("Failed to resolve config path")
+        .into();
+
+    // Save fast tokenizer to /tmp
+    let save_path = format!("/tmp/{}", Uuid::new_v4());
+    let tokenizer_path =
+        if save_fast_tokenizer(&args.model_name, args.revision.as_deref(), &save_path).is_ok() {
+            format!("/{save_path}/tokenizer.json")
+        } else {
+            warn!("Failed to (re-)convert tokenizer, falling back to use existing fast tokenizer");
+            let tokenizer_path = config_path.parent().unwrap().join("tokenizer.json");
+            if tokenizer_path.is_file() {
+                tokenizer_path.to_string_lossy().to_string()
+            } else {
+                panic!("No existing fast tokenizer (tokenizer.json) found")
+            }
+        };
 
     // Determine max sequence length based on command line arg and env vars
-    let config_json_path = tokenizer_path.replace("tokenizer.json", "config.json");
-    let max_sequence_length = get_max_sequence_length(args.max_sequence_length, &config_json_path);
+    let max_sequence_length = get_max_sequence_length(args.max_sequence_length, &config_path);
 
     match env::var("MAX_BATCH_WEIGHT") {
         Ok(max_batch_weight) if !max_batch_weight.trim().is_empty() => {
@@ -415,7 +430,7 @@ fn num_cuda_devices() -> Option<usize> {
 /// 1. MAX_SEQUENCE_LENGTH set by user
 /// 2. The sequence length specified in config.json
 /// 3. A default of 2048
-fn get_max_sequence_length(max_sequence_length: Option<usize>, config_json_path: &String) -> usize {
+fn get_max_sequence_length(max_sequence_length: Option<usize>, config_path: &Path) -> usize {
     if let Some(max_sequence_length) = max_sequence_length {
         info!(
             "Using configured max_sequence_length: {}",
@@ -423,7 +438,7 @@ fn get_max_sequence_length(max_sequence_length: Option<usize>, config_json_path:
         );
         return max_sequence_length;
     }
-    if let Ok(model_config) = get_config_json(config_json_path) {
+    if let Ok(model_config) = get_config_json(config_path) {
         if let Some(length) = get_max_sequence_length_from_config(&model_config) {
             info!(
                 "Loaded max_sequence_length from model config.json: {}",
@@ -440,7 +455,7 @@ fn get_max_sequence_length(max_sequence_length: Option<usize>, config_json_path:
 }
 
 /// Opens the model's config.json file and reads into serde_json value
-fn get_config_json(config_path: &String) -> Result<serde_json::Value, std::io::Error> {
+fn get_config_json(config_path: &Path) -> Result<serde_json::Value, std::io::Error> {
     let reader = BufReader::new(File::open(config_path)?);
     Ok(serde_json::from_reader(reader)?)
 }
@@ -734,7 +749,19 @@ fn shutdown_shards(shutdown: Arc<Mutex<bool>>, shutdown_receiver: &mpsc::Receive
     let _ = shutdown_receiver.recv();
 }
 
-fn resolve_tokenizer_path(model_name: &str, revision: Option<&str>) -> Result<String, io::Error> {
+fn write_termination_log(msg: &str) -> Result<(), io::Error> {
+    // Writes a message to the termination log.
+    // Creates the logfile if it doesn't exist.
+    let mut f = File::options()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open("/dev/termination-log")?;
+    writeln!(f, "{}", msg)?;
+    Ok(())
+}
+
+fn resolve_config_path(model_name: &str, revision: Option<&str>) -> Result<String, io::Error> {
     let cache = env::var("TRANSFORMERS_CACHE")
         .or_else(|_| env::var("HUGGINGFACE_HUB_CACHE"))
         .ok();
@@ -753,20 +780,19 @@ fn resolve_tokenizer_path(model_name: &str, revision: Option<&str>) -> Result<St
             true => fs::read_to_string(ref_path)?,
             false => revision.to_string(),
         };
-        let tok_path = dir.join("snapshots").join(&revision).join("tokenizer.json");
-        if tok_path.try_exists()? {
-            Ok(tok_path.to_string_lossy().into())
+        let config_path = dir.join("snapshots").join(&revision).join("config.json");
+        if config_path.try_exists()? {
+            Ok(config_path.to_string_lossy().into())
         } else {
-            Err(io::Error::new(
-                ErrorKind::NotFound,
-                format!(
-                    "Tokenizer file not found in local cache for model {model_name}, revision {revision}"
-                )
-            ))
+            let message = format!(
+                "Config file not found in local cache for model {model_name}, revision {revision}"
+            );
+            error!(message);
+            Err(io::Error::new(ErrorKind::NotFound, message))
         }
     } else {
         // Try treating model_name as explicit model path
-        let try_path = Path::new(&model_name).join("tokenizer.json");
+        let try_path = Path::new(&model_name).join("config.json");
         if try_path.try_exists()? {
             Ok(try_path.to_string_lossy().into())
         } else {
@@ -775,20 +801,49 @@ fn resolve_tokenizer_path(model_name: &str, revision: Option<&str>) -> Result<St
             } else {
                 format!("Model {model_name} not found in local cache")
             };
-
+            error!(message);
             Err(io::Error::new(ErrorKind::NotFound, message))
         }
     }
 }
 
-fn write_termination_log(msg: &str) -> Result<(), io::Error> {
-    // Writes a message to the termination log.
-    // Creates the logfile if it doesn't exist.
-    let mut f = File::options()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open("/dev/termination-log")?;
-    writeln!(f, "{}", msg)?;
-    Ok(())
+/// Convert and save fast tokenizer via transformers `AutoTokenizer.from_pretrained`.
+fn save_fast_tokenizer(
+    model_name: &str,
+    revision: Option<&str>,
+    save_path: &str,
+) -> Result<(), io::Error> {
+    info!("Saving fast tokenizer for `{model_name}` to `{save_path}`");
+    let model_name = model_name.escape_default();
+    let revision = revision.map(|v| v.escape_default());
+    let code = if let Some(revision) = revision {
+        format!(
+            "from transformers import AutoTokenizer; \
+            AutoTokenizer.from_pretrained(\"{model_name}\", \
+            revision=\"{revision}\").save_pretrained(\"{save_path}\")"
+        )
+    } else {
+        format!(
+            "from transformers import AutoTokenizer; \
+            AutoTokenizer.from_pretrained(\"{model_name}\").save_pretrained(\"{save_path}\")"
+        )
+    };
+    match Command::new("python").args(["-c", &code]).status() {
+        Ok(status) => {
+            if status.success() {
+                Ok(())
+            } else {
+                let message = "Python process for tokenizer conversion failed".to_string();
+                error!(
+                    exit_code = ?status.code(),
+                    message
+                );
+                Err(io::Error::new(ErrorKind::Other, message))
+            }
+        }
+        Err(e) => {
+            error!("Failed to launch python process for tokenizer conversion");
+            Err(e)
+        }
+    }
 }
