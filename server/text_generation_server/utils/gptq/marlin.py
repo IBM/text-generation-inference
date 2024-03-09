@@ -116,8 +116,9 @@ class MarlinQuantLinear(nn.Module):
         infeatures = qweight.shape[0] * pack_size
         outfeatures = qweight.shape[1]
         
-        if not torch.cuda.get_device_capability()[0] >= 8:
-            raise ValueError(f'Can not use Marlin int4*fp16 kernel with a device of compute capability {torch.cuda.get_device_capability()}.')
+        device_capability = torch.cuda.get_device_capability()
+        if not device_capability[0] >= 8:
+            raise ValueError(f'Can not use Marlin int4*fp16 kernel with a device of compute capability {device_capability}.')
         if infeatures % 128 != 0 or outfeatures % 256 != 0:
             raise ValueError("`infeatures` must be divisible by 128 and `outfeatures` by 256.")
         if bits not in [4]:
