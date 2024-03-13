@@ -89,6 +89,8 @@ struct Args {
     // Default for default_include_stop_seqs is true for now, for backwards compatibility
     #[clap(default_value = "true", long, env, action = clap::ArgAction::Set)]
     default_include_stop_seqs: bool,
+    #[clap(long, env)]
+    otlp_endpoint: Option<String>,
 }
 
 fn main() -> ExitCode {
@@ -107,7 +109,6 @@ fn main() -> ExitCode {
 
     // Pattern match configuration
     let args = Args::parse();
-
     if args.json_output {
         tracing_subscriber::fmt()
             .json()
@@ -326,6 +327,12 @@ fn main() -> ExitCode {
         argv.push("--json-output".to_string());
     }
 
+    // OpenTelemetry
+    if let Some(otlp_endpoint) = args.otlp_endpoint {
+        argv.push("--otlp-endpoint".to_string());
+        argv.push(otlp_endpoint);
+    }
+
     if args.output_special_tokens {
         argv.push("--output-special-tokens".into());
     }
@@ -400,6 +407,7 @@ fn main() -> ExitCode {
         };
     }
 
+    // Graceful termination
     terminate_gracefully(&mut webserver, shutdown.clone(), shutdown_receiver);
 
     exit_code

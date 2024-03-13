@@ -11,7 +11,7 @@ use tonic::{
     transport::{Certificate, Identity, Server, ServerTlsConfig},
     Request, Response, Status,
 };
-use tracing::{info_span, instrument, Span};
+use tracing::{instrument, Span};
 use unicode_truncate::UnicodeTruncateStr;
 
 use crate::{
@@ -99,11 +99,18 @@ impl GenerationService for GenerationServicer {
     #[instrument(
         skip_all,
         fields(
+            request_id=tracing::field::Empty,
             input=?request.get_ref().requests.iter().map(|r| truncate(&r.text, 32)).collect::<Vec<Cow<'_,str>>>(),
             prefix_id=?request.get_ref().prefix_id,
             correlation_id=?request.metadata().get("x-correlation-id").map(|mv| mv.to_str().unwrap_or("<non-ascii>")).unwrap_or("<none>"),
             input_bytes=?request.get_ref().requests.iter().map(|r| r.text.len()).collect::<Vec<usize>>(),
             params=?request.get_ref().params,
+            validation_time=tracing::field::Empty,
+            queue_time=tracing::field::Empty,
+            inference_time=tracing::field::Empty,
+            time_per_token=tracing::field::Empty,
+            total_time=tracing::field::Empty,
+            input_toks=tracing::field::Empty,
         )
     )]
     async fn generate(
@@ -224,11 +231,18 @@ impl GenerationService for GenerationServicer {
     #[instrument(
         skip_all,
         fields(
+            request_id=tracing::field::Empty,
             input=?truncate(request.get_ref().request.as_ref().map(|r| &*r.text).unwrap_or(""), 32),
             prefix_id=?request.get_ref().prefix_id,
             correlation_id=?request.metadata().get("x-correlation-id").map(|mv| mv.to_str().unwrap_or("<non-ascii>")).unwrap_or("<none>"),
             input_bytes=?request.get_ref().request.as_ref().map(|r| r.text.len()).unwrap_or(0),
             params=?request.get_ref().params,
+            validation_time=tracing::field::Empty,
+            queue_time=tracing::field::Empty,
+            inference_time=tracing::field::Empty,
+            time_per_token=tracing::field::Empty,
+            total_time=tracing::field::Empty,
+            input_toks=tracing::field::Empty,
         )
     )]
     async fn generate_stream(
@@ -416,8 +430,6 @@ fn log_response(
     kind_log: &str,
     request_id: Option<u64>,
 ) {
-    let span;
-    let _enter;
     // Timings
     let total_time = Instant::now() - start_time;
     if let Some(times) = times.as_ref() {
@@ -429,17 +441,14 @@ fn log_response(
             .unwrap_or_else(|| Duration::new(0, 0));
 
         // Tracing metadata
-        span = info_span!(
-            "",
-            validation_time = ?validation_time,
-            queue_time = ?queue_time,
-            inference_time = ?inference_time,
-            time_per_token = ?time_per_token,
-            total_time = ?total_time,
-            input_toks = input_tokens,
-            request_id = request_id,
-        );
-        _enter = span.enter();
+        let span = Span::current();
+        span.record("request_id", request_id.unwrap_or_default());
+        span.record("validation_time", format!("{validation_time:?}"));
+        span.record("queue_time", format!("{queue_time:?}"));
+        span.record("inference_time", format!("{inference_time:?}"));
+        span.record("time_per_token", format!("{time_per_token:?}"));
+        span.record("total_time", format!("{total_time:?}"));
+        span.record("input_toks", input_tokens);
 
         metrics::histogram!(
             "tgi_request_inference_duration",
