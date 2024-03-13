@@ -253,24 +253,6 @@ COPY server/custom_kernels/ /usr/src/.
 RUN cd /usr/src && python setup.py build_ext && python setup.py install
 
 
-## Build transformers exllama kernels ##########################################
-FROM python-builder as exllama-kernels-builder
-
-WORKDIR /usr/src
-
-COPY server/exllama_kernels/ .
-RUN python setup.py build
-
-
-## Build transformers exllamav2 kernels ########################################
-FROM python-builder as exllamav2-kernels-builder
-
-WORKDIR /usr/src
-
-COPY server/exllamav2_kernels/ .
-RUN python setup.py build
-
-
 ## Flash attention v2 cached build image #######################################
 FROM base as flash-att-v2-cache
 
@@ -300,12 +282,6 @@ ENV PATH=/opt/tgis/bin:$PATH
 # Install flash attention v2 from the cache build
 RUN --mount=type=bind,from=flash-att-v2-cache,src=/usr/src/flash-attention-v2,target=/usr/src/flash-attention-v2 \
     pip install /usr/src/flash-attention-v2/*.whl --no-cache-dir
-
-# Copy build artifacts from exllama kernels builder
-COPY --from=exllama-kernels-builder /usr/src/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
-
-# Copy build artifacts from exllamav2 kernels builder
-COPY --from=exllamav2-kernels-builder /usr/src/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
 
 # Copy over the auto-gptq wheel and install it
 RUN --mount=type=bind,from=auto-gptq-cache,src=/usr/src/auto-gptq-wheel,target=/usr/src/auto-gptq-wheel \
