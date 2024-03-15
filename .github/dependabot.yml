@@ -1,0 +1,30 @@
+version: 2
+
+updates:
+  - directory: "/"
+    package-ecosystem: "pip"
+    schedule:
+      interval: "daily"
+    labels:
+      - "dependencies"
+
+  - directory: "/"
+    package-ecosystem: "docker"
+    schedule:
+      interval: "daily"
+    labels:
+      - "dependencies"
+
+  - directory: "/"
+    package-ecosystem: "github-actions"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "maintenance"
+
+  - directory: "/"
+    package-ecosystem: "cargo"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "maintenace"
