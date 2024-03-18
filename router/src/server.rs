@@ -19,7 +19,7 @@ use tokio::{
     sync::{Notify, Semaphore},
     time::{sleep, timeout, Instant},
 };
-use tracing::{instrument, warn};
+use tracing::{info, instrument, warn};
 
 use crate::{
     batch_types::{BatchType, FlashBatch, PaddedBatch},
@@ -49,7 +49,7 @@ pub(crate) struct ServerState {
 const PROBE_TIMEOUT_SECS: u64 = 60;
 
 /// Health check method
-#[instrument(skip(health))]
+//#[instrument(skip(health))]
 async fn health(mut health: Extension<Health>) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
     match timeout(Duration::from_secs(PROBE_TIMEOUT_SECS), health.check()).await {
         Ok(true) => Ok(()),
@@ -87,6 +87,7 @@ async fn generate(
     state: Extension<ServerState>,
     req: Json<GenerateRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let span = tracing::Span::current();
     let start_time = Instant::now();
     // Limit concurrent requests by acquiring a permit from the semaphore
     let _permit = state.limit_concurrent_requests.try_acquire().map_err(|_| {
@@ -158,6 +159,13 @@ async fn generate(
     let inference_time = times.end - times.start;
     let time_per_token = inference_time / response.gen_token_count;
 
+    // Tracing metadata
+    span.record("total_time", format!("{total_time:?}"));
+    span.record("validation_time", format!("{validation_time:?}"));
+    span.record("queue_time", format!("{queue_time:?}"));
+    span.record("inference_time", format!("{inference_time:?}"));
+    span.record("time_per_token", format!("{time_per_token:?}"));
+
     // Headers
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -187,7 +195,7 @@ async fn generate(
     tracing::Span::current().record("queue_time", format!("{queue_time:?}"));
     tracing::Span::current().record("inference_time", format!("{inference_time:?}"));
     tracing::Span::current().record("time_per_token", format!("{time_per_token:?}"));
-    tracing::info!("Output: {}", response.output_text);
+    info!("Output: {}", response.output_text);
 
     // Send response
     let response = vec![GeneratedText {
@@ -262,7 +270,7 @@ pub async fn run(mut args: ServerRunArgs) {
         .model_info()
         .await
         .expect("Error contacting model shard");
-    tracing::info!(
+    info!(
         "Shard model info: is_seq2seq = {seq2seq}, eos_token_id = {eos_token_id}, \
         use_padding = {use_padding}"
     );
@@ -317,7 +325,7 @@ async fn do_run<B: BatchType>(
         batch_type: &batch_scaling,
     };
 
-    tracing::info!("Using batch weight limit: {}", batch_weight_limit);
+    info!("Using batch weight limit: {}", batch_weight_limit);
 
     // If max batch weight is not set, infer from max batch size and max seq length
     batch_config_validator.validate_batch_config(
@@ -473,10 +481,10 @@ async fn do_run<B: BatchType>(
         // Wait until all requests are finished to shut down
         .with_graceful_shutdown(shutdown_signal());
 
-    tracing::info!("HTTP server started on port {}", args.addr.port());
+    info!("HTTP server started on port {}", args.addr.port());
 
     server.await.unwrap();
-    tracing::info!("HTTP server shutdown complete");
+    info!("HTTP server shutdown complete");
     // Trigger gRPC server shutdown
     notify.notify_one();
     grpc_task.await.unwrap();
@@ -506,5 +514,5 @@ async fn shutdown_signal() {
         _ = terminate => {},
     }
 
-    tracing::info!("signal received, starting graceful shutdown");
+    info!("signal received, starting graceful shutdown");
 }
