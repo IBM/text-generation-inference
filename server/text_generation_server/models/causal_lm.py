@@ -608,6 +608,7 @@ class CausalLM(Model):
     ) -> Tuple[torch.Tensor, List[Tuple[torch.Tensor, torch.Tensor]], int]:
         model_inputs = self.model.prepare_inputs_for_generation(
             input_ids, past_key_values,
+            inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             position_ids=position_ids,
             use_cache=True,
@@ -619,8 +620,8 @@ class CausalLM(Model):
             # This can be incorrectly overwritten to None in prepare_inputs_for_generation
             model_inputs["position_ids"] = position_ids
 
-        if inputs_embeds is not None:
-            # Add embeddings - if non-None then input_ids should be None
+        if inputs_embeds is not None and "inputs_embeds" not in model_inputs:
+            # Ensure that embeddings were added - if non-None then input_ids should be None
             model_inputs["inputs_embeds"] = inputs_embeds
 
         # Model Forward

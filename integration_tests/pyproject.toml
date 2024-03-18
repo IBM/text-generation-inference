@@ -9,9 +9,9 @@ python = ">=3.11"
 
 [tool.poetry.group.dev.dependencies]
 protobuf = "^4.25.3"
-grpcio-tools = "^1.60.1"
-pytest = "^8.0.1"
-pytest-asyncio = "^0.23.3"
+grpcio-tools = "^1.62.1"
+pytest = "^8.0.2"
+pytest-asyncio = "^0.23.5"
 requests = "^2.31.0"
 pyyaml = "^6.0.1"
 
