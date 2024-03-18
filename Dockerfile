@@ -36,18 +36,19 @@ ENV LANG=C.UTF-8 \
 ## CUDA Base ###################################################################
 FROM base as cuda-base
 
-ENV CUDA_VERSION=11.8.0 \
-    NV_CUDA_LIB_VERSION=11.8.0-1 \
+# Ref: https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html
+ENV CUDA_VERSION=12.4.0 \
+    NV_CUDA_LIB_VERSION=12.4.0-1 \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility \
-    NV_CUDA_CUDART_VERSION=11.8.89-1 \
-    NV_CUDA_COMPAT_VERSION=520.61.05-1
+    NV_CUDA_CUDART_VERSION=12.4.99-1 \
+    NV_CUDA_COMPAT_VERSION=550.54.14-1
 
 RUN dnf config-manager \
        --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo \
     && dnf install -y \
-        cuda-cudart-11-8-${NV_CUDA_CUDART_VERSION} \
-        cuda-compat-11-8-${NV_CUDA_COMPAT_VERSION} \
+        cuda-cudart-12-4-${NV_CUDA_CUDART_VERSION} \
+        cuda-compat-12-4-${NV_CUDA_COMPAT_VERSION} \
     && echo "/usr/local/nvidia/lib" >> /etc/ld.so.conf.d/nvidia.conf \
     && echo "/usr/local/nvidia/lib64" >> /etc/ld.so.conf.d/nvidia.conf \
     && dnf clean all
@@ -60,22 +61,22 @@ ENV CUDA_HOME="/usr/local/cuda" \
 ## CUDA Development ############################################################
 FROM cuda-base as cuda-devel
 
-ENV NV_CUDA_CUDART_DEV_VERSION=11.8.89-1 \
-    NV_NVML_DEV_VERSION=11.8.86-1 \
-    NV_LIBCUBLAS_DEV_VERSION=11.11.3.6-1 \
-    NV_LIBNPP_DEV_VERSION=11.8.0.86-1 \
-    NV_LIBNCCL_DEV_PACKAGE_VERSION=2.15.5-1+cuda11.8
+ENV NV_CUDA_CUDART_DEV_VERSION=12.4.99-1 \
+    NV_NVML_DEV_VERSION=12.4.99-1 \
+    NV_LIBCUBLAS_DEV_VERSION=12.4.2.65-1 \
+    NV_LIBNPP_DEV_VERSION=12.2.5.2-1 \
+    NV_LIBNCCL_DEV_PACKAGE_VERSION=2.15.5-1+cuda12.4
 
 RUN dnf config-manager \
        --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo \
     && dnf install -y \
-        cuda-command-line-tools-11-8-${NV_CUDA_LIB_VERSION} \
-        cuda-libraries-devel-11-8-${NV_CUDA_LIB_VERSION} \
-        cuda-minimal-build-11-8-${NV_CUDA_LIB_VERSION} \
-        cuda-cudart-devel-11-8-${NV_CUDA_CUDART_DEV_VERSION} \
-        cuda-nvml-devel-11-8-${NV_NVML_DEV_VERSION} \
-        libcublas-devel-11-8-${NV_LIBCUBLAS_DEV_VERSION} \
-        libnpp-devel-11-8-${NV_LIBNPP_DEV_VERSION} \
+        cuda-command-line-tools-12-4-${NV_CUDA_LIB_VERSION} \
+        cuda-libraries-devel-12-4-${NV_CUDA_LIB_VERSION} \
+        cuda-minimal-build-12-4-${NV_CUDA_LIB_VERSION} \
+        cuda-cudart-devel-12-4-${NV_CUDA_CUDART_DEV_VERSION} \
+        cuda-nvml-devel-12-4-${NV_NVML_DEV_VERSION} \
+        libcublas-devel-12-4-${NV_LIBCUBLAS_DEV_VERSION} \
+        libnpp-devel-12-4-${NV_LIBNPP_DEV_VERSION} \
         libnccl-devel-${NV_LIBNCCL_DEV_PACKAGE_VERSION} \
     && dnf clean all
 
