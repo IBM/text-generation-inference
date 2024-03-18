@@ -218,14 +218,15 @@ RUN MAX_JOBS=2  pip --verbose wheel --no-deps flash-attn==${FLASH_ATT_VERSION} \
 
 
 ## Install auto-gptq ###########################################################
-FROM python-builder as auto-gptq-installer
-ARG AUTO_GPTQ_REF=896d8204bc89a7cfbda42bf3314e13cf4ce20b02
-
-WORKDIR /usr/src/auto-gptq-wheel
-
-# numpy is required to run auto-gptq's setup.py
-RUN pip install numpy
-RUN DISABLE_QIGEN=1 pip wheel git+https://github.com/AutoGPTQ/AutoGPTQ@${AUTO_GPTQ_REF} --no-cache-dir --no-deps --verbose
+## Uncomment if a custom autogptq build is required
+#FROM python-builder as auto-gptq-installer
+#ARG AUTO_GPTQ_REF=896d8204bc89a7cfbda42bf3314e13cf4ce20b02
+#
+#WORKDIR /usr/src/auto-gptq-wheel
+#
+## numpy is required to run auto-gptq's setup.py
+#RUN pip install numpy
+#RUN DISABLE_QIGEN=1 pip wheel git+https://github.com/AutoGPTQ/AutoGPTQ@${AUTO_GPTQ_REF} --no-cache-dir --no-deps --verbose
 
 ## Build libraries #############################################################
 FROM python-builder as build
@@ -242,11 +243,12 @@ FROM base as flash-att-v2-cache
 COPY --from=flash-att-v2-builder /usr/src/flash-attention-v2 /usr/src/flash-attention-v2
 
 
-## Auto gptq cached build image
-FROM base as auto-gptq-cache
-
-# Copy just the wheel we built for auto-gptq
-COPY --from=auto-gptq-installer /usr/src/auto-gptq-wheel /usr/src/auto-gptq-wheel
+## Auto gptq cached build image ################################################
+## Uncomment if a custom autogptq build is required
+#FROM base as auto-gptq-cache
+#
+## Copy just the wheel we built for auto-gptq
+#COPY --from=auto-gptq-installer /usr/src/auto-gptq-wheel /usr/src/auto-gptq-wheel
 
 
 ## Full set of python installations for server release #########################
@@ -254,6 +256,7 @@ COPY --from=auto-gptq-installer /usr/src/auto-gptq-wheel /usr/src/auto-gptq-whee
 FROM python-builder as python-installations
 
 ARG PYTHON_VERSION
+ARG AUTO_GPTQ_VERSION
 ARG SITE_PACKAGES=/opt/tgis/lib/python${PYTHON_VERSION}/site-packages
 
 COPY --from=build /opt/tgis /opt/tgis
@@ -266,8 +269,12 @@ RUN --mount=type=bind,from=flash-att-v2-cache,src=/usr/src/flash-attention-v2,ta
     pip install /usr/src/flash-attention-v2/*.whl --no-cache-dir
 
 # Copy over the auto-gptq wheel and install it
-RUN --mount=type=bind,from=auto-gptq-cache,src=/usr/src/auto-gptq-wheel,target=/usr/src/auto-gptq-wheel \
-    pip install /usr/src/auto-gptq-wheel/*.whl --no-cache-dir
+#RUN --mount=type=bind,from=auto-gptq-cache,src=/usr/src/auto-gptq-wheel,target=/usr/src/auto-gptq-wheel \
+#    pip install /usr/src/auto-gptq-wheel/*.whl --no-cache-dir
+
+# We only need to install a custom-built auto-gptq version if we need a pre-release
+# or are using a PyTorch nightly version
+RUN pip install auto-gptq=="${AUTO_GPTQ_VERSION}+cu118" --extra-index-url "https://huggingface.github.io/autogptq-index/whl/cu118/" --no-cache-dir
 
 # Install server
 # git is required to pull the fms-extras dependency
