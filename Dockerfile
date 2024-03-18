@@ -56,25 +56,6 @@ ENV CUDA_HOME="/usr/local/cuda" \
     LD_LIBRARY_PATH="/usr/local/nvidia/lib:/usr/local/nvidia/lib64:$CUDA_HOME/lib64:$CUDA_HOME/extras/CUPTI/lib64:${LD_LIBRARY_PATH}"
 
 
-## CUDA Runtime ################################################################
-FROM cuda-base as cuda-runtime
-
-ENV NV_NVTX_VERSION=11.8.86-1 \
-    NV_LIBNPP_VERSION=11.8.0.86-1 \
-    NV_LIBCUBLAS_VERSION=11.11.3.6-1 \
-    NV_LIBNCCL_PACKAGE_VERSION=2.15.5-1+cuda11.8
-
-RUN dnf config-manager \
-       --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo \
-    && dnf install -y \
-        cuda-libraries-11-8-${NV_CUDA_LIB_VERSION} \
-        cuda-nvtx-11-8-${NV_NVTX_VERSION} \
-        libnpp-11-8-${NV_LIBNPP_VERSION} \
-        libcublas-11-8-${NV_LIBCUBLAS_VERSION} \
-        libnccl-${NV_LIBNCCL_PACKAGE_VERSION} \
-    && dnf clean all
-
-
 ## CUDA Development ############################################################
 FROM cuda-base as cuda-devel
 
@@ -269,7 +250,7 @@ COPY --from=auto-gptq-installer /usr/src/auto-gptq-wheel /usr/src/auto-gptq-whee
 
 ## Full set of python installations for server release #########################
 
-FROM cuda-runtime as python-installations
+FROM python-builder as python-installations
 
 ARG PYTHON_VERSION
 ARG SITE_PACKAGES=/opt/tgis/lib/python${PYTHON_VERSION}/site-packages
