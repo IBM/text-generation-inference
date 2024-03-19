@@ -128,6 +128,42 @@ TLS can be enabled in the TGIS containers via the following env vars:
 
 These paths can reference mounted secrets containing the certs.
 
+### Local inference
+
+These steps explain how to run inference outside of Docker, connecting to the TGIS server from a Python script running locally.
+
+#### Prepare the GRPC client
+
+Install GRPC: `pip install grpcio grpcio-tools`
+
+In the repository root, run:
+
+```
+python -m grpc_tools.protoc -Iproto --python_out=pb --pyi_out=pb --grpc_python_out=pb proto/generate.proto
+python -m grpc_tools.protoc -Iproto --python_out=pb --pyi_out=pb --grpc_python_out=pb proto/generation.proto
+```
+
+This generates the necessary files in the pb directory. This only needs to be done once.
+
+#### Run the server
+
+Run text-generation launcher. For example, if we have a model named "local_model" in $PWD/data:
+
+```
+volume=$PWD/data
+MODEL=/data/local_model
+IMAGE_ID=your_image_id
+docker run -p 8033:8033 -p 3000:3000 -v $volume:/data $IMAGE_ID text-generation-launcher --model-name $MODEL```
+```
+
+#### Run inference
+
+In a separate shell (with the environment where you installed GRPC), run:
+
+```
+python pb/client.py
+```
+
 ### Metrics
 
 Prometheus metrics are exposed on the same port as the health probe endpoint (default 3000), at `/metrics`.
