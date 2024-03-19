@@ -36,13 +36,13 @@ ENV LANG=C.UTF-8 \
 ## CUDA Base ###################################################################
 FROM base as cuda-base
 
-# Ref: https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html
-ENV CUDA_VERSION=12.4.0 \
-    NV_CUDA_LIB_VERSION=12.4.0-1 \
+# Ref: https://docs.nvidia.com/cuda/archive/12.1.0/cuda-toolkit-release-notes/
+ENV CUDA_VERSION=12.1.0 \
+    NV_CUDA_LIB_VERSION=12.1.0-1 \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility \
-    NV_CUDA_CUDART_VERSION=12.4.99-1 \
-    NV_CUDA_COMPAT_VERSION=550.54.14-1
+    NV_CUDA_CUDART_VERSION=12.1.55-1 \
+    NV_CUDA_COMPAT_VERSION=530.30.02-1
 
 RUN dnf config-manager \
        --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo \
@@ -61,11 +61,12 @@ ENV CUDA_HOME="/usr/local/cuda" \
 ## CUDA Development ############################################################
 FROM cuda-base as cuda-devel
 
-ENV NV_CUDA_CUDART_DEV_VERSION=12.4.99-1 \
-    NV_NVML_DEV_VERSION=12.4.99-1 \
-    NV_LIBCUBLAS_DEV_VERSION=12.4.2.65-1 \
-    NV_LIBNPP_DEV_VERSION=12.2.5.2-1 \
-    NV_LIBNCCL_DEV_PACKAGE_VERSION=2.15.5-1+cuda12.4
+# Ref: https://developer.nvidia.com/nccl/nccl-legacy-downloads
+ENV NV_CUDA_CUDART_DEV_VERSION=12.1.55-1 \
+    NV_NVML_DEV_VERSION=12.1.55-1 \
+    NV_LIBCUBLAS_DEV_VERSION=12.1.0.26-1 \
+    NV_LIBNPP_DEV_VERSION=12.0.2.50-1 \
+    NV_LIBNCCL_DEV_PACKAGE_VERSION=2.18.3-1+cuda12.1
 
 RUN dnf config-manager \
        --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo \
