@@ -202,7 +202,7 @@ ENV PATH=/opt/tgis/bin/:$PATH
 # Install specific version of torch
 RUN pip install ninja==1.11.1.1 --no-cache-dir
 RUN pip install packaging --no-cache-dir
-RUN pip install torch==$PYTORCH_VERSION+cu118 --index-url "${PYTORCH_INDEX}/cu118" --no-cache-dir
+RUN pip install torch==$PYTORCH_VERSION+cu121 --index-url "${PYTORCH_INDEX}/cu121" --no-cache-dir
 
 
 ## Build flash attention v2 ####################################################
@@ -276,7 +276,7 @@ RUN --mount=type=bind,from=flash-att-v2-cache,src=/usr/src/flash-attention-v2,ta
 
 # We only need to install a custom-built auto-gptq version if we need a pre-release
 # or are using a PyTorch nightly version
-RUN pip install auto-gptq=="${AUTO_GPTQ_VERSION}+cu118" --extra-index-url "https://huggingface.github.io/autogptq-index/whl/cu118/" --no-cache-dir
+RUN pip install auto-gptq=="${AUTO_GPTQ_VERSION}" --no-cache-dir
 
 # Install server
 # git is required to pull the fms-extras dependency
