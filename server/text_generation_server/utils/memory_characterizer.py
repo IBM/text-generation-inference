@@ -72,17 +72,21 @@ class MemoryScalingModel:
         return (np.sqrt(c0**2 + 4*c1*(mem/batch)) - c0)/(2*c1)
 
     def inverse_prefill(self,batch, mem):
-        linear = self.inverse_linear_prefill(batch,mem)
-        quad   = self.inverse_quadratic_prefill(batch, mem)
+        linear = self.inverse_linear_prefill(batch,mem)     if self.linear_fit_params[0]    != 0.0 else sys.float_info.max
+        quad   = self.inverse_quadratic_prefill(batch, mem) if self.quadratic_fit_params[1] != 0.0 else sys.float_info.max
         return min(linear, quad)
 
     def nt_memory_usage(self, batch_size, input_len, output_len):
         return batch_size * self.next_token_params[0] * input_len + batch_size * self.next_token_params[1] * output_len
 
     def inverse_next_token_output(self, batch, in_seq, mem):
+        if self.next_token_params[1] == 0.0:
+            return sys.float_info.max
         return (mem - self.next_token_params[0]*batch*in_seq)/(batch*self.next_token_params[1])
 
     def inverse_next_token_input(self, batch, out_seq, mem):
+        if self.next_token_params[0] == 0.0:
+            return sys.float_info.max
         return (mem - self.next_token_params[1]*batch*out_seq)/(batch*self.next_token_params[0])
     
     def max_input_len_for_prefill(self, batch_size, max_input_len):
