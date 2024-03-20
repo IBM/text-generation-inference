@@ -389,11 +389,12 @@ try:
     from flash_attn.layers.rotary import RotaryEmbedding
     import rotary_emb
 
-    class PositionRotaryEmbedding(nn.Module):
-        def __init__(self, inv_freq):
+    class BasePositionRotaryEmbedding(nn.Module):
+        def __init__(self, inv_freq, scaling_factor=1.0):
             super().__init__()
 
             self.inv_freq = inv_freq
+            self.scaling_factor = scaling_factor
             self._seq_len_cached = 0
             self._cos_cached = None
             self._sin_cached = None
@@ -401,12 +402,12 @@ try:
             self._sin_k_cached = None
 
         @classmethod
-        def static(cls, dim, base, device):
+        def static(cls, dim, base, device, scaling_factor=1.0):
             inv_freq = 1.0 / (
                 base
                 ** (torch.arange(0, dim, 2, device=device, dtype=torch.float32) / dim)
             )
-            return cls(inv_freq)
+            return cls(inv_freq, scaling_factor)
 
         @classmethod
         def load(cls, prefix, weights):
@@ -427,6 +428,8 @@ try:
             ):
                 self._seq_len_cached = seqlen
                 t = torch.arange(seqlen, device=device, dtype=self.inv_freq.dtype)
+                if self.scaling_factor != 1.0:
+                    t = t / self.scaling_factor
                 # Don't do einsum, it converts fp32 to fp16
                 # freqs = torch.einsum("i,j->ij", t, self.inv_freq)
                 freqs = torch.outer(t, self.inv_freq.to(device=t.device))
@@ -453,6 +456,24 @@ try:
 
             rotary_emb.apply_rotary(x1, x2, cos, sin, x1, x2, False)
             return x
+
+    class PositionRotaryEmbedding(BasePositionRotaryEmbedding):
+        @classmethod
+        def static(cls, dim, base, device):
+            inv_freq = 1.0 / (
+                base
+                ** (torch.arange(0, dim, 2, device=device, dtype=torch.float32) / dim)
+            )
+            return cls(inv_freq)
+
+    class LinearScalingPositionRotaryEmbedding(BasePositionRotaryEmbedding):
+        @classmethod
+        def static(cls, dim, base, scaling_factor, device):
+            inv_freq = 1.0 / (
+                base
+                ** (torch.arange(0, dim, 2, device=device, dtype=torch.float32) / dim)
+            )
+            return cls(inv_freq, scaling_factor)
 
 except ImportError:
     pass
