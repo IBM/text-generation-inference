@@ -828,7 +828,7 @@ fn save_fast_tokenizer(
         format!(
             "from transformers import AutoTokenizer; \
             AutoTokenizer.from_pretrained(\"{model_name}\", \
-            revision=\"{revision}\").save_pretrained(\"{save_path}\")"
+            revision=\"{revision}\", local_files_only=True).save_pretrained(\"{save_path}\")"
         )
     } else {
         format!(
