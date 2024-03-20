@@ -222,12 +222,22 @@ class FlashLlamaAttention(torch.nn.Module):
                 weights=weights,
                 bias=False,
             )
+
+        noshard_o_proj = False
+        if config.quantize == 'gptq':
+            from text_generation_server.utils.layers import IS_TP_AWARE_GPTQ
+            noshard_o_proj = IS_TP_AWARE_GPTQ
+
         self.o_proj = TensorParallelRowLinear.load(
             config,
             prefix=f"{prefix}.o_proj",
             weights=weights,
             bias=False,
+            noshard=noshard_o_proj, # Don't shard o_proj weight matrix if TP-aware optimization is desired
         )
+        self.noshard_o_proj = noshard_o_proj
+        self.world_size = weights.process_group.size()
+        self.rank = weights.process_group.rank()
 
     def forward(
         self,
@@ -285,9 +295,19 @@ class FlashLlamaAttention(torch.nn.Module):
                 1,
                 False,
             )
+        attn_output = attn_output.reshape(-1, self.num_heads * self.head_size)
 
-        return self.o_proj(attn_output.reshape(-1, self.num_heads * self.head_size))
+        # TP-aware Masked Matmul Optimization by zero filling the activation
+        # and multiply with full weight matrix in o_proj
+        if self.noshard_o_proj:
+            shard_size = attn_output.shape[1]
+            assert shard_size*self.world_size == self.o_proj.linear.height
+            zf_attn_output = torch.zeros((attn_output.shape[0], shard_size*self.world_size), dtype=attn_output.dtype, device=attn_output.device)
+            start_idx = self.rank * shard_size
+            zf_attn_output[:, start_idx:start_idx+shard_size] = attn_output
+            attn_output = zf_attn_output
 
+        return self.o_proj(attn_output)
 
 class LlamaMLP(nn.Module):
     def __init__(self, prefix, config, weights):
@@ -303,6 +323,17 @@ class LlamaMLP(nn.Module):
                 else "none",
             )
         )
+
+        # For TP-aware preshuffle optimization, load the g_idx of down_proj for computing perm
+        # When perm==None the original unoptimized control path is taken
+        perm = None
+        if config.quantize=="gptq":
+            from text_generation_server.utils.layers import IS_TP_AWARE_GPTQ
+            if IS_TP_AWARE_GPTQ:
+                down_proj_g_idx = weights.get_tensor(f"{prefix}.down_proj.g_idx")
+                if down_proj_g_idx is not None:
+                    perm = torch.argsort(down_proj_g_idx)
+
         # Fuse gate and up proj
         self.gate_up_proj = TensorParallelColumnLinear.load_multi(
             config,
@@ -310,12 +341,14 @@ class LlamaMLP(nn.Module):
             weights=weights,
             dim=0,
             bias=False,
+            col_perm=perm,
         )
         self.down_proj = TensorParallelRowLinear.load(
             config,
             prefix=f"{prefix}.down_proj",
             weights=weights,
             bias=False,
+            row_perm=perm,
         )
         self.intermediate_size = (
             config.intermediate_size // weights.process_group.size()
