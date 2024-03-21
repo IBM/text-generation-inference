@@ -3,12 +3,13 @@ ARG BASE_UBI_IMAGE_TAG=9.3-1552
 ARG PROTOC_VERSION=25.2
 ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
 # ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
+ARG AUTO_GPTQ_VERSION=0.7.1
 
 # match PyTorch version that was used to compile flash-attention v2 pre-built wheels
 # e.g. flash-attn v2.5.2 => torch ['1.12.1', '1.13.1', '2.0.1', '2.1.2', '2.2.0', '2.3.0.dev20240126']
 # https://github.com/Dao-AILab/flash-attention/blob/v2.5.2/.github/workflows/publish.yml#L47
 # use nightly build index for torch .dev pre-release versions
-ARG PYTORCH_VERSION=2.2.0
+ARG PYTORCH_VERSION=2.2.1
 
 ARG PYTHON_VERSION=3.11
 
@@ -35,18 +36,19 @@ ENV LANG=C.UTF-8 \
 ## CUDA Base ###################################################################
 FROM base as cuda-base
 
-ENV CUDA_VERSION=11.8.0 \
-    NV_CUDA_LIB_VERSION=11.8.0-1 \
+# Ref: https://docs.nvidia.com/cuda/archive/12.1.0/cuda-toolkit-release-notes/
+ENV CUDA_VERSION=12.1.0 \
+    NV_CUDA_LIB_VERSION=12.1.0-1 \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility \
-    NV_CUDA_CUDART_VERSION=11.8.89-1 \
-    NV_CUDA_COMPAT_VERSION=520.61.05-1
+    NV_CUDA_CUDART_VERSION=12.1.55-1 \
+    NV_CUDA_COMPAT_VERSION=530.30.02-1
 
 RUN dnf config-manager \
        --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo \
     && dnf install -y \
-        cuda-cudart-11-8-${NV_CUDA_CUDART_VERSION} \
-        cuda-compat-11-8-${NV_CUDA_COMPAT_VERSION} \
+        cuda-cudart-12-1-${NV_CUDA_CUDART_VERSION} \
+        cuda-compat-12-1-${NV_CUDA_COMPAT_VERSION} \
     && echo "/usr/local/nvidia/lib" >> /etc/ld.so.conf.d/nvidia.conf \
     && echo "/usr/local/nvidia/lib64" >> /etc/ld.so.conf.d/nvidia.conf \
     && dnf clean all
@@ -59,22 +61,23 @@ ENV CUDA_HOME="/usr/local/cuda" \
 ## CUDA Development ############################################################
 FROM cuda-base as cuda-devel
 
-ENV NV_CUDA_CUDART_DEV_VERSION=11.8.89-1 \
-    NV_NVML_DEV_VERSION=11.8.86-1 \
-    NV_LIBCUBLAS_DEV_VERSION=11.11.3.6-1 \
-    NV_LIBNPP_DEV_VERSION=11.8.0.86-1 \
-    NV_LIBNCCL_DEV_PACKAGE_VERSION=2.15.5-1+cuda11.8
+# Ref: https://developer.nvidia.com/nccl/nccl-legacy-downloads
+ENV NV_CUDA_CUDART_DEV_VERSION=12.1.55-1 \
+    NV_NVML_DEV_VERSION=12.1.55-1 \
+    NV_LIBCUBLAS_DEV_VERSION=12.1.0.26-1 \
+    NV_LIBNPP_DEV_VERSION=12.0.2.50-1 \
+    NV_LIBNCCL_DEV_PACKAGE_VERSION=2.18.3-1+cuda12.1
 
 RUN dnf config-manager \
        --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo \
     && dnf install -y \
-        cuda-command-line-tools-11-8-${NV_CUDA_LIB_VERSION} \
-        cuda-libraries-devel-11-8-${NV_CUDA_LIB_VERSION} \
-        cuda-minimal-build-11-8-${NV_CUDA_LIB_VERSION} \
-        cuda-cudart-devel-11-8-${NV_CUDA_CUDART_DEV_VERSION} \
-        cuda-nvml-devel-11-8-${NV_NVML_DEV_VERSION} \
-        libcublas-devel-11-8-${NV_LIBCUBLAS_DEV_VERSION} \
-        libnpp-devel-11-8-${NV_LIBNPP_DEV_VERSION} \
+        cuda-command-line-tools-12-1-${NV_CUDA_LIB_VERSION} \
+        cuda-libraries-devel-12-1-${NV_CUDA_LIB_VERSION} \
+        cuda-minimal-build-12-1-${NV_CUDA_LIB_VERSION} \
+        cuda-cudart-devel-12-1-${NV_CUDA_CUDART_DEV_VERSION} \
+        cuda-nvml-devel-12-1-${NV_NVML_DEV_VERSION} \
+        libcublas-devel-12-1-${NV_LIBCUBLAS_DEV_VERSION} \
+        libnpp-devel-12-1-${NV_LIBNPP_DEV_VERSION} \
         libnccl-devel-${NV_LIBNCCL_DEV_PACKAGE_VERSION} \
     && dnf clean all
 
@@ -199,12 +202,12 @@ ENV PATH=/opt/tgis/bin/:$PATH
 # Install specific version of torch
 RUN pip install ninja==1.11.1.1 --no-cache-dir
 RUN pip install packaging --no-cache-dir
-RUN pip install torch==$PYTORCH_VERSION+cu118 --index-url "${PYTORCH_INDEX}/cu118" --no-cache-dir
+RUN pip install torch==$PYTORCH_VERSION+cu121 --index-url "${PYTORCH_INDEX}/cu121" --no-cache-dir
 
 
 ## Build flash attention v2 ####################################################
 FROM python-builder as flash-att-v2-builder
-ARG FLASH_ATT_VERSION=v2.5.2
+ARG FLASH_ATT_VERSION=v2.5.6
 
 WORKDIR /usr/src/flash-attention-v2
 
@@ -217,14 +220,15 @@ RUN MAX_JOBS=2  pip --verbose wheel --no-deps flash-attn==${FLASH_ATT_VERSION} \
 
 
 ## Install auto-gptq ###########################################################
-FROM python-builder as auto-gptq-installer
-ARG AUTO_GPTQ_REF=ccb6386ebfde63c17c45807d38779a93cd25846f
-
-WORKDIR /usr/src/auto-gptq-wheel
-
-# numpy is required to run auto-gptq's setup.py
-RUN pip install numpy
-RUN DISABLE_QIGEN=1 pip wheel git+https://github.com/AutoGPTQ/AutoGPTQ@${AUTO_GPTQ_REF} --no-cache-dir --no-deps --verbose
+## Uncomment if a custom autogptq build is required
+#FROM python-builder as auto-gptq-installer
+#ARG AUTO_GPTQ_REF=896d8204bc89a7cfbda42bf3314e13cf4ce20b02
+#
+#WORKDIR /usr/src/auto-gptq-wheel
+#
+## numpy is required to run auto-gptq's setup.py
+#RUN pip install numpy
+#RUN DISABLE_QIGEN=1 pip wheel git+https://github.com/AutoGPTQ/AutoGPTQ@${AUTO_GPTQ_REF} --no-cache-dir --no-deps --verbose
 
 ## Build libraries #############################################################
 FROM python-builder as build
@@ -241,11 +245,12 @@ FROM base as flash-att-v2-cache
 COPY --from=flash-att-v2-builder /usr/src/flash-attention-v2 /usr/src/flash-attention-v2
 
 
-## Auto gptq cached build image
-FROM base as auto-gptq-cache
-
-# Copy just the wheel we built for auto-gptq
-COPY --from=auto-gptq-installer /usr/src/auto-gptq-wheel /usr/src/auto-gptq-wheel
+## Auto gptq cached build image ################################################
+## Uncomment if a custom autogptq build is required
+#FROM base as auto-gptq-cache
+#
+## Copy just the wheel we built for auto-gptq
+#COPY --from=auto-gptq-installer /usr/src/auto-gptq-wheel /usr/src/auto-gptq-wheel
 
 
 ## Full set of python installations for server release #########################
@@ -253,6 +258,7 @@ COPY --from=auto-gptq-installer /usr/src/auto-gptq-wheel /usr/src/auto-gptq-whee
 FROM python-builder as python-installations
 
 ARG PYTHON_VERSION
+ARG AUTO_GPTQ_VERSION
 ARG SITE_PACKAGES=/opt/tgis/lib/python${PYTHON_VERSION}/site-packages
 
 COPY --from=build /opt/tgis /opt/tgis
@@ -265,15 +271,21 @@ RUN --mount=type=bind,from=flash-att-v2-cache,src=/usr/src/flash-attention-v2,ta
     pip install /usr/src/flash-attention-v2/*.whl --no-cache-dir
 
 # Copy over the auto-gptq wheel and install it
-RUN --mount=type=bind,from=auto-gptq-cache,src=/usr/src/auto-gptq-wheel,target=/usr/src/auto-gptq-wheel \
-    pip install /usr/src/auto-gptq-wheel/*.whl --no-cache-dir
+#RUN --mount=type=bind,from=auto-gptq-cache,src=/usr/src/auto-gptq-wheel,target=/usr/src/auto-gptq-wheel \
+#    pip install /usr/src/auto-gptq-wheel/*.whl --no-cache-dir
+
+# We only need to install a custom-built auto-gptq version if we need a pre-release
+# or are using a PyTorch nightly version
+RUN pip install auto-gptq=="${AUTO_GPTQ_VERSION}" --no-cache-dir
 
 # Install server
 # git is required to pull the fms-extras dependency
 RUN dnf install -y git && dnf clean all
 COPY proto proto
 COPY server server
-RUN cd server && make gen-server && pip install ".[accelerate, ibm-fms, onnx-gpu, quantize]" --no-cache-dir
+# Extra url is required to install cuda-12 version of onnxruntime-gpu
+# Ref: https://onnxruntime.ai/docs/install/#install-onnx-runtime-gpu-cuda-12x
+RUN cd server && make gen-server && pip install ".[accelerate, ibm-fms, onnx-gpu, quantize]" --no-cache-dir --extra-index-url=https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
 
 # Patch codegen model changes into transformers 4.35
 RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py
