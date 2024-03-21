@@ -2,7 +2,7 @@ from typing import Optional, List
 from multiprocessing import Queue
 import torch
 
-from fms.utils.cache import flatten_batch, select_inflate_dim
+from fms_extras.models.speculator import flatten_batch, select_inflate_dim
 
 def fit_memory_scaling_model(
         model_name: str,

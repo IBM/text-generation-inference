@@ -29,7 +29,7 @@ from typing import Optional
 # Flash attention imports
 import dropout_layer_norm
 
-from fms.utils.cache.paged import PagedAttentionCacheData, PagedAttentionCacheDataLayer
+from fms_extras.utils.cache.paged import PagedAttentionCacheData, PagedAttentionCacheDataLayer
 from text_generation_server.utils.flash_attn import attention
 from text_generation_server.utils.layers import (
     TensorParallelRowLinear,

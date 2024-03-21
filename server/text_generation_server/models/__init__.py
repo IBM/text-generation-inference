@@ -54,6 +54,7 @@ def get_model(
             )
             deployment_framework = "tgis_native"
 
+        # TODO: add from_pretrained for santacoder config
         if model_type == "llama":
             # Custom config type for LLaMA models
             from text_generation_server.models.custom_modeling.paged_llama_modeling import LlamaConfig

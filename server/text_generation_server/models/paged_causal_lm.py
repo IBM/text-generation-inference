@@ -318,8 +318,8 @@ class PagedCausalLM(Model):
 
         self.batch_type = PagedCausalLMBatch
 
-        from fms.utils.cache.paged import PagedKVCacheManager
-        from fms.utils.cache import flatten_batch, select_inflate_dim
+        from fms_extras.utils.cache.paged import PagedKVCacheManager
+        from fms_extras.models.speculator import flatten_batch, select_inflate_dim
 
         self.kv_cache_manager = PagedKVCacheManager(
             model_config.num_hidden_layers,
@@ -333,7 +333,7 @@ class PagedCausalLM(Model):
 
 
         if SPECULATOR_PATH is not None:
-            from fms.modules.speculator import Speculator
+            from fms_extras.models.speculator import Speculator
             print(f"Speculation will be enabled up to batch size {SPECULATOR_MAX_BATCH_SIZE}")
             self.speculator = Speculator(model_config.hidden_size, model_config.vocab_size, n_predict=3).to(self.device)
             self.speculator.load_state_dict(
