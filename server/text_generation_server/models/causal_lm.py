@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from transformers import AutoModelForCausalLM, PreTrainedTokenizerBase
 from typing import Optional, Tuple, List, Type, Union, Any
 
-from text_generation_server.models.model import Model, CUDA_PAD_TO_MULT_OF_8
+from text_generation_server.models.model import Model, ADD_SPECIAL_TOKENS, CUDA_PAD_TO_MULT_OF_8
 from text_generation_server.models.types import Batch, GenerateError
 from text_generation_server.pb import generate_pb2
 from text_generation_server.prompt_cache import PrefixCache
@@ -143,8 +143,9 @@ class CausalLMBatch(Batch):
             truncation=True,
             max_length=tokenize_length,
             return_token_type_ids=False,
+            add_special_tokens=ADD_SPECIAL_TOKENS,
         ).to(device)
-        all_input_ids = tokenized_inputs["input_ids"]
+        all_input_ids = tokenized_inputs["input_ids"].to(torch.int64)
 
         # Allocate maximum attention_mask
         attention_mask = all_input_ids.new_zeros((batch_size, tokenize_length + padding_right_offset))
@@ -154,14 +155,15 @@ class CausalLMBatch(Batch):
         # Mask out truncated tokens
         # (input_texts aren't truncated, only input_lengths are)
         if truncate_indices:
-            add_bos_token = getattr(tokenizer, "add_bos_token", False)
+            add_bos_token = ADD_SPECIAL_TOKENS and getattr(tokenizer, "add_bos_token", False)
             for i in truncate_indices:
                 orig_input_length = requests[i].input_length
-                attention_mask[i, :-orig_input_length-padding_right_offset] = 0
-                all_input_ids[i, :-orig_input_length] = tokenizer.pad_token_id
+                start_index = tokenize_length - orig_input_length
+                attention_mask[i, :start_index] = 0
+                all_input_ids[i, :start_index] = tokenizer.pad_token_id
                 if add_bos_token:
                     # Ensure that first non-virtual token is set to BOS
-                    all_input_ids[i, -orig_input_length] = tokenizer.bos_token_id
+                    all_input_ids[i, start_index] = tokenizer.bos_token_id
 
         # Padded all_input_ids_tensor; the maximum length of any sequence is the max
         # (padded) input sequence length + the max output length
@@ -179,7 +181,8 @@ class CausalLMBatch(Batch):
                 input_length = input_lengths[i]
                 orig_length = input_length - p.shape[0]
                 # Insert prefix embeddings
-                inputs_embeds[i, -input_length:-orig_length] = p
+                prefix_end = tokenize_length - orig_length
+                inputs_embeds[i, -input_length:prefix_end] = p
                 # Update attention mask with virtual prefix tokens
                 attention_mask[i, -input_length-padding_right_offset:-padding_right_offset] = 1
             input_ids = None

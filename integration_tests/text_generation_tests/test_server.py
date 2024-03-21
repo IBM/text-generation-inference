@@ -3,6 +3,8 @@ import glob
 import os
 import random
 import sys
+from typing import Optional
+
 import yaml
 import subprocess
 import threading
@@ -27,10 +29,11 @@ def start_server(
     num_shard: int,
     port: int,
     master_port: int,
-    timeout=30,
-    model_path=None,
-    include_cache_env_vars=True,
-    output_special_tokens=False,
+    timeout: int = 30,
+    model_path: Optional[str] = None,
+    include_cache_env_vars: bool = True,
+    output_special_tokens: bool = False,
+    add_special_tokens: Optional[str] = None,
 ):
     # Download weights to the cache first
     print(f"Downloading files for model {model_name}...")
@@ -65,6 +68,9 @@ def start_server(
 
     if output_special_tokens:
         args.append("--output-special-tokens")
+
+    if add_special_tokens is not None:
+        args.append(f"--add-special-tokens={add_special_tokens}")
 
     env = os.environ.copy()
     env["RUST_BACKTRACE"] = "full"
@@ -120,8 +126,11 @@ def server_fixture(request):
     extensions = request.node.get_closest_marker("extensions").args[0]
     ost = request.node.get_closest_marker("output_special_tokens")
     ost = ost is not None and ost.args[0]
+    ast = request.node.get_closest_marker("add_special_tokens")
+    ast = ast.args[0] if ast is not None else None
     p = start_server(
-        model_name, extensions, shards, 3000, 29502, output_special_tokens=ost
+        model_name, extensions, shards, 3000, 29502,
+        output_special_tokens=ost, add_special_tokens=ast,
     )
     yield p
     p.terminate()
@@ -202,7 +211,7 @@ async def run_streaming_test_case(stub, case, seq2seq_model):
         first = json_format.MessageToDict(await response_iter.__anext__())
         incl_input_text = "params" in request and "response" in request["params"] \
             and request["params"]["response"].get("inputText")
-        assert first["inputTokenCount"] == expected["inputTokenCount"]
+        assert first.get("inputTokenCount", 0) == expected.get("inputTokenCount", 0)
         if not skip_check:
             assert first.get("seed") == expected.get("seed")
         # assert first.get("inputTokens") == expected.get("inputTokens")
@@ -384,7 +393,6 @@ async def test_gpt2(server_fixture, test_cases):
 async def test_bloom(server_fixture, test_cases):
     await run_test_cases_async(test_cases)
 
-
 @pytest.mark.model("bigscience/mt0-small")
 @pytest.mark.extensions(".bin,.json,.model")
 @pytest.mark.shards(1)
@@ -409,6 +417,17 @@ async def test_gptbigcode(server_fixture, test_cases):
 @pytest.mark.test_case_file("test_cases_tinyllama.yaml")
 @pytest.mark.asyncio
 async def test_llama(server_fixture, test_cases):
+    await run_test_cases_async(test_cases)
+
+# test with Llama model which has tokenizer.add_bos_token == true
+# but with add_special_tokens = False
+@pytest.mark.model("Maykeye/TinyLLama-v0")
+@pytest.mark.extensions(".bin,.json,.model")
+@pytest.mark.shards(2)
+@pytest.mark.add_special_tokens("false")
+@pytest.mark.test_case_file("test_cases_tinyllama_no_ast.yaml")
+@pytest.mark.asyncio
+async def test_llama_no_add_special_tokens(server_fixture, test_cases):
     await run_test_cases_async(test_cases)
 
 # Test distributed inference - two shards

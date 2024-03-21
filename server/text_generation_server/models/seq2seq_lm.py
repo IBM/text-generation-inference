@@ -10,7 +10,7 @@ from typing import Optional, Tuple, List, Type, Union, Any
 
 from transformers.modeling_outputs import BaseModelOutput
 
-from text_generation_server.models.model import Model, CUDA_PAD_TO_MULT_OF_8, PT2_COMPILE
+from text_generation_server.models.model import Model, ADD_SPECIAL_TOKENS, CUDA_PAD_TO_MULT_OF_8, PT2_COMPILE
 from text_generation_server.models.types import Batch, GenerateError
 from text_generation_server.pb import generate_pb2
 from text_generation_server.prompt_cache import PrefixCache
@@ -148,6 +148,7 @@ class Seq2SeqLMBatch(Batch):
             truncation=True,
             max_length=tokenize_length,
             return_token_type_ids=False,
+            add_special_tokens=ADD_SPECIAL_TOKENS,
         ).to(device)
         input_ids = tokenized_inputs["input_ids"]
         attention_mask = tokenized_inputs["attention_mask"]
@@ -155,14 +156,15 @@ class Seq2SeqLMBatch(Batch):
         # Mask out truncated tokens
         # (input_texts aren't truncated, only input_lengths are)
         if truncate_indices:
-            add_bos_token = getattr(tokenizer, "add_bos_token", False)
+            add_bos_token = ADD_SPECIAL_TOKENS and getattr(tokenizer, "add_bos_token", False)
             for i in truncate_indices:
                 orig_input_length = requests[i].input_length
-                attention_mask[i, :-orig_input_length] = 0
-                input_ids[i, :-orig_input_length] = tokenizer.pad_token_id
+                start_index = tokenize_length - orig_input_length
+                attention_mask[i, :start_index] = 0
+                input_ids[i, :start_index] = tokenizer.pad_token_id
                 if add_bos_token:
                     # Ensure that first non-virtual token is set to BOS
-                    input_ids[i, -orig_input_length] = tokenizer.bos_token_id
+                    input_ids[i, start_index] = tokenizer.bos_token_id
 
         if encoder_prefix_ids:
             # Get input embeddings
@@ -171,7 +173,8 @@ class Seq2SeqLMBatch(Batch):
                 input_length = input_lengths[i]
                 orig_length = input_length - ep.shape[0]
                 # Insert prefix embeddings
-                inputs_embeds[i, -input_length:-orig_length] = ep
+                prefix_end = tokenize_length - orig_length
+                inputs_embeds[i, -input_length:prefix_end] = ep
                 # Update attention mask with virtual prefix tokens
                 attention_mask[i, -input_length:] = 1
         else:
@@ -198,9 +201,9 @@ class Seq2SeqLMBatch(Batch):
 
             for i, dp in decoder_prefix_ids.items():
                 # Update decoder embedding and attention mask
-                length = decoder_input_lengths[i]
-                decoder_inputs_embeds[i, -length:] = dp
-                decoder_attention_mask[i, -length-padding_right_offset:-padding_right_offset] = 1
+                prefix_start = max_decoder_input_length - decoder_input_lengths[i]
+                decoder_inputs_embeds[i, prefix_start:] = dp
+                decoder_attention_mask[i, prefix_start:-padding_right_offset] = 1
 
             # These do not actually get passed to the model
             decoder_input_ids = input_ids.new_zeros((batch_size, max_decoder_input_length))

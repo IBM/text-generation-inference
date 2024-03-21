@@ -91,6 +91,8 @@ struct Args {
     default_include_stop_seqs: bool,
     #[clap(long, env)]
     otlp_endpoint: Option<String>,
+    #[clap(default_value = "true", long, env, action = clap::ArgAction::Set)]
+    add_special_tokens: bool,
 }
 
 fn main() -> ExitCode {
@@ -238,6 +240,7 @@ fn main() -> ExitCode {
                 args.max_new_tokens,
                 args.max_batch_size,
                 args.batch_safety_margin,
+                args.add_special_tokens,
                 args.shard_uds_path,
                 args.cuda_process_memory_fraction,
                 cuda_alloc_conf,
@@ -308,6 +311,8 @@ fn main() -> ExitCode {
         format!("{}-0", args.shard_uds_path),
         "--tokenizer-path".to_string(),
         tokenizer_path,
+        "--add-special-tokens".to_string(),
+        args.add_special_tokens.to_string(),
     ];
 
     if let Some(path) = args.tls_key_path {
@@ -549,6 +554,7 @@ fn shard_manager(
     max_new_tokens: usize,
     max_batch_size: usize,
     batch_safety_margin: usize,
+    add_special_tokens: bool,
     uds_path: String,
     cuda_process_memory_fraction: f32,
     cuda_alloc_conf: Option<&str>,
@@ -634,6 +640,9 @@ fn shard_manager(
             env.push(("PYTORCH_CUDA_ALLOC_CONF".into(), alloc_conf.into()));
         }
     }
+
+    // Add special tokens when tokenizing (e.g. leading <s> with llama tokenizer)
+    env.push(("ADD_SPECIAL_TOKENS".into(), add_special_tokens.to_string().into()));
 
     // Torch Distributed / DeepSpeed Env vars
     env.push(("RANK".into(), rank.to_string().into()));

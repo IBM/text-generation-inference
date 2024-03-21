@@ -255,6 +255,7 @@ pub struct ServerRunArgs {
     pub tls_client_ca_cert: Option<String>,
     pub output_special_tokens: bool,
     pub default_include_stop_seqs: bool,
+    pub add_special_tokens: bool,
 }
 
 async fn metrics(prom_handle: Extension<PrometheusHandle>) -> String {
@@ -345,7 +346,9 @@ async fn do_run<B: BatchType>(
         args.max_sequence_length - 1
     };
 
-    let tokenizers = AsyncTokenizer::new(&args.tokenizer, args.tokenization_workers);
+    let tokenizers = AsyncTokenizer::new(
+        &args.tokenizer, args.add_special_tokens, args.tokenization_workers
+    );
 
     // Create state
     let generation_health = Arc::new(AtomicBool::new(false));
