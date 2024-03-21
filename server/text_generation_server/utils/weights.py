@@ -219,12 +219,13 @@ class Weights:
         if quantize == "gptq":
             bits, groupsize = self._get_gptq_params()
 
-            from text_generation_server.utils.layers import HAS_GPTQ_CUDA
+            from text_generation_server.utils.layers import HAS_GPTQ_CUDA, IS_TP_AWARE_GPTQ
             is_preshuffle = (row_perm != None)
             is_masked_matmul = noshard
             assert (is_preshuffle != is_masked_matmul
                     or not (is_preshuffle or is_masked_matmul)), f"TP-aware optimization can't both be enabled at the same time {is_preshuffle=}, {is_masked_matmul=}"
-            use_gptq_cuda = (bits == 4) and HAS_GPTQ_CUDA or (is_preshuffle or is_masked_matmul)
+
+            use_exllama = (bits == 4) and HAS_GPTQ_CUDA and (IS_TP_AWARE_GPTQ and (is_preshuffle or is_masked_matmul))
             if self.process_group.rank == 0:
                 if use_gptq_cuda:
                     logger.info(f"Using GPTQ cuda kernels for row {prefix}")
