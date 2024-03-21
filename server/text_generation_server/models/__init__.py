@@ -59,7 +59,7 @@ def get_model(
             from text_generation_server.models.custom_modeling.paged_llama_modeling import LlamaConfig
             model_config = LlamaConfig.from_pretrained(model_path)
         else:
-            raise NotImplementedError("PAGED_ATTENTION only support llama for now")
+            raise NotImplementedError("PAGED_ATTENTION only support santacoder and llama for now")
 
         from text_generation_server.models.paged_causal_lm import PagedCausalLM
         return PagedCausalLM(
