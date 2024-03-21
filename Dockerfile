@@ -268,6 +268,12 @@ RUN --mount=type=bind,from=flash-att-v2-cache,src=/usr/src/flash-attention-v2,ta
 RUN --mount=type=bind,from=auto-gptq-cache,src=/usr/src/auto-gptq-wheel,target=/usr/src/auto-gptq-wheel \
     pip install /usr/src/auto-gptq-wheel/*.whl --no-cache-dir
 
+
+# Install ibm-fms from branch (required for spec. decoding)
+RUN git clone https://github.com/foundation-model-stack/foundation-model-stack.git --branch paged_attn_speculator_minimal_handoff --single-branch && \
+    cd foundation-model-stack && git checkout 14e736864b05b6b6f67fbac8fccaaaf8ac0d4739 && \
+    pip install . --verbose --no-cache-dir --no-build-isolation
+
 # Install server
 # git is required to pull the fms-extras dependency
 RUN dnf install -y git && dnf clean all
