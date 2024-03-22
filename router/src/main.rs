@@ -9,10 +9,12 @@ use std::{
 use clap::Parser;
 use opentelemetry::{
     global,
-    sdk::{propagation::TraceContextPropagator, trace, trace::Sampler, Resource},
     KeyValue,
 };
 use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
+use opentelemetry_sdk::{Resource, trace};
+use opentelemetry_sdk::trace::Sampler;
 use text_generation_client::ShardedClient;
 use text_generation_router::{server, server::ServerRunArgs};
 use tokenizers::Tokenizer;
@@ -237,7 +239,7 @@ fn init_logging(otlp_endpoint: Option<String>, json_output: bool) {
                     )]))
                     .with_sampler(Sampler::AlwaysOn),
             )
-            .install_batch(opentelemetry::runtime::Tokio);
+            .install_batch(opentelemetry_sdk::runtime::Tokio);
 
         if let Ok(tracer) = tracer {
             layers.push(tracing_opentelemetry::layer().with_tracer(tracer).boxed());
