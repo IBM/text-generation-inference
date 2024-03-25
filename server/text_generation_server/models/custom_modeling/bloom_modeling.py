@@ -179,7 +179,7 @@ def dropout_add(
     return out
 
 
-# @torch.jit.script # this is shit for unknow reasons.
+# @torch.jit.script # this is shit for unknown reasons.
 def _split_heads(
     fused_qkv: torch.Tensor, num_heads: int, head_dim: int
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -214,7 +214,7 @@ def _split_heads(
 # @torch.jit.script
 def _merge_heads(x: torch.Tensor, num_heads: int, head_dim: int) -> torch.Tensor:
     """
-    Merge heads together over the last dimenstion
+    Merge heads together over the last dimension
 
     Args:
         x: (`torch.tensor`, *required*): [batch_size * num_heads, seq_length, head_dim]
@@ -335,7 +335,7 @@ class BloomAttention(nn.Module):
         # `float16` has a minimum value of -65504.0, whereas `bfloat16` and `float32` have a minimum value of `-3.4e+38`
         if input_dtype == torch.float16:
             attention_scores = attention_scores.to(torch.float)
-        # torch.finfo not supported by torch.jit, we temporarily remplace with `-1e34`
+        # torch.finfo not supported by torch.jit, we temporarily replace with `-1e34`
         attn_weights = attention_scores.masked_fill_(
             attention_mask, torch.finfo(attention_scores.dtype).min
         )
@@ -383,7 +383,7 @@ class BloomAttention(nn.Module):
             )
 
         if CUSTOM_KERNELS_ENABLED:
-            assert self.training is False, "Only foward pass was implemented"
+            assert self.training is False, "Only forward pass was implemented"
             assert (
                 attention_mask.shape[-1] < 4096
             ), "Custom kernel support only up to 4096 tokens"
@@ -846,7 +846,7 @@ class BloomForCausalLM(BloomPreTrainedModel):
         if past_key_values:
             input_ids = input_ids[:, -1].unsqueeze(-1)
 
-            # the cache may be in the stardard format (e.g. in contrastive search), convert to bloom's format if needed
+            # the cache may be in the standard format (e.g. in contrastive search), convert to bloom's format if needed
             if past_key_values[0][0].shape[0] == input_ids.shape[0]:
                 past_key_values = self._convert_to_bloom_cache(past_key_values)
 

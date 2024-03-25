@@ -109,7 +109,7 @@ class Weights:
         size = slice_.get_shape()[dim]
         assert (
             size % world_size == 0
-        ), f"The choosen size {size} is not compatible with sharding on {world_size} shards"
+        ), f"The chosen size {size} is not compatible with sharding on {world_size} shards"
         return self.get_partial_sharded(tensor_name, dim)
 
     def get_multi_weights_col(self, prefixes: List[str], quantize: str, dim: int):

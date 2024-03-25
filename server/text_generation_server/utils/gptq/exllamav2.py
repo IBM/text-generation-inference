@@ -22,7 +22,7 @@ def ext_gemm_half_q_half(x, q_handle, q4_width, force_cuda):
 
 def ext_make_q_matrix(w: dict, temp_dq, key: str = None):
     """
-    Create Q matrix 
+    Create Q matrix
     """
 
     if w["scales"].dtype == torch.float:
@@ -110,7 +110,7 @@ class Ex4bitLinearV2(nn.Module):
         self.scales = scales
         self.g_idx = g_idx.cpu() if g_idx is not None else None
         self.bias = bias if bias is not None else None
-        
+
         self.height = qweight.shape[0] * 8
         self.width = qweight.shape[1]
 
@@ -120,7 +120,7 @@ class Ex4bitLinearV2(nn.Module):
 
         # Update max outfeatures & inout_product so far for later call to set_device
         MAX_INOUT_PRODUCT = max(MAX_INOUT_PRODUCT, self.width * self.height)
-    
+
     def post_init(self):
         global DEVICE_TENSOR
         assert self.qweight.device.type == "cuda"
@@ -142,4 +142,3 @@ class Ex4bitLinearV2(nn.Module):
         if self.bias is not None:
             out.add_(self.bias)
         return out
-

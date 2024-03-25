@@ -59,7 +59,7 @@ class PromptCacheNode:
         Args:
             prompt: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]
                 Prompt tuple/tensor we want to take the size of.
-        
+
         Return:
             (prompt virtual token count, prompt size in MiB)
         """
@@ -256,7 +256,7 @@ class PrefixCache:
         Args:
             prefix_id: str
                 Name of the directory to load prompt tensors from.
-        
+
         Returns:
             Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]
                 Loaded encoder / decoder prompt tensor for the model under consideration.

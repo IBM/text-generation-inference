@@ -324,15 +324,15 @@ class FlashGPTNeoXModel(FlashGPTNeoXPreTrainedModel):
         inputs_embeds: Optional[torch.Tensor] = None,
         past_key_values=None,
         pre_allocate_past_size: Optional[int] = None,
-    ):        
+    ):
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError(
                 "You cannot specify both input_ids and inputs_embeds at the same time"
             )
-        
+
         if inputs_embeds is not None:
             hidden_states = inputs_embeds
-        else:        
+        else:
             hidden_states = self.embed_in(input_ids)
 
         # Prefill

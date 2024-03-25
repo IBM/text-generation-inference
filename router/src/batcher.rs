@@ -332,7 +332,7 @@ impl<T, C> Stream for ResponseStream<T, C> {
                                     WithIds(toks) if !toks.is_empty() => Some(&toks[0]),
                                     _ => None,
                                 };
-                                // Detatch and reattach the decoder to appease borrow checker
+                                // Detach and reattach the decoder to appease borrow checker
                                 // while avoiding having to clone Arcs
                                 let decoder = take(&mut self.decoder);
                                 match &mut self.output {

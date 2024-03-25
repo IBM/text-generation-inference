@@ -73,11 +73,11 @@ class Ex4bitLinear(nn.Module):
         self.scales = scales
         self.g_idx = g_idx.cpu() if g_idx is not None else None
         self.bias = bias if bias is not None else None
-        
+
         if self.g_idx is not None and ((self.g_idx == 0).all() or torch.equal(g_idx.cpu(), torch.tensor([i // groupsize for i in range(g_idx.shape[0])], dtype=torch.int32))):
             self.empty_g_idx = True
             self.g_idx = None
-        
+
         assert self.device.type == "cuda"
         assert self.device.index is not None
 
@@ -115,7 +115,7 @@ class Ex4bitLinear(nn.Module):
             MAX_INNER = max(MAX_INNER, self.height, self.width)
 
             ACT_ORDER = True
-    
+
     def forward(self, x):
         out = ext_q4_matmul(x, self.q4, self.width)
 

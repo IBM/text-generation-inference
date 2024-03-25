@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Olivier Dehaene", "Nick Hill"]
 description = "Text Generation Batcher"
-build="build.rs"
+build = "build.rs"
 
 [lib]
 path = "src/lib.rs"
@@ -14,39 +14,39 @@ name = "text-generation-router"
 path = "src/main.rs"
 
 [dependencies]
-axum = { version = "0.6.20", features = ["json"] }
+axum = {version = "0.6.20", features = ["json"]}
 axum-tracing-opentelemetry = "0.10.0"
-text-generation-client = { path = "client" }
-clap = { version = "^4.5.2", features = ["derive", "env"] }
+text-generation-client = {path = "client"}
+clap = {version = "^4.5.2", features = ["derive", "env"]}
 futures = "^0.3.30"
 flume = "^0.11.0"
 metrics = "0.21.1"
-metrics-exporter-prometheus = { version = "0.12.2", features = [] }
-moka = { version = "0.12.5", features = ["future"] }
+metrics-exporter-prometheus = {version = "0.12.2", features = []}
+moka = {version = "0.12.5", features = ["future"]}
 nohash-hasher = "^0.2.0"
 num = "^0.4.1"
 num_cpus = "^1.16.0"
-hyper = "^0.14.28" # Override to address CVE-2023-26964
-openssl = "^0.10.64" # Override to address WS-2023-0082, WS-2023-0083, WS-2023-0195
-openssl-sys = "^0.9.101" # Override to address WS-2023-0082, WS-2023-0083, WS-2023-0195
-rustls-webpki = "0.102.2" # Override to address WS-2023-0305, CVE-2018-16875
+hyper = "^0.14.28"  # Override to address CVE-2023-26964
+openssl = "^0.10.64"  # Override to address WS-2023-0082, WS-2023-0083, WS-2023-0195
+openssl-sys = "^0.9.101"  # Override to address WS-2023-0082, WS-2023-0083, WS-2023-0195
+rustls-webpki = "0.102.2"  # Override to address WS-2023-0305, CVE-2018-16875
 rand = "^0.8.5"
 serde = "^1.0.197"
 serde_json = "^1.0.114"
 thiserror = "^1.0.57"
 tokenizers = "0.15.2"
-tokio = { version = "1.36.0", features = ["rt", "rt-multi-thread", "parking_lot", "signal", "sync", "fs"] }
+tokio = {version = "1.36.0", features = ["rt", "rt-multi-thread", "parking_lot", "signal", "sync", "fs"]}
 tokio-rustls = "^0.25.0"
 rustls = "0.22.2"
 tracing = "^0.1.40"
 prost = "^0.12.3"
-tonic = { version = "^0.11.0", features = ["tls"] }
-tracing-subscriber = { version = "0.3.18", features = ["json", "env-filter"] }
+tonic = {version = "^0.11.0", features = ["tls"]}
+tracing-subscriber = {version = "0.3.18", features = ["json", "env-filter"]}
 tracing-opentelemetry = "0.19.0"
-tokio-stream ="^0.1.14"
+tokio-stream = "^0.1.14"
 unicode-segmentation = "^1.11.0"
 unicode-truncate = "^0.2.0"
-opentelemetry = { version = "0.19.0", features = ["rt-tokio"] }
+opentelemetry = {version = "0.19.0", features = ["rt-tokio"]}
 opentelemetry-otlp = "0.12.0"
 
 [build-dependencies]

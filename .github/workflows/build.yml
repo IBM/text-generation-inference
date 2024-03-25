@@ -35,7 +35,7 @@ jobs:
       CACHE_IMAGE: "ghcr.io/ibm/text-gen-server:build-cache"
       CACHE_REGISTRY: "ghcr.io"
       CACHE_PACKAGE_NAME: "text-gen-server"
-      
+
     steps:
       - name: "Checkout"
         uses: actions/checkout@v4
@@ -96,8 +96,8 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha,enable=true,priority=100,prefix=,suffix=,format=short     
-            type=sha,enable=true,priority=100,prefix=${{ github.ref_name }}.,suffix=,format=short     
+            type=sha,enable=true,priority=100,prefix=,suffix=,format=short
+            type=sha,enable=true,priority=100,prefix=${{ github.ref_name }}.,suffix=,format=short
 
       - name: "Docker build server-release"
         uses: docker/build-push-action@v5
@@ -108,11 +108,11 @@ jobs:
           cache-from: type=registry,ref=${{ env.CACHE_IMAGE }}
           cache-to: ${{ env.CACHE_TO }}
           push: ${{ github.event_name != 'pull_request' }}
-      
+
       - name: "Cleanup old cache images"
         uses: actions/delete-package-versions@v5
         if: ${{ github.event_name == 'push' }}
-        with: 
+        with:
           package-name: ${{ env.CACHE_PACKAGE_NAME }}
           package-type: container
           delete-only-untagged-versions: true
