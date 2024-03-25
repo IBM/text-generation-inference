@@ -14,6 +14,7 @@ use tonic::{
 use tracing::{instrument, Span};
 use unicode_truncate::UnicodeTruncateStr;
 
+use crate::pb::fmaas::tokenize_response::Offset;
 use crate::{
     batcher::{InferError, InferResponse, ResponseStream, Times},
     default_parameters,
@@ -31,7 +32,6 @@ use crate::{
     validation::{RequestSize, ValidationError},
     GenerateParameters, GenerateRequest,
 };
-use crate::pb::fmaas::tokenize_response::Offset;
 
 /// Whether to fail if sampling parameters are provided in greedy-mode requests
 /// or to silently ignore them.
@@ -340,14 +340,15 @@ impl GenerationService for GenerationServicer {
         let br = request.into_inner();
         metrics::increment_counter!("tgi_tokenize_request_count");
         let start_time = Instant::now();
-        self.tokenize_input_counter.increment(br.requests.len() as u64);
+        self.tokenize_input_counter
+            .increment(br.requests.len() as u64);
 
         let truncate_to = match br.truncate_input_tokens {
             0 => u32::MAX,
             length => length,
         };
         let include_encoding = br.return_tokens || br.return_offsets;
-        let responses = try_join_all(br.requests.into_iter().map(|tr|
+        let responses = try_join_all(br.requests.into_iter().map(|tr| {
             self.tokenizer.tokenize(tr.text, include_encoding).map_ok(
                 |(_, token_count, encoding)| {
                     let token_count = token_count as u32;
@@ -359,18 +360,19 @@ impl GenerationService for GenerationServicer {
                             false => vec![],
                         },
                         offsets: match br.return_offsets {
-                            true => encoding.unwrap().get_offsets()[from..].iter().map(
-                                |(start, end)| Offset{
+                            true => encoding.unwrap().get_offsets()[from..]
+                                .iter()
+                                .map(|(start, end)| Offset {
                                     start: *start as u32,
                                     end: *end as u32,
-                                }
-                            ).collect(),
+                                })
+                                .collect(),
                             false => vec![],
                         },
                     }
                 },
             )
-        ))
+        }))
         .map_err(Status::from_error)
         .await?;
 

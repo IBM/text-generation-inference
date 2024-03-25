@@ -13,29 +13,28 @@ patchesStrategicMerge:
   - ../../base/patches/gpus/1-gpu.yaml
   - ../../base/patches/gpus/a100-80g.yaml
   - |-
-   apiVersion: apps/v1
-   kind: Deployment
-   metadata:
-     name: inference-server
-   spec:
-     template:
-       spec:
-         containers:
-           - name: server
-             env:
-             - name: MODEL_NAME
-               value: mosaicml/mpt-7b
-             - name: TRUST_REMOTE_CODE
-               value: "true"
-             - name: MAX_SEQUENCE_LENGTH
-               value: "2048"
-             #- name: OUTPUT_SPECIAL_TOKENS
-             #  value: "true"
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: inference-server
+    spec:
+      template:
+        spec:
+          containers:
+            - name: server
+              env:
+              - name: MODEL_NAME
+                value: mosaicml/mpt-7b
+              - name: TRUST_REMOTE_CODE
+                value: "true"
+              - name: MAX_SEQUENCE_LENGTH
+                value: "2048"
+              #- name: OUTPUT_SPECIAL_TOKENS
+              #  value: "true"
 
-             - name: MAX_BATCH_SIZE
-               value: "64"
-             - name: MAX_CONCURRENT_REQUESTS
-               value: "100"
-             - name: MAX_NEW_TOKENS
-               value: "1024"
-
+              - name: MAX_BATCH_SIZE
+                value: "64"
+              - name: MAX_CONCURRENT_REQUESTS
+                value: "100"
+              - name: MAX_NEW_TOKENS
+                value: "1024"

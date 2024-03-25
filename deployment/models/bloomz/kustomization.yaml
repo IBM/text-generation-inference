@@ -14,24 +14,24 @@ patchesStrategicMerge:
   - ../../base/patches/gpus/a100-80g.yaml
   - ../../base/patches/shm.yaml
   - |-
-   apiVersion: apps/v1
-   kind: Deployment
-   metadata:
-     name: inference-server
-   spec:
-     replicas: 1
-     template:
-       spec:
-         containers:
-           - name: server
-             env:
-             - name: MODEL_NAME
-               value: bigscience/bloomz
-             - name: DEPLOYMENT_FRAMEWORK
-               value: tgis_native
-             - name: DTYPE_STR
-               value: float16
-             - name: MAX_BATCH_SIZE
-               value: "5"
-             - name: MAX_CONCURRENT_REQUESTS
-               value: "48"
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: inference-server
+    spec:
+      replicas: 1
+      template:
+        spec:
+          containers:
+            - name: server
+              env:
+              - name: MODEL_NAME
+                value: bigscience/bloomz
+              - name: DEPLOYMENT_FRAMEWORK
+                value: tgis_native
+              - name: DTYPE_STR
+                value: float16
+              - name: MAX_BATCH_SIZE
+                value: "5"
+              - name: MAX_CONCURRENT_REQUESTS
+                value: "48"

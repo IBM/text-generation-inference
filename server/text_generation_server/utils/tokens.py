@@ -157,7 +157,7 @@ class NextTokenChooser:
 
 
 class HeterogeneousNextTokenChooser:
-    """Port of TGI's HeterogeneousNextTokenChooser. Note that we 
+    """Port of TGI's HeterogeneousNextTokenChooser. Note that we
     currently don't port the watermark processor.
     """
     def __init__(

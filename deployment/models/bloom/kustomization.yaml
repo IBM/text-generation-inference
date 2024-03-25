@@ -14,27 +14,27 @@ patchesStrategicMerge:
   - ../../base/patches/gpus/a100-80g.yaml
   - ../../base/patches/shm.yaml
   - |-
-   apiVersion: apps/v1
-   kind: Deployment
-   metadata:
-     name: inference-server
-   spec:
-     replicas: 1
-     template:
-       spec:
-         containers:
-           - name: server
-             env:
-             - name: MODEL_NAME
-               value: bigscience/bloom
-             - name: DEPLOYMENT_FRAMEWORK
-               value: tgis_native
-               
-             - name: MAX_BATCH_SIZE
-               value: "16"
-             - name: MAX_CONCURRENT_REQUESTS
-               value: "32"
-             - name: MAX_SEQUENCE_LENGTH
-               value: "4096"
-             - name: MAX_NEW_TOKENS
-               value: "1536"
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: inference-server
+    spec:
+      replicas: 1
+      template:
+        spec:
+          containers:
+            - name: server
+              env:
+              - name: MODEL_NAME
+                value: bigscience/bloom
+              - name: DEPLOYMENT_FRAMEWORK
+                value: tgis_native
+
+              - name: MAX_BATCH_SIZE
+                value: "16"
+              - name: MAX_CONCURRENT_REQUESTS
+                value: "32"
+              - name: MAX_SEQUENCE_LENGTH
+                value: "4096"
+              - name: MAX_NEW_TOKENS
+                value: "1536"

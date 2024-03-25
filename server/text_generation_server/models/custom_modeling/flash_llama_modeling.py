@@ -429,7 +429,7 @@ class FlashLlamaModel(torch.nn.Module):
             raise ValueError(
                 "You cannot specify both input_ids and inputs_embeds at the same time"
             )
-        
+
         if inputs_embeds is not None:
             hidden_states = inputs_embeds
         else:

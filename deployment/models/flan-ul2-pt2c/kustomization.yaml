@@ -15,20 +15,20 @@ patchesStrategicMerge:
   - ../../base/patches/limits/t5-xxl.yaml
   - ../../base/patches/pt2-compile.yaml
   - |-
-   apiVersion: apps/v1
-   kind: Deployment
-   metadata:
-     name: inference-server
-   spec:
-     replicas: 2
-     template:
-       spec:
-         containers:
-           - name: server
-             env:
-             - name: MODEL_NAME
-               value: google/flan-ul2
-             - name: MAX_PREFILL_WEIGHT
-               value: "1500000"
-             - name: MAX_BATCH_WEIGHT
-               value: "34543200"
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: inference-server
+    spec:
+      replicas: 2
+      template:
+        spec:
+          containers:
+            - name: server
+              env:
+              - name: MODEL_NAME
+                value: google/flan-ul2
+              - name: MAX_PREFILL_WEIGHT
+                value: "1500000"
+              - name: MAX_BATCH_WEIGHT
+                value: "34543200"

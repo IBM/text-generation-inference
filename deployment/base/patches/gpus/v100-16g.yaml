@@ -13,11 +13,11 @@ spec:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
-            - matchExpressions:
-              - key: nvidia.com/gpu.product
-                operator: In
-                values:
-                  - Tesla-V100-PCIE-16GB
+              - matchExpressions:
+                  - key: nvidia.com/gpu.product
+                    operator: In
+                    values:
+                      - Tesla-V100-PCIE-16GB
         podAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
             - weight: 100
