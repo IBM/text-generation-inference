@@ -68,8 +68,8 @@ def _load_multi_mqa_gptq(
         g_idx = g_idx.to(device=weights.device)
         bits, groupsize = weights._get_gptq_params()
 
-        from text_generation_server.utils.layers import HAS_EXLLAMA
-        weight = (qweight, qzeros, scales, g_idx, bits, groupsize, HAS_EXLLAMA)
+        from text_generation_server.utils.layers import HAS_GPTQ_CUDA
+        weight = (qweight, qzeros, scales, g_idx, bits, groupsize, HAS_GPTQ_CUDA)
 
         if bias:
             slice_ = weights._get_slice(f"{prefix}.c_attn.bias")
