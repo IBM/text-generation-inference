@@ -127,15 +127,15 @@ class Weights:
             g_idx = w[0]
 
             bits, groupsize = self._get_gptq_params()
-            use_exllama = False
+            use_gptq_cuda = False
             if bits == 4:
-                from text_generation_server.utils.layers import HAS_EXLLAMA
+                from text_generation_server.utils.layers import HAS_GPTQ_CUDA
 
-                use_exllama = HAS_EXLLAMA
-                if use_exllama:
-                    logger.info(f"Using exllama kernels for col {prefixes}")
+                use_gptq_cuda = HAS_GPTQ_CUDA
+                if use_gptq_cuda:
+                    logger.info(f"Using GPTQ cuda kernels for col {prefixes}")
 
-            weight = (qweight, qzeros, scales, g_idx, bits, groupsize, use_exllama)
+            weight = (qweight, qzeros, scales, g_idx, bits, groupsize, use_gptq_cuda)
         else:
             w = [self.get_sharded(f"{p}.weight", dim=0) for p in prefixes]
             weight = torch.cat(w, dim=dim)
@@ -145,7 +145,7 @@ class Weights:
         if quantize == "gptq":
             bits, groupsize = self._get_gptq_params()
 
-            use_exllama = bits == 4
+            use_gptq_cuda = bits == 4
 
             if self.process_group.size() > 1:
                 g_idx = self.get_tensor(f"{prefix}.g_idx")
@@ -153,26 +153,26 @@ class Weights:
                     if not torch.equal(g_idx.cpu(), torch.tensor([i // groupsize for i in range(g_idx.shape[0])], dtype=torch.int32)) and not (g_idx == 0).all():
                         # Exllama implementation does not support row tensor parallelism with act-order, as
                         # it would require to reorder input activations that are split unto several GPUs
-                        use_exllama = False
+                        use_gptq_cuda = False
 
             try:
                 qweight = self.get_sharded(f"{prefix}.qweight", dim=0)
             except RuntimeError:
                 raise RuntimeError("Cannot load `gptq` weight, make sure the model is already quantized, or quantize it with `text-generation-server quantize ORIGINAL_MODEL_ID NEW_MODEL_ID`")
 
-            from text_generation_server.utils.layers import HAS_EXLLAMA
-            if use_exllama:
-                use_exllama = HAS_EXLLAMA
+            from text_generation_server.utils.layers import HAS_GPTQ_CUDA
+            if use_gptq_cuda:
+                use_gptq_cuda = HAS_GPTQ_CUDA
                 if self.process_group.rank == 0:
-                    if use_exllama:
-                        logger.info(f"Using exllama kernels for row {prefix}")
+                    if use_gptq_cuda:
+                        logger.info(f"Using GPTQ cuda kernels for row {prefix}")
                     else:
                         logger.warning(
-                            "Exllama GPTQ cuda kernels (which are faster) could have been used, but are disabled via the DISABLE_EXLLAMA env var,"
+                            "GPTQ cuda kernels (which are faster) could have been used, but are disabled via the DISABLE_EXLLAMA env var,"
                             " or not currently installed, try using BUILD_EXTENSIONS=True"
                         )
 
-            if use_exllama:
+            if use_gptq_cuda:
                 if groupsize >= 0:
                     # Exllama reorders the weights in advance and the activations on the fly, thus
                     # the scales and zero-points do not need to be reordered.
@@ -195,7 +195,7 @@ class Weights:
                 scales = self.get_tensor(f"{prefix}.scales")
                 g_idx = self.get_sharded(f"{prefix}.g_idx", dim=0)
 
-            weight = (qweight, qzeros, scales, g_idx, bits, groupsize, use_exllama)
+            weight = (qweight, qzeros, scales, g_idx, bits, groupsize, use_gptq_cuda)
         else:
             weight = self.get_sharded(f"{prefix}.weight", dim=1)
         return weight
