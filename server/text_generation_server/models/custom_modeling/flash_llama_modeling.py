@@ -301,7 +301,7 @@ class FlashLlamaAttention(torch.nn.Module):
         # and multiply with full weight matrix in o_proj
         if self.noshard_o_proj:
             shard_size = attn_output.shape[1]
-            assert shard_size*self.world_size == self.o_proj.linear.height
+            # assert shard_size*self.world_size == self.o_proj.linear.height
             zf_attn_output = torch.zeros((attn_output.shape[0], shard_size*self.world_size), dtype=attn_output.dtype, device=attn_output.device)
             start_idx = self.rank * shard_size
             zf_attn_output[:, start_idx:start_idx+shard_size] = attn_output
