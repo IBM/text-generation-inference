@@ -18,7 +18,7 @@ HAS_GPTQ_CUDA = False
 GPTQ_CUDA_TYPE = os.getenv("GPTQ_CUDA_TYPE", "exllama").lower()
 GPTQ_CUDA_LINEAR = None
 # TODO: should disable TP-aware GPTQ automatically if deployment is single GPU
-IS_TP_AWARE_GPTQ = (os.getenv("DISABLE_TP_AWARE_GPTQ","False").lower() == "false")
+IS_TP_AWARE_GPTQ = (os.getenv("ENABLE_TP_AWARE_GPTQ","False").lower() not in ["false", "0"])
 
 if torch.cuda.is_available():
     try:
