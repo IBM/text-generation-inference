@@ -549,7 +549,6 @@ fn convert_params(
                 gp.length_penalty =
                     d.length_penalty.map(|lp| (lp.start_index, lp.decay_factor));
             }
-
             // Stopping Criteria
             if let Some(s) = p.stopping {
                 if s.max_new_tokens != 0 {
