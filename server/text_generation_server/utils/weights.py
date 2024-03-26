@@ -10,6 +10,44 @@ import json
 
 QUANTIZE_CONFIG_FILENAME = "quantize_config.json"
 
+def unpack(x, dim, bits=4):
+    return unpack_row(x, bits) if dim == 0 else unpack_col(x, bits)
+
+def unpack_col(x, bits):
+    mask = 2**bits - 1
+    pack_size = 32 // bits
+    unpacked_x = torch.zeros((x.shape[0], x.shape[1]*pack_size), dtype=torch.int)
+    for i in range(pack_size):
+        unpacked_x[:, i::pack_size] = (x >> (i*bits)) & (mask)
+    return unpacked_x
+
+def unpack_row(x, bits):
+    mask = 2**bits - 1
+    pack_size = 32 // bits
+    unpacked_x = torch.zeros((x.shape[0]*pack_size, x.shape[1]), dtype=torch.int)
+    for i in range(pack_size):
+        unpacked_x[i::pack_size] = (x >> (i*bits)) & (mask)
+    return unpacked_x
+
+
+def pack(x, dim, bits=4):
+    return pack_row(x, bits) if dim == 0 else pack_col(x, bits)
+
+def pack_col(x, bits):
+    mask = 2**bits - 1
+    pack_size = 32 // bits
+    packed_x = torch.zeros((x.shape[0], x.shape[1]//pack_size), dtype=torch.int)
+    for i in range(pack_size):
+        packed_x |= (x[:, i::pack_size] & mask) << (i*bits)
+    return packed_x
+
+def pack_row(x, bits):
+    mask = 2**bits - 1
+    pack_size = 32 // bits
+    packed_x = torch.zeros((x.shape[0]//pack_size, x.shape[1]), dtype=torch.int)
+    for i in range(pack_size):
+        packed_x |= (x[i::pack_size] & mask) << (i*bits)
+    return packed_x
 
 class Weights:
     def __init__(
@@ -101,7 +139,7 @@ class Weights:
         tensor = tensor.to(device=self.device)
         return tensor
 
-    def get_sharded(self, tensor_name: str, dim: int):
+    def get_sharded(self, tensor_name: str, dim: int, perm=None, packed=False):
         filename, tensor_name = self.get_filename(tensor_name)
         f = self._get_handle(filename)
         slice_ = f.get_slice(tensor_name)
@@ -110,17 +148,53 @@ class Weights:
         assert (
             size % world_size == 0
         ), f"The choosen size {size} is not compatible with sharding on {world_size} shards"
-        return self.get_partial_sharded(tensor_name, dim)
+        if perm is None:
+            return self.get_partial_sharded(tensor_name, dim)
+        else:
+            return self.get_shuffle_sharded(tensor_name, dim, perm, packed)
 
-    def get_multi_weights_col(self, prefixes: List[str], quantize: str, dim: int):
+    def get_shuffle_sharded(self, tensor_name: str, dim: int, perm, packed: bool):
+        filename, tensor_name = self.get_filename(tensor_name)
+        world_size = self.process_group.size()
+        rank = self.process_group.rank()
+
+        f = self._get_handle(filename)
+        tensor = f.get_tensor(tensor_name)
+        perm = perm.to(device=tensor.device)
+        size = tensor.shape[dim]
+        block_size = size // world_size
+        start = rank * block_size
+        stop = (rank + 1) * block_size
+
+        # TODO: pack-unpack on cuda to speed up this part
+        if dim == 0:
+            if packed:
+                tensor = pack(unpack(tensor, dim)[perm], dim)[start:stop]
+            else:
+                tensor = tensor[perm][start:stop]
+        elif dim == 1:
+            if packed:
+                tensor = pack(unpack(tensor, dim)[:, perm], dim)[:, start:stop]
+            else:
+                tensor = tensor[:, perm][:, start:stop]
+        else:
+            raise NotImplementedError("Let's make that generic when needed")
+        # Special case for gptq which shouldn't convert
+        # u4 which are disguised as int32
+        if tensor.dtype != torch.int32:
+            tensor = tensor.to(dtype=self.dtype)
+        tensor = tensor.to(device=self.device)
+        return tensor
+
+    def get_multi_weights_col(self, prefixes: List[str], quantize: str, dim: int, col_perm=None):
         if quantize == "gptq":
             try:
-                qweight = torch.cat([self.get_sharded(f"{p}.qweight", dim=1) for p in prefixes], dim=1)
+                qweight = torch.cat([self.get_sharded(f"{p}.qweight", dim=1, perm=col_perm, packed=False) for p in prefixes], dim=1)
             except RuntimeError:
                 raise RuntimeError("Cannot load `gptq` weight, make sure the model is already quantized, or quantize it with `text-generation-server quantize ORIGINAL_MODEL_ID NEW_MODEL_ID`")
 
-            qzeros = torch.cat([self.get_sharded(f"{p}.qzeros", dim=1) for p in prefixes], dim=1)
-            scales = torch.cat([self.get_sharded(f"{p}.scales", dim=1) for p in prefixes], dim=1)
+            qzeros = torch.cat([self.get_sharded(f"{p}.qzeros", dim=1, perm=col_perm, packed=True) for p in prefixes], dim=1)
+            scales = torch.cat([self.get_sharded(f"{p}.scales", dim=1, perm=col_perm, packed=False) for p in prefixes], dim=1)
             w = [self.get_tensor(f"{p}.g_idx") for p in prefixes]
             for w2 in w[1:]:
                 torch.testing.assert_close(w2, w[0])
@@ -141,39 +215,36 @@ class Weights:
             weight = torch.cat(w, dim=dim)
         return weight
 
-    def get_multi_weights_row(self, prefix: str, quantize: str):
+    def get_multi_weights_row(self, prefix: str, quantize: str, row_perm=None, noshard=False):
         if quantize == "gptq":
             bits, groupsize = self._get_gptq_params()
 
-            use_gptq_cuda = bits == 4
+            from text_generation_server.utils.layers import HAS_GPTQ_CUDA, IS_TP_AWARE_GPTQ
+            is_preshuffle = (row_perm != None)
+            is_masked_matmul = noshard
+            assert (is_preshuffle != is_masked_matmul
+                    or not (is_preshuffle or is_masked_matmul)), f"TP-aware optimization can't both be enabled at the same time {is_preshuffle=}, {is_masked_matmul=}"
 
-            if self.process_group.size() > 1:
-                g_idx = self.get_tensor(f"{prefix}.g_idx")
-                if g_idx is not None:
-                    if not torch.equal(g_idx.cpu(), torch.tensor([i // groupsize for i in range(g_idx.shape[0])], dtype=torch.int32)) and not (g_idx == 0).all():
-                        # Exllama implementation does not support row tensor parallelism with act-order, as
-                        # it would require to reorder input activations that are split unto several GPUs
-                        use_gptq_cuda = False
-
+            use_gptq_cuda = (bits == 4) and HAS_GPTQ_CUDA and (IS_TP_AWARE_GPTQ and (is_preshuffle or is_masked_matmul))
+            if self.process_group.rank == 0:
+                if use_gptq_cuda:
+                    logger.info(f"Using GPTQ cuda kernels for row {prefix}")
+                else:
+                    logger.warning(
+                        "GPTQ cuda kernels (which are faster) could have been used, but are disabled via the DISABLE_EXLLAMA env var,"
+                        " or not currently installed, try using BUILD_EXTENSIONS=True"
+                    )
             try:
-                qweight = self.get_sharded(f"{prefix}.qweight", dim=0)
+                qweight = self.get_sharded(f"{prefix}.qweight",
+                                           dim=0,
+                                           perm=row_perm if use_gptq_cuda else None,
+                                           packed=True,
+                ) if not is_masked_matmul else self.get_tensor(f"{prefix}.qweight")
             except RuntimeError:
                 raise RuntimeError("Cannot load `gptq` weight, make sure the model is already quantized, or quantize it with `text-generation-server quantize ORIGINAL_MODEL_ID NEW_MODEL_ID`")
 
-            from text_generation_server.utils.layers import HAS_GPTQ_CUDA
             if use_gptq_cuda:
-                use_gptq_cuda = HAS_GPTQ_CUDA
-                if self.process_group.rank == 0:
-                    if use_gptq_cuda:
-                        logger.info(f"Using GPTQ cuda kernels for row {prefix}")
-                    else:
-                        logger.warning(
-                            "GPTQ cuda kernels (which are faster) could have been used, but are disabled via the DISABLE_EXLLAMA env var,"
-                            " or not currently installed, try using BUILD_EXTENSIONS=True"
-                        )
-
-            if use_gptq_cuda:
-                if groupsize >= 0:
+                if groupsize >= 0 and not is_masked_matmul:
                     # Exllama reorders the weights in advance and the activations on the fly, thus
                     # the scales and zero-points do not need to be reordered.
                     qzeros = self.get_sharded(f"{prefix}.qzeros", dim=0)
@@ -183,7 +254,7 @@ class Weights:
                     scales = self.get_tensor(f"{prefix}.scales")
 
                 # For tp > 1, at this point we know we do not use act-order
-                if self.process_group.size() == 1:
+                if (self.process_group.size() == 1 or is_masked_matmul) and not is_preshuffle:
                     g_idx = self.get_tensor(f"{prefix}.g_idx")
                 else:
                     g_idx = None
@@ -197,7 +268,7 @@ class Weights:
 
             weight = (qweight, qzeros, scales, g_idx, bits, groupsize, use_gptq_cuda)
         else:
-            weight = self.get_sharded(f"{prefix}.weight", dim=1)
+            weight = self.get_sharded(f"{prefix}.weight", dim=1) if not noshard else self.get_tensor(f"{prefix}.weight")
         return weight
 
     def _get_gptq_params(self) -> Tuple[int, int]:

@@ -17,6 +17,8 @@ EXLLAMA_VERSION = None
 HAS_GPTQ_CUDA = False
 GPTQ_CUDA_TYPE = os.getenv("GPTQ_CUDA_TYPE", "exllama").lower()
 GPTQ_CUDA_LINEAR = None
+# TODO: should disable TP-aware GPTQ automatically if deployment is single GPU
+IS_TP_AWARE_GPTQ = (os.getenv("ENABLE_TP_AWARE_GPTQ","False").lower() not in ["false", "0"])
 
 if torch.cuda.is_available():
     try:
@@ -279,13 +281,13 @@ class TensorParallelHead(SuperLayer):
 
 class TensorParallelColumnLinear(SuperLayer):
     @classmethod
-    def load(cls, config, prefix: str, weights, bias: bool):
-        return cls.load_multi(config, [prefix], weights, bias, dim=0)
+    def load(cls, config, prefix: str, weights, bias: bool, col_perm=None):
+        return cls.load_multi(config, [prefix], weights, bias, dim=0, col_perm=col_perm)
 
     @classmethod
-    def load_multi(cls, config, prefixes: List[str], weights, bias: bool, dim: int):
+    def load_multi(cls, config, prefixes: List[str], weights, bias: bool, dim: int, col_perm=None):
         weight = weights.get_multi_weights_col(
-            prefixes, quantize=config.quantize, dim=dim
+            prefixes, quantize=config.quantize, dim=dim, col_perm=col_perm
         )
 
         if bias:
@@ -303,8 +305,8 @@ class TensorParallelRowLinear(SuperLayer):
         self.process_group = process_group
 
     @classmethod
-    def load(cls, config, prefix: str, weights, bias: bool):
-        weight = weights.get_multi_weights_row(prefix, quantize=config.quantize)
+    def load(cls, config, prefix: str, weights, bias: bool, row_perm=None, noshard=False):
+        weight = weights.get_multi_weights_row(prefix, quantize=config.quantize, row_perm=row_perm, noshard=noshard)
         if bias and weights.process_group.rank() == 0:
             # Rank is only on the first rank process
             bias = weights.get_tensor(f"{prefix}.bias")
