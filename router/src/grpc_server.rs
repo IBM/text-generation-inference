@@ -545,9 +545,9 @@ fn convert_params(
             if let Some(d) = p.decoding {
                 if d.repetition_penalty != 0.0 {
                     gp.repetition_penalty = d.repetition_penalty;
-                    gp.length_penalty =
-                        d.length_penalty.map(|lp| (lp.start_index, lp.decay_factor));
                 }
+                gp.length_penalty =
+                    d.length_penalty.map(|lp| (lp.start_index, lp.decay_factor));
             }
             // Stopping Criteria
             if let Some(s) = p.stopping {
