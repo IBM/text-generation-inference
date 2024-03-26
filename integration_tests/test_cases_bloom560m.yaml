@@ -1254,7 +1254,7 @@
 
 
 # Length penalty
-- name: Length penalty
+- name: Length penalty with repetition penalty
   request:
     params:
       decoding:
@@ -1273,6 +1273,24 @@
         stopReason: EOS_TOKEN
         text: The first time I saw the movie, it was in
 
+# Length penalty
+- name: Length penalty
+  request:
+    params:
+      decoding:
+        length_penalty:
+          start_index: 8
+          decay_factor: 1.01
+      stopping:
+        maxNewTokens: 20
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 12
+        inputTokenCount: 6
+        stopReason: EOS_TOKEN
+        text: The first time I saw the movie, I was a
 
 # Multiple inputs
 - name: Multiple inputs
