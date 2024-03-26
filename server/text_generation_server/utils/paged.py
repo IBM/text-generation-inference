@@ -2,7 +2,7 @@ from typing import Optional, List
 from multiprocessing import Queue
 import torch
 
-from fms.utils.cache import flatten_batch, select_inflate_dim
+from fms_extras.models.speculator import flatten_batch, select_inflate_dim
 
 def fit_memory_scaling_model(
         model_name: str,
@@ -70,7 +70,7 @@ def prepare_inputs_without_speculation(
         cache_data.slot_mapping, num_tokens_per_sequence
     )
     position_ids = truncate_and_flatten(
-        cache_data.compute_position_ids(num_tokens_per_sequence),
+        cache_data.position_ids,
         num_tokens_per_sequence,
     )
     input_ids = truncate_and_flatten(input_ids, num_tokens_per_sequence)
@@ -116,7 +116,7 @@ def prepare_inputs_for_prefill(
     # ** SPECIAL HANDLING FOR FLASH V2 **
     # fix slot mappings for flash attention v2
     cache_data.slot_mapping = truncate_and_flatten(cache_data.slot_mapping, num_tokens_per_sequence)
-    position_ids = truncate_and_flatten(cache_data.compute_position_ids(num_tokens_per_sequence),
+    position_ids = truncate_and_flatten(cache_data.position_ids,
                                           num_tokens_per_sequence)
 
     cum_seq_lengths = torch.cumsum(
@@ -160,7 +160,7 @@ def prepare_inputs_with_speculation(
 
     # add n_adds tokens to each candidate
     cache_data = kv_cache_manager.allocate_tokens(num_tokens_per_sequence, child_sequence_ids_flattened)
-    position_ids = cache_data.compute_position_ids(num_tokens_per_sequence)
+    position_ids = cache_data.position_ids
 
     # Get candidate set of speculations
     adds = speculator.generate_suffixes(embeds[spec_ind, :], input_ids[spec_ind,:], threshes, top_k)  # b k h
