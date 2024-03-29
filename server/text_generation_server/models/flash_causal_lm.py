@@ -5,14 +5,13 @@ from operator import itemgetter
 import torch
 import torch.distributed
 
-from torch.nn import functional as F
-
 from dataclasses import dataclass
 from transformers import PreTrainedTokenizerBase
 from typing import Optional, Tuple, List, Type, Union, Any
 
 from text_generation_server.inference_engine import get_inference_engine_class
 from text_generation_server.models import Model
+from text_generation_server.models.model import ADD_SPECIAL_TOKENS
 
 from text_generation_server.models.types import Batch, GenerateError
 from text_generation_server.pb import generate_pb2
@@ -123,7 +122,11 @@ class FlashCausalLMBatch(Batch):
         # return as lists to avoid unnecessary padding;
         # sequences will be concatenated across the batch
         batch_tokenized_inputs = tokenizer(
-            batch_inputs, truncation=True, max_length=max_seqlen, return_token_type_ids=False
+            batch_inputs,
+            truncation=True,
+            max_length=max_seqlen,
+            return_token_type_ids=False,
+            add_special_tokens=ADD_SPECIAL_TOKENS,
         )["input_ids"]
 
         # Process inputs to generate the needed tensors
@@ -139,16 +142,18 @@ class FlashCausalLMBatch(Batch):
         )
         for i, (r, tokenized_input, input_length) in enumerate(zip(requests, batch_tokenized_inputs, input_lengths)):
             if r.truncate:
-                tokenized_input = tokenized_input[-r.input_length:]
+                start_index = len(tokenized_input) - r.input_length
+                tokenized_input = tokenized_input[start_index:]
                 # Fill in bos token in truncation case if needed
-                if getattr(tokenizer, "add_bos_token", False):
+                if ADD_SPECIAL_TOKENS and getattr(tokenizer, "add_bos_token", False):
                     tokenized_input[0] = tokenizer.bos_token_id
             tokenized_input = all_input_ids_tensor.new_tensor(tokenized_input)
             # Instead of adding the padding for prefix tokens to
             # tokenized_input, just embed it in all_input_ids_tensor and copy
             # the padding from it when appending to input_ids (if needed)
             all_input_ids_tensor[i, input_length - r.input_length:input_length] = tokenized_input
-            input_ids.append(tokenized_input if input_length == r.input_length else all_input_ids_tensor[i, :input_length])
+            input_ids.append(tokenized_input if input_length == r.input_length
+                             else all_input_ids_tensor[i, :input_length])
             next_token_chooser_parameters.append(r.parameters)
             return_logprobs.append(r.details.logprobs)
             position_ids.append(torch.arange(0, input_length))

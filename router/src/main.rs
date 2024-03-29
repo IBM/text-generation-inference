@@ -59,6 +59,8 @@ struct Args {
     default_include_stop_seqs: bool,
     #[clap(long, env)]
     otlp_endpoint: Option<String>,
+    #[clap(default_value = "true", long, env, action = clap::ArgAction::Set)]
+    add_special_tokens: bool,
 }
 
 fn main() -> Result<(), std::io::Error> {
@@ -150,6 +152,7 @@ fn main() -> Result<(), std::io::Error> {
                 tls_client_ca_cert: args.tls_client_ca_cert_path,
                 output_special_tokens: args.output_special_tokens,
                 default_include_stop_seqs: args.default_include_stop_seqs,
+                add_special_tokens: args.add_special_tokens,
             })
             .await;
             Ok(())

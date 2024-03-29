@@ -23,6 +23,7 @@ B = TypeVar("B", bound=Batch)
 
 CUDA_PAD_TO_MULT_OF_8 = os.getenv("CUDA_PAD_TO_MULT_OF_8", "true").lower() != "false"
 PT2_COMPILE = os.getenv("PT2_COMPILE", "false").lower() != "false"
+ADD_SPECIAL_TOKENS = os.getenv("ADD_SPECIAL_TOKENS", "true").lower() != "false"  # defaults to true
 
 if PT2_COMPILE:
     import torch._dynamo

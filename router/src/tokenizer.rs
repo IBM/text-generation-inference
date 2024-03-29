@@ -23,12 +23,14 @@ impl Debug for AsyncTokenizer {
 
 /// Uses pool of tokenizer threads to provide async tokenization methods
 impl AsyncTokenizer {
-    pub(crate) fn new(tokenizer: &Tokenizer, workers: usize) -> Self {
+    pub(crate) fn new(tokenizer: &Tokenizer, add_special_tokens: bool, workers: usize) -> Self {
         let (sender, receiver) = flume::unbounded();
         for _ in 0..workers {
             let tokenizer = tokenizer.clone();
             let receiver = receiver.clone();
-            tokio::task::spawn_blocking(move || tokenization_worker(tokenizer, receiver));
+            tokio::task::spawn_blocking(
+                move || tokenization_worker(tokenizer, receiver, add_special_tokens)
+            );
         }
         Self { sender }
     }
@@ -50,10 +52,12 @@ impl AsyncTokenizer {
     }
 }
 
-fn tokenization_worker(tokenizer: Tokenizer, receiver: Receiver<TokenizationRequest>) {
+fn tokenization_worker(
+    tokenizer: Tokenizer, receiver: Receiver<TokenizationRequest>, add_special_tokens: bool
+) {
     while let Ok((input, with_encoding, sender)) = receiver.recv() {
         let result = tokenizer
-            .encode(&input[..], true)
+            .encode(&input[..], add_special_tokens)
             .map(|encoding| (input, encoding.len(), with_encoding.then_some(encoding)));
         sender.send(result).unwrap_or_default();
     }
