@@ -104,6 +104,8 @@ jobs:
         with:
           context: .
           target: server-release
+          build-args: |
+            GIT_COMMIT_HASH=${{ github.sha }}
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=registry,ref=${{ env.CACHE_IMAGE }}
           cache-to: ${{ env.CACHE_TO }}
