@@ -244,25 +244,21 @@ class PagedMQAttention(torch.nn.Module):
 
         key_after_store, value_after_store = cache_data_layer.store(key, value)
 
-        # output
-        attn_output = torch.empty_like(query)
-
         # Prefill
         if not cache_data_layer.is_filled():
 
             # flash attention
-            attention(
+            attn_output = attention(
                 query,
                 key,
                 value,
-                attn_output,
                 cache_data_layer.context_lengths.int(),
                 cache_data_layer.max_sequence_length,
                 self.softmax_scale,
             )
         # Decode
         else:
-            attn_output = cache_data_layer.attend(query, key_after_store, value_after_store)
+            attn_output = cache_data_layer.attend(query)
 
         return self.c_proj(attn_output.view(-1, self.num_heads * self.head_size))
 

@@ -81,7 +81,7 @@ class InferenceEngine(BaseInferenceEngine):
             self._config.transpose = self._config.architectures[0].startswith("GPT2")
             aliases = {"transformer.wte.weight": ["lm_head.weight"]}
             if PAGED_ATTENTION:
-                from text_generation_server.models.custom_modeling.paged_gpt_bigcode_modeling import PagedSantacoderForCausalLM
+                from text_generation_server.models.custom_modeling.paged_santacoder_modeling import PagedSantacoderForCausalLM
                 model_class = PagedSantacoderForCausalLM
             else:
                 from text_generation_server.models.custom_modeling.flash_santacoder_modeling import FlashSantacoderForCausalLM
