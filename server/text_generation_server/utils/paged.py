@@ -2,7 +2,7 @@ from typing import Optional, List
 from multiprocessing import Queue
 import torch
 
-from fms_extras.models.speculator import flatten_batch, select_inflate_dim
+from fms_extras.models.speculator import flatten_batch, apply_index_map
 
 def fit_memory_scaling_model(
         model_name: str,
@@ -93,10 +93,10 @@ def prepare_inputs_without_speculation(
         inflate_factor, dim=0
     )  # bkn n_blocks
     if cache_data.flatten_indices is not None:
-        context_lengths = select_inflate_dim(
+        context_lengths = apply_index_map(
             context_lengths, cache_data.flatten_indices
         )  # n'
-        block_mappings = select_inflate_dim(
+        block_mappings = apply_index_map(
             block_mappings, cache_data.flatten_indices
         )  # n' n_blocks
     cache_data.block_mapping = block_mappings
@@ -181,7 +181,7 @@ def prepare_inputs_with_speculation(
             flat_inputs = flat_inputs[None,] # 1 b'
             cache_data.unflatten_indices = unflat_indices
             cache_data.flatten_indices = flat_indices
-            position_ids = select_inflate_dim(position_ids.view(-1), flat_indices)[None,]
+            position_ids = apply_index_map(position_ids.view(-1), flat_indices)[None,]
     input_ids = input_ids.view(-1, n_adds)  # bk 1+h
 
     context_lengths = cache_data.context_lengths  # bk
@@ -191,8 +191,8 @@ def prepare_inputs_with_speculation(
     context_lengths = context_lengths.sub(context_lengths.sign().cumsum(1).flip([1]).sub(1)).int().view(-1)  # bkn
     block_mappings = cache_data.block_mapping.repeat_interleave(inflate_factor, dim=0)  # bkn n_blocks
     if cache_data.flatten_indices is not None:
-        context_lengths = select_inflate_dim(context_lengths, cache_data.flatten_indices)  # n'
-        block_mappings = select_inflate_dim(block_mappings, cache_data.flatten_indices)  # n' n_blocks
+        context_lengths = apply_index_map(context_lengths, cache_data.flatten_indices)  # n'
+        block_mappings = apply_index_map(block_mappings, cache_data.flatten_indices)  # n' n_blocks
     cache_data.block_mapping = block_mappings
     cache_data.context_lengths = context_lengths
 
@@ -227,9 +227,9 @@ def process_outputs_with_speculation(
 
     if this_flatting:
         unflat_indices = unflat_indices.view(-1, unflat_indices.size(2))
-        next_vals = select_inflate_dim(next_vals[0], unflat_indices) # bk 1+h
-        embeds = select_inflate_dim(embeds[0], unflat_indices) # bk 1+h d
-        logits = select_inflate_dim(logits[0], unflat_indices) # bk 1+h d
+        next_vals = apply_index_map(next_vals[0], unflat_indices) # bk 1+h
+        embeds = apply_index_map(embeds[0], unflat_indices) # bk 1+h d
+        logits = apply_index_map(logits[0], unflat_indices) # bk 1+h d
     else:
         next_vals = next_vals.view(-1, n_adds)
         embeds = embeds.view(next_vals.size(0), n_adds, -1)

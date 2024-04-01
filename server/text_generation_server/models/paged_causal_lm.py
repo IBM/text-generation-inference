@@ -319,7 +319,6 @@ class PagedCausalLM(Model):
         self.batch_type = PagedCausalLMBatch
 
         from fms_extras.utils.cache.paged import PagedKVCacheManager
-        from fms_extras.models.speculator import flatten_batch, select_inflate_dim
 
         if SPECULATOR_PATH is not None:
             from fms_extras.models.speculator import MLPSpeculator
