@@ -49,7 +49,7 @@ quantize = ["datasets", "texttable"]
 
 [tool.poetry.group.dev.dependencies]
 grpcio-tools = "^1.62.1"
-pytest = "^8.0.1"
+pytest = "^8.1.1"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
