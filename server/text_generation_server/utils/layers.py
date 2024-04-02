@@ -1,4 +1,6 @@
 import os
+from enum import Enum
+
 import torch
 import torch.distributed
 
@@ -11,8 +13,10 @@ from text_generation_server.utils import print_rank_n
 from accelerate import init_empty_weights
 
 HAS_BITS_AND_BYTES = False
-HAS_EXLLAMA = False
 EXLLAMA_VERSION = None
+HAS_GPTQ_CUDA = False
+GPTQ_CUDA_TYPE = os.getenv("GPTQ_CUDA_TYPE", "exllama").lower()
+GPTQ_CUDA_LINEAR = None
 
 if torch.cuda.is_available():
     try:
@@ -24,24 +28,34 @@ if torch.cuda.is_available():
 
     from text_generation_server.utils.gptq.quant_linear import QuantLinear
 
-    if os.getenv("DISABLE_EXLLAMA", "False").lower() != "true":
-        try:
-            EXLLAMA_VERSION = os.getenv("EXLLAMA_VERSION", "2") # Use v2 as default
-            if EXLLAMA_VERSION == "1":
-                from text_generation_server.utils.gptq.exllama import Ex4bitLinear as ExllamaQuantLinear
-            elif EXLLAMA_VERSION == "2":
-                from text_generation_server.utils.gptq.exllamav2 import Ex4bitLinearV2 as ExllamaQuantLinear
-            else:
-                raise ValueError(f"Unsupported value for EXLLAMA_VERSION: {EXLLAMA_VERSION}")
-            HAS_EXLLAMA = True
-        except ImportError as e:
-            print_rank_n(f"Error importing ExllamaV{EXLLAMA_VERSION} kernels: {e}")
-            EXLLAMA_VERSION = None
+    if os.getenv("DISABLE_EXLLAMA", "False").lower() != "true": # Turn off all GPTQ CUDA kernels if set to true
+        if GPTQ_CUDA_TYPE == "exllama":
+            try:
+                EXLLAMA_VERSION = os.getenv("EXLLAMA_VERSION", "2") # Use v2 as default
+                if EXLLAMA_VERSION == "1": # TODO: consider removing v1 kernel
+                    from text_generation_server.utils.gptq.exllama import Ex4bitLinear as ExllamaQuantLinear
+                elif EXLLAMA_VERSION == "2":
+                    from text_generation_server.utils.gptq.exllamav2 import Ex4bitLinearV2 as ExllamaQuantLinear
+                else:
+                    raise ValueError(f"Unsupported value for EXLLAMA_VERSION: {EXLLAMA_VERSION}")
+                HAS_GPTQ_CUDA = True
+                GPTQ_CUDA_LINEAR = ExllamaQuantLinear
+            except ImportError as e:
+                print_rank_n(f"Error importing ExllamaV{EXLLAMA_VERSION} kernels: {e}")
+                EXLLAMA_VERSION = None
+        elif GPTQ_CUDA_TYPE == "marlin":
+            try:
+                from text_generation_server.utils.gptq.marlin import MarlinQuantLinear
+                GPTQ_CUDA_LINEAR = MarlinQuantLinear
+                HAS_GPTQ_CUDA = True
+            except ImportError as e:
+                print_rank_n(f"Error importing Marlin kernels: {e}")
+        else:
+            print_rank_n(f"Invalid GPTQ_CUDA_TYPE {GPTQ_CUDA_TYPE}")
 
     print_rank_n(
-        f"HAS_BITS_AND_BYTES={HAS_BITS_AND_BYTES}, HAS_EXLLAMA={HAS_EXLLAMA}, EXLLAMA_VERSION={EXLLAMA_VERSION}"
+        f"HAS_BITS_AND_BYTES={HAS_BITS_AND_BYTES}, HAS_GPTQ_CUDA={HAS_GPTQ_CUDA}, EXLLAMA_VERSION={EXLLAMA_VERSION}, GPTQ_CUDA_TYPE={GPTQ_CUDA_TYPE}"
     )
-
 
 # Monkey patching
 @classmethod
@@ -169,13 +183,13 @@ def get_linear(weight, bias, quantize):
             linear.bias = nn.Parameter(bias)
     elif quantize == "gptq":
         try:
-            qweight, qzeros, scales, g_idx, bits, groupsize, use_exllama = weight
+            qweight, qzeros, scales, g_idx, bits, groupsize, use_gptq_cuda = weight
         except Exception:
             raise NotImplementedError(
                 f"The passed weight is not `gptq` compatible, loader needs to be updated."
             )
-
-        linear = (ExllamaQuantLinear if use_exllama else QuantLinear)(
+        
+        linear = (QuantLinear if not use_gptq_cuda else GPTQ_CUDA_LINEAR)(
             qweight,
             qzeros,
             scales,

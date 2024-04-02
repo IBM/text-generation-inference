@@ -305,21 +305,19 @@ def serve(
             print(model.config.__str__())
 
         if quantize == "gptq" and deployment_framework == "tgis_native":
-            from text_generation_server.utils.layers import HAS_EXLLAMA, EXLLAMA_VERSION
-            if HAS_EXLLAMA:
+            from text_generation_server.utils.layers import HAS_GPTQ_CUDA, EXLLAMA_VERSION
+            if HAS_GPTQ_CUDA and EXLLAMA_VERSION is not None:
                 try:
                     # When using GPTQ, Exllama kernels need some global kernels
                     # For which we have the final shapes only after the model has loaded
                     # This will allocate those buffers.
-
                     if EXLLAMA_VERSION == "1":
                         from text_generation_server.utils.gptq.exllama import (
                             create_exllama_buffers, set_device,
                         )
                         set_device(device)
                         create_exllama_buffers(max_sequence_length)
-                    else:
-                        assert EXLLAMA_VERSION == "2"
+                    elif EXLLAMA_VERSION == "2":
                         from text_generation_server.utils.gptq.exllamav2 import (
                             set_device, Ex4bitLinearV2,
                         )
@@ -327,7 +325,8 @@ def serve(
                         for _, submodule in model.model.named_modules():
                             if isinstance(submodule, Ex4bitLinearV2):
                                 submodule.post_init()  # make q matrix and set scratch space
-
+                    else:
+                        raise ValueError(f"Unsupported {EXLLAMA_VERSION=}") 
                 except ImportError:
                     print("WARN: Error setting up GPTQ exllama buffers")
 
