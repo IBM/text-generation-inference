@@ -88,9 +88,11 @@ class NextTokenChooser:
         elif self.length_penalty is not None:
             tokens_past = self.current_tokens - self.length_penalty[0]
             if tokens_past > 0:
-                scores[:, self.eos_token_id] = scores[:, self.eos_token_id] * pow(
-                    self.length_penalty[1], tokens_past
-                )
+                eos_scores = scores[:, self.eos_token_id]
+                # To support negative logits we compute the penalty of the
+                # absolute value and add to the original logit
+                scores[:, self.eos_token_id] = eos_scores + torch.abs(eos_scores) * (
+                    pow(self.length_penalty[1], tokens_past) - 1)
             self.current_tokens += 1
 
         # Apply repetition penalty if applicable
@@ -246,9 +248,11 @@ class HeterogeneousNextTokenChooser:
             elif length_penalty is not None:
                 tokens_past = current_tokens - length_penalty[0]
                 if tokens_past > 0:
-                    scores[idx, self.eos_token_id] = scores[idx, self.eos_token_id] * pow(
-                        length_penalty[1], tokens_past
-                    )
+                    eos_scores = scores[idx, self.eos_token_id]
+                    # To support negative logits we compute the penalty of the
+                    # absolute value and add to the original logit
+                    scores[idx, self.eos_token_id] = eos_scores + torch.abs(eos_scores) * (
+                        pow(length_penalty[1], tokens_past) - 1)
                 self.current_tokens[idx] += 1
         # Apply the repetition penalty if we have one
         if self.repetition_processor is not None:
