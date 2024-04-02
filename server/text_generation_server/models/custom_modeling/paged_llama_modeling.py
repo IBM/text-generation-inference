@@ -29,7 +29,7 @@ from typing import Optional
 # Flash attention imports
 import dropout_layer_norm
 
-from fms.utils.cache.paged import PagedAttentionCacheData, PagedAttentionCacheDataLayer
+from fms_extras.utils.cache.paged import PagedAttentionCacheData, PagedAttentionCacheDataLayer
 from text_generation_server.utils.flash_attn import attention
 from text_generation_server.utils.layers import (
     TensorParallelRowLinear,
@@ -256,7 +256,7 @@ class PagedLlamaAttention(torch.nn.Module):
             return self.o_proj(attn_output.reshape(-1, self.num_heads * self.head_size))
         # Decode
         else:
-            attn_output = cache_data_layer.attend(query, key_after_store, value_after_store)
+            attn_output = cache_data_layer.attend(query)
             return self.o_proj(attn_output.view(-1, self.num_heads * self.head_size))
 
 
@@ -388,7 +388,7 @@ class PagedLlamaModel(torch.nn.Module):
             raise ValueError(
                 "You cannot specify both input_ids and inputs_embeds at the same time"
             )
-        
+
         if inputs_embeds is not None:
             hidden_states = inputs_embeds
         else:
