@@ -32,7 +32,8 @@ num_req = 0
 while True:
     prompt_input = input(f"\n{num_req}) Enter a prompt:\n")
 
-    print("\nOutput:")
+    print("-" * 40)
+    print("Output:")
     prompt = template.format(prompt_input)
     sample_request = {
         "model_id": "dummy-model-name",
@@ -75,8 +76,10 @@ while True:
         t0 = t
 
     # print(json.dumps(output, indent=4))
+    print("-" * 40)
     print(response)
-    print()
+    print("-" * 40)
     print(f"Total_time : {total_time}ms")
     print(f"Time_per_token : {total_time/max_new_tokens}ms")
+    print("-" * 40)
     num_req += 1
