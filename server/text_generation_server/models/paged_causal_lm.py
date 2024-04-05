@@ -28,6 +28,9 @@ from text_generation_server.inference_engine import get_inference_engine_class
 # path to speculator model (None means no speculation will be used)
 SPECULATOR_PATH = os.getenv("SPECULATOR_PATH", None)
 
+# number of speculator heads
+SPECULATOR_N_PREDICT = int(os.getenv("SPECULATOR_N_PREDICT", "3"))
+
 # we will only do speculation if the batch size is <= this parameter
 SPECULATOR_MAX_BATCH_SIZE = int(os.getenv("SPECULATOR_MAX_BATCH_SIZE", "16"))
 
@@ -323,7 +326,12 @@ class PagedCausalLM(Model):
         if SPECULATOR_PATH is not None:
             from fms_extras.models.speculator import MLPSpeculator
             print(f"Speculation will be enabled up to batch size {SPECULATOR_MAX_BATCH_SIZE}")
-            self.speculator = MLPSpeculator(model_config.hidden_size, vocab_size=model_config.vocab_size, n_predict=3).to(device=self.device, dtype=dtype)
+            self.speculator = MLPSpeculator(
+                model_config.hidden_size,
+                inner_dim=4096,
+                vocab_size=model_config.vocab_size,
+                n_predict=SPECULATOR_N_PREDICT,
+            ).to(device=self.device, dtype=dtype)
             self.speculator.load_state_dict(
                 torch.load(SPECULATOR_PATH, map_location=self.device)["model_state"]
             )
@@ -338,6 +346,7 @@ class PagedCausalLM(Model):
             tensor_parallel_size=1,
             dtype=dtype,
             device=self.device,
+#            total_num_gpu_blocks=3600,
         )
 
 
