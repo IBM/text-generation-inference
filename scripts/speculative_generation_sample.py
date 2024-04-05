@@ -3,12 +3,15 @@ from text_generation_server.pb import generate_pb2
 from typing import List
 import time
 import torch
+from transformers import AutoTokenizer
 
 template = "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\n{}\n\n### Response:"
 
 text = template.format(
-    "Provide a list of instructions for preparing chicken soup."
+    "Provide me a function in python to perform a bubble sort"
 )
+tokenizer = AutoTokenizer.from_pretrained("/path/to/gpt_bigcode20b")
+encodings = tokenizer.encode(text)
 
 def __generate_prefill_request(id: int, batch_size: int, num_new_tokens: List[int]):
 
@@ -17,7 +20,7 @@ def __generate_prefill_request(id: int, batch_size: int, num_new_tokens: List[in
             id=id,
             requests=[
                 generate_pb2.Request(
-                    id=i, inputs=text, input_length=49, max_output_length=num_new_tokens[i],
+                    id=i, inputs=text, input_length=len(encodings), max_output_length=num_new_tokens[i],
                     parameters=generate_pb2.NextTokenChooserParameters(
                         temperature=0.0,
                     )
@@ -28,7 +31,7 @@ def __generate_prefill_request(id: int, batch_size: int, num_new_tokens: List[in
     return out
 
 model = get_model(
-    model_name="/net/storage149/mnt/md0/jmrosenk/llama_weights/hf/7B-F",
+    model_name="/path/to/gpt_bigcode20b",
     revision=None,
     deployment_framework="tgis_native",
     dtype_str="float16",
@@ -37,7 +40,7 @@ model = get_model(
 )
 
 
-num_new_tokens = [100]
+num_new_tokens = [200]
 
 request1 = __generate_prefill_request(0, 1, num_new_tokens)
 

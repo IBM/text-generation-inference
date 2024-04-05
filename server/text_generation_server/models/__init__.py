@@ -54,12 +54,18 @@ def get_model(
             )
             deployment_framework = "tgis_native"
 
+        # TODO: add from_pretrained for santacoder config
         if model_type == "llama":
             # Custom config type for LLaMA models
             from text_generation_server.models.custom_modeling.paged_llama_modeling import LlamaConfig
             model_config = LlamaConfig.from_pretrained(model_path)
+        elif model_type == "gpt_bigcode":
+            from transformers import GPTBigCodeConfig
+            model_config = GPTBigCodeConfig.from_pretrained(model_path)
+            # num_key_value_heads is used in creating cache, here we add that attribute based on mqa
+            model_config.num_key_value_heads = 1 if model_config.multi_query else model_config.num_attention_heads
         else:
-            raise NotImplementedError("PAGED_ATTENTION only support llama for now")
+            raise NotImplementedError("PAGED_ATTENTION only support santacoder and llama for now")
 
         from text_generation_server.models.paged_causal_lm import PagedCausalLM
         return PagedCausalLM(
