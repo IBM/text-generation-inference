@@ -42,6 +42,7 @@ while True:
             "method": "GREEDY",
             "stopping": {
                 "max_new_tokens": max_new_tokens,
+                "min_new_tokens": max_new_tokens,
             },
         },
     }
