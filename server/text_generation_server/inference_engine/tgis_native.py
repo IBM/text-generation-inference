@@ -64,7 +64,10 @@ class InferenceEngine(BaseInferenceEngine):
             model_class = BloomForCausalLM
 
         elif model_type == "t5":
-            aliases = {"shared.weight": ["encoder.embed_tokens.weight", "decoder.embed_tokens.weight"]}
+            aliases = {
+                "shared.weight": ["encoder.embed_tokens.weight", "decoder.embed_tokens.weight"], 
+                "lm_head.weight": ["decoder.embed_tokens.weight"],
+            }
             from text_generation_server.models.custom_modeling.t5_modeling import T5ForConditionalGeneration
             model_class = T5ForConditionalGeneration
 
