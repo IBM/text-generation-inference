@@ -132,7 +132,7 @@ These paths can reference mounted secrets containing the certs.
 
 Prometheus metrics are exposed on the same port as the health probe endpoint (default 3000), at `/metrics`.
 
-They are all prefixed with `tgi_`. Descriptions will be added to the table below soon.
+They are all prefixed with `tgi_`.
 
 | Metric                                     | Kind        | Labels                                                                       | Description                                                                                |
 |--------------------------------------------|-------------|------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------|

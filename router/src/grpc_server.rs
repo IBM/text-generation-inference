@@ -31,6 +31,7 @@ use crate::{
     validation::{RequestSize, ValidationError},
     GenerateParameters, GenerateRequest,
 };
+use crate::pb::fmaas::tokenize_response::Offset;
 
 /// Whether to fail if sampling parameters are provided in greedy-mode requests
 /// or to silently ignore them.
@@ -339,17 +340,37 @@ impl GenerationService for GenerationServicer {
         let br = request.into_inner();
         metrics::increment_counter!("tgi_tokenize_request_count");
         let start_time = Instant::now();
-        self.tokenize_input_counter
-            .increment(br.requests.len() as u64);
+        self.tokenize_input_counter.increment(br.requests.len() as u64);
 
-        let responses = try_join_all(br.requests.into_iter().map(|tr| {
-            self.tokenizer.tokenize(tr.text, br.return_tokens).map_ok(
-                |(_, token_count, encoding)| TokenizeResponse {
-                    token_count: token_count as u32,
-                    tokens: encoding.map_or_else(Vec::new, |e| e.get_tokens().to_vec()),
+        let truncate_to = match br.truncate_input_tokens {
+            0 => u32::MAX,
+            length => length,
+        };
+        let include_encoding = br.return_tokens || br.return_offsets;
+        let responses = try_join_all(br.requests.into_iter().map(|tr|
+            self.tokenizer.tokenize(tr.text, include_encoding).map_ok(
+                |(_, token_count, encoding)| {
+                    let token_count = token_count as u32;
+                    let from = token_count.saturating_sub(truncate_to) as usize;
+                    TokenizeResponse {
+                        token_count: token_count.min(truncate_to),
+                        tokens: match br.return_tokens {
+                            true => encoding.as_ref().unwrap().get_tokens()[from..].to_vec(),
+                            false => vec![],
+                        },
+                        offsets: match br.return_offsets {
+                            true => encoding.unwrap().get_offsets()[from..].iter().map(
+                                |(start, end)| Offset{
+                                    start: *start as u32,
+                                    end: *end as u32,
+                                }
+                            ).collect(),
+                            false => vec![],
+                        },
+                    }
                 },
             )
-        }))
+        ))
         .map_err(Status::from_error)
         .await?;
 
@@ -524,9 +545,9 @@ fn convert_params(
             if let Some(d) = p.decoding {
                 if d.repetition_penalty != 0.0 {
                     gp.repetition_penalty = d.repetition_penalty;
-                    gp.length_penalty =
-                        d.length_penalty.map(|lp| (lp.start_index, lp.decay_factor));
                 }
+                gp.length_penalty =
+                    d.length_penalty.map(|lp| (lp.start_index, lp.decay_factor));
             }
             // Stopping Criteria
             if let Some(s) = p.stopping {

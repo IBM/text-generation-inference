@@ -1,8 +1,17 @@
 from typing import Optional, List
 from multiprocessing import Queue
+import os
 import torch
 
 from fms_extras.models.speculator import flatten_batch, apply_index_map
+
+# number of candidates during speculation
+SPECULATOR_NUM_CANDIDATES = int(os.getenv("SPECULATOR_NUM_CANDIDATES", "5"))
+
+# number of candidates per head
+SPECULATOR_THRESHES = [
+    int(x) for x in os.getenv("SPECULATOR_THRESHES", "5,3,2").strip().split(',')
+]
 
 def fit_memory_scaling_model(
         model_name: str,
@@ -143,9 +152,14 @@ def prepare_inputs_with_speculation(
 
     n_adds = speculator.n_predict + 1
 
+    if len(SPECULATOR_THRESHES) != speculator.n_predict:
+        raise ValueError(
+            f"Length of SPECULATOR_THRESHES ({SPECULATOR_THRESHES}) does not match SPECULATOR_N_PREDICT ({SPECULATOR_N_PREDICT})"
+        )
+
     #hard-code some values
-    top_k = 5
-    threshes= [5, 3, 2, 2]
+    top_k = SPECULATOR_NUM_CANDIDATES
+    threshes = SPECULATOR_THRESHES
     flatting=True
 
     # create candidate sequences

@@ -50,6 +50,100 @@
           - </s>
 
 
+# Tokenize with offsets
+- name: Tokenize with offsets
+  request_type: tokenize
+  request:
+    return_offsets: true
+    requests:
+      - {"text": "The very long story is written"}
+  response:
+    responses:
+      - offsets:
+          - end: 3
+          - end: 4
+            start: 3
+          - end: 8
+            start: 4
+          - end: 13
+            start: 8
+          - end: 19
+            start: 13
+          - end: 22
+            start: 19
+          - end: 23
+            start: 22
+          - end: 30
+            start: 23
+          - {}
+        tokenCount: 9
+
+
+# Tokenize with tokens and offsets
+- name: Tokenize with tokens and offsets
+  request_type: tokenize
+  request:
+    return_tokens: true
+    return_offsets: true
+    requests:
+      - { "text": "The very long story is written" }
+  response:
+    responses:
+      - offsets:
+          - end: 3
+          - end: 4
+            start: 3
+          - end: 8
+            start: 4
+          - end: 13
+            start: 8
+          - end: 19
+            start: 13
+          - end: 22
+            start: 19
+          - end: 23
+            start: 22
+          - end: 30
+            start: 23
+          - {}
+        tokenCount: 9
+        tokens:
+          - "\u2581The"
+          - "\u2581"
+          - very
+          - "\u2581long"
+          - "\u2581story"
+          - "\u2581is"
+          - "\u2581"
+          - written
+          - </s>
+
+
+  # Tokenize with truncate
+- name: Tokenize with tokens and truncation
+  request_type: tokenize
+  request:
+    return_tokens: true
+    truncate_input_tokens: 10
+    requests:
+      - {"text": "The very long story is written by a very long story"}
+  response:
+    responses:
+      - tokenCount: 10
+        # Truncation happens on the left
+        tokens:
+          - "\u2581"
+          - written
+          - "\u2581by"
+          - "\u2581"
+          - a
+          - "\u2581"
+          - very
+          - "\u2581long"
+          - "\u2581story"
+          - </s>
+
+
 # Basic Greedy (implicit)
 - name: Basic Greedy, max new tokens (implicit)
   request:
@@ -1072,7 +1166,7 @@
 
 
 # Length penalty
-- name: Length penalty
+- name: Length penalty with repetition penalty
   request:
     params:
       decoding:
@@ -1092,6 +1186,24 @@
         text: The very long story is
 
 
+# Length penalty
+- name: Length penalty
+  request:
+    params:
+      decoding:
+        length_penalty:
+          start_index: 3
+          decay_factor: 4.0
+      stopping:
+        maxNewTokens: 20
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 7
+        inputTokenCount: 8
+        stopReason: EOS_TOKEN
+        text: The very long story is
 
 # Multiple inputs
 - name: Multiple inputs

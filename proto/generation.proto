@@ -197,7 +197,11 @@ message TokenInfo {
 message BatchedTokenizeRequest {
   string model_id = 1;
   repeated TokenizeRequest requests = 2;
-  bool return_tokens = 3; //TBD
+  bool return_tokens = 3;
+  bool return_offsets = 4;
+
+  // Zero means don't truncate.
+  uint32 truncate_input_tokens = 5;
 }
 
 message BatchedTokenizeResponse {
@@ -209,10 +213,17 @@ message TokenizeRequest {
 }
 
 message TokenizeResponse {
-  uint32 token_count = 1;
-  repeated string tokens = 2; // if include_tokens = true
+  message Offset {
+    uint32 start = 1;
+    uint32 end = 2;
+  }
 
-  // We'll possibly add more later
+  uint32 token_count = 1;
+
+  // if return_tokens = true
+  repeated string tokens = 2;
+  // if return_tokens = true
+  repeated Offset offsets = 3;
 }
 
 

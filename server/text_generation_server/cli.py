@@ -166,6 +166,7 @@ def convert_to_safetensors(
         config = transformers.AutoConfig.from_pretrained(
             model_name,
             revision=revision,
+            trust_remote_code=utils.TRUST_REMOTE_CODE
         )
         architecture = config.architectures[0]
 
@@ -184,7 +185,7 @@ def convert_to_safetensors(
         local_st_index_file = local_pt_index_file.parent / f"{st_prefix}.safetensors.index.json"
 
         if os.path.exists(local_st_index_file):
-            print("Existing .safetensors.index.json file found, remove it first to reconvert")
+            print("Existing model.safetensors.index.json file found, remove it first to reconvert")
             return
 
         utils.convert_index_file(local_pt_index_file, local_st_index_file, local_pt_files, local_st_files)
