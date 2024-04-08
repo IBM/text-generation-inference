@@ -16,8 +16,9 @@ from typing import List, Optional
 
 from text_generation_server.cache import Cache
 from text_generation_server.models import Model, get_model, Seq2SeqLM, PT2_COMPILE, PAGED_ATTENTION
-from text_generation_server.models.paged_causal_lm import PagedCausalLM
 from text_generation_server.models.flash_causal_lm import FlashCausalLM
+if PAGED_ATTENTION:
+    from text_generation_server.models.paged_causal_lm import PagedCausalLM
 from text_generation_server.pb import generate_pb2_grpc, generate_pb2
 from text_generation_server.pb.generate_pb2 import ModelInfoResponse
 from text_generation_server.pb.generate_pb2 import MemoryScalingModel as MemoryScalingModelPB
@@ -30,8 +31,6 @@ from text_generation_server.utils import (
     ESTIMATE_MEMORY
 )
 from text_generation_server.utils.tensor import clean_attribute
-from text_generation_server.utils.paged import fit_memory_scaling_model
-from multiprocessing import Process, Queue, set_start_method
 
 COMPACT_BEFORE_PREFILL = os.getenv("COMPACT_BEFORE_PREFILL", "true") != "false"
 
@@ -254,6 +253,8 @@ def serve(
     ):
         if ESTIMATE_MEMORY == "auto" and PAGED_ATTENTION:
             # fit memory model using flash model in separate process (ensures GPU memory is entirely cleaned up)
+            from text_generation_server.utils.paged import fit_memory_scaling_model
+            from multiprocessing import Process, Queue, set_start_method
             set_start_method("spawn")
             q_out = Queue(1)
             proc = Process(target=fit_memory_scaling_model, args=(
