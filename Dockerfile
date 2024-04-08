@@ -278,13 +278,6 @@ RUN --mount=type=bind,from=flash-att-v2-cache,src=/usr/src/flash-attention-v2,ta
 # or are using a PyTorch nightly version
 RUN pip install auto-gptq=="${AUTO_GPTQ_VERSION}" --no-cache-dir
 
-
-# Install ibm-fms from branch (required for spec. decoding)
-# TODO: switch this out for fms-extras main once speculative decoding fully in
-RUN git clone https://github.com/JRosenkranz/fms-extras.git --branch speculative_decoding_e2e --single-branch && \
-    cd fms-extras && git checkout speculative_decoding_e2e && \
-    pip install . --verbose --no-cache-dir --no-build-isolation
-
 # Install server
 # git is required to pull the fms-extras dependency
 RUN dnf install -y git && dnf clean all
