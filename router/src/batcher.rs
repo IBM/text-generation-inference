@@ -839,10 +839,19 @@ impl<'a> TokenProcessor<'a> {
             let request_id = output.request_id;
             let next_token_id = output.token_id;
 
-            let e = self
-                .entries
-                .get_mut(&request_id)
-                .expect("ID not found. This is a bug.");
+            let e = self.entries.get_mut(&request_id);
+
+            // if a client cancelled a request and speculative decoding is 
+            // enabled, it's possible that the request will get removed
+            // from entries table, but there can still be tokens in outputs stream 
+            // corresponding to that request. ideally we could defer removing
+            // the request_id from the entries table until all tokens have been 
+            // processed...but for now let's just ignore them.
+            if e.is_none() {
+                continue;
+            }
+
+            let e = e.unwrap();
 
             let is_stream = e.stream_tx.is_some();
             let stop_seqs = &e.request.parameters.stop_seqs;
