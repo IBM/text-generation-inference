@@ -25,11 +25,8 @@ from text_generation_server.utils.paged import (
 )
 from text_generation_server.inference_engine import get_inference_engine_class
 
-# path to speculator model (None means no speculation will be used)
-SPECULATOR_PATH = os.getenv("SPECULATOR_PATH", None)
-
-# number of speculator heads
-SPECULATOR_N_PREDICT = int(os.getenv("SPECULATOR_N_PREDICT", "3"))
+# HF name or path to speculator model (None means no speculation will be used)
+SPECULATOR_NAME = os.getenv("SPECULATOR_NAME", None)
 
 # we will only do speculation if the batch size is <= this parameter
 SPECULATOR_MAX_BATCH_SIZE = int(os.getenv("SPECULATOR_MAX_BATCH_SIZE", "16"))
@@ -323,18 +320,11 @@ class PagedCausalLM(Model):
 
         from fms_extras.utils.cache.paged import PagedKVCacheManager
 
-        if SPECULATOR_PATH is not None:
-            from fms_extras.models.speculator import MLPSpeculator
+        if SPECULATOR_NAME is not None:
+            from fms_extras.models.hf.modeling_mlp_speculator import MLPSpeculatorPreTrainedModel
             print(f"Speculation will be enabled up to batch size {SPECULATOR_MAX_BATCH_SIZE}")
-            self.speculator = MLPSpeculator(
-                model_config.hidden_size,
-                inner_dim=4096,
-                vocab_size=model_config.vocab_size,
-                n_predict=SPECULATOR_N_PREDICT,
-            ).to(device=self.device, dtype=dtype)
-            self.speculator.load_state_dict(
-                torch.load(SPECULATOR_PATH, map_location=self.device)["model_state"]
-            )
+            self.speculator = MLPSpeculatorPreTrainedModel.from_pretrained(SPECULATOR_NAME)
+            self.speculator.to(device=self.device, dtype=dtype)
         else:
             self.speculator = None
 

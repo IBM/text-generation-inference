@@ -6,12 +6,10 @@ import torch
 from fms_extras.models.speculator import flatten_batch, apply_index_map
 
 # number of candidates during speculation
-SPECULATOR_NUM_CANDIDATES = int(os.getenv("SPECULATOR_NUM_CANDIDATES", "5"))
+SPECULATOR_N_CANDIDATES = os.getenv("SPECULATOR_N_CANDIDATES", None)
 
 # number of candidates per head
-SPECULATOR_THRESHES = [
-    int(x) for x in os.getenv("SPECULATOR_THRESHES", "5,3,2").strip().split(',')
-]
+SPECULATOR_TOP_K_TOKENS_PER_HEAD = os.getenv("SPECULATOR_TOP_K_TOKENS_PER_HEAD", None)
 
 def fit_memory_scaling_model(
         model_name: str,
@@ -152,14 +150,17 @@ def prepare_inputs_with_speculation(
 
     n_adds = speculator.n_predict + 1
 
-    if len(SPECULATOR_THRESHES) != speculator.n_predict:
-        raise ValueError(
-            f"Length of SPECULATOR_THRESHES ({SPECULATOR_THRESHES}) does not match SPECULATOR_N_PREDICT ({SPECULATOR_N_PREDICT})"
-        )
+    top_k = int(SPECULATOR_N_CANDIDATES) if SPECULATOR_N_CANDIDATES is not None else speculator.config.n_candidates
 
-    #hard-code some values
-    top_k = SPECULATOR_NUM_CANDIDATES
-    threshes = SPECULATOR_THRESHES
+    if SPECULATOR_TOP_K_TOKENS_PER_HEAD is not None:
+        top_k_tokens_per_head = [ int(x) for x in SPECULATOR_TOP_K_TOKENS_PER_HEAD.strip().split(',') ]
+        if len(top_k_tokens_per_head) != speculator.n_predict:
+            raise ValueError(
+                f"Length of top_k_tokens_per_head ({top_k_tokens_per_head}) does not match speculator.n_predict ({speculator.n_predict})"
+            )
+    else:
+        top_k_tokens_per_head = speculator.config.top_k_tokens_per_head
+
     flatting=True
 
     # create candidate sequences
@@ -177,7 +178,7 @@ def prepare_inputs_with_speculation(
     position_ids = cache_data.position_ids
 
     # Get candidate set of speculations
-    adds = speculator.generate_suffixes(embeds[spec_ind, :], input_ids[spec_ind,:], threshes, top_k)  # b k h
+    adds = speculator.generate_suffixes(embeds[spec_ind, :], input_ids[spec_ind,:], top_k_tokens_per_head, top_k)  # b k h
 
     adds_all = adds.new_full(size=(bsize, adds.shape[1], adds.shape[2]), fill_value=pad_token_id)
     adds_all[spec_ind, :, :] = adds
