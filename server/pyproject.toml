@@ -28,7 +28,7 @@ onnxruntime-gpu = { version = "^1.17.1", optional = true }
 onnx = { version = "^1.16.0", optional = true }
 einops = "^0.7.0"
 ibm-fms = { version = "^0.0", optional = true }
-fms-extras = {git = "https://github.com/foundation-model-stack/fms-extras", rev = "5ba47a0a7add0a6fa8fa4d1d912b9b83c4c0087d", optional = true}
+fms-extras = {git = "https://github.com/foundation-model-stack/fms-extras", rev = "550d8dfd597e09bb591da93357b0460775d14388", optional = true}
 
 # Explicitly install some transitive dependencies to avoid CVEs
 jinja2 = ">=3.1.3"
