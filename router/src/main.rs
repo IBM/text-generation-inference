@@ -61,6 +61,12 @@ struct Args {
     default_include_stop_seqs: bool,
     #[clap(long, env)]
     otlp_endpoint: Option<String>,
+    #[clap(
+        long,
+        env = "OTEL_SERVICE_NAME",
+        default_value = "text-generation-inference.router"
+    )]
+    otlp_service_name: String,
 }
 
 fn main() -> Result<(), std::io::Error> {
@@ -106,7 +112,7 @@ fn main() -> Result<(), std::io::Error> {
         .build()
         .unwrap()
         .block_on(async {
-            init_logging(args.otlp_endpoint, args.json_output);
+            init_logging(args.otlp_endpoint, args.json_output, args.otlp_service_name);
             // Instantiate sharded client from the master unix socket
             let mut sharded_client = ShardedClient::connect_uds(args.master_shard_uds_path)
                 .await
@@ -206,7 +212,7 @@ fn write_termination_log(msg: &str) -> Result<(), io::Error> {
     Ok(())
 }
 
-fn init_logging(otlp_endpoint: Option<String>, json_output: bool) {
+fn init_logging(otlp_endpoint: Option<String>, json_output: bool, otlp_service_name: String) {
     let mut layers = Vec::new();
 
     // STDOUT/STDERR layer
@@ -235,7 +241,7 @@ fn init_logging(otlp_endpoint: Option<String>, json_output: bool) {
                 trace::config()
                     .with_resource(Resource::new(vec![KeyValue::new(
                         "service.name",
-                        "text-generation-inference.router",
+                        otlp_service_name,
                     )]))
                     .with_sampler(Sampler::AlwaysOn),
             )
