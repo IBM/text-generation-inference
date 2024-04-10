@@ -148,15 +148,15 @@ def prepare_inputs_with_speculation(
 
     bsize = input_ids.shape[0]
 
-    n_adds = speculator.n_predict + 1
+    n_adds = speculator.config.n_predict + 1
 
     top_k = int(SPECULATOR_N_CANDIDATES) if SPECULATOR_N_CANDIDATES is not None else speculator.config.n_candidates
 
     if SPECULATOR_TOP_K_TOKENS_PER_HEAD is not None:
         top_k_tokens_per_head = [ int(x) for x in SPECULATOR_TOP_K_TOKENS_PER_HEAD.strip().split(',') ]
-        if len(top_k_tokens_per_head) != speculator.n_predict:
+        if len(top_k_tokens_per_head) != speculator.config.n_predict:
             raise ValueError(
-                f"Length of top_k_tokens_per_head ({top_k_tokens_per_head}) does not match speculator.n_predict ({speculator.n_predict})"
+                f"Length of top_k_tokens_per_head ({top_k_tokens_per_head}) does not match speculator.config.n_predict ({speculator.config.n_predict})"
             )
     else:
         top_k_tokens_per_head = speculator.config.top_k_tokens_per_head
