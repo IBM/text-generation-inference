@@ -323,8 +323,13 @@ class PagedCausalLM(Model):
         if SPECULATOR_NAME is not None:
             from fms_extras.models.hf.modeling_mlp_speculator import MLPSpeculatorPreTrainedModel
             print(f"Speculation will be enabled up to batch size {SPECULATOR_MAX_BATCH_SIZE}")
-            self.speculator = MLPSpeculatorPreTrainedModel.from_pretrained(SPECULATOR_NAME)
-            self.speculator.to(device=self.device, dtype=dtype)
+            kwargs = {
+                "pretrained_model_name_or_path": SPECULATOR_NAME,
+                "torch_dtype": dtype,
+            }
+            with self.device:
+                self.speculator = MLPSpeculatorPreTrainedModel.from_pretrained(**kwargs)
+                self.speculator.to(device=self.device)
         else:
             self.speculator = None
 
