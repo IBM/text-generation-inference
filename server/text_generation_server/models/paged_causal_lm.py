@@ -31,6 +31,9 @@ SPECULATOR_NAME = os.getenv("SPECULATOR_NAME", None)
 # we will only do speculation if the batch size is <= this parameter
 SPECULATOR_MAX_BATCH_SIZE = int(os.getenv("SPECULATOR_MAX_BATCH_SIZE", "16"))
 
+# override number of KV cache manager blocks
+KV_CACHE_MANAGER_NUM_GPU_BLOCKS = os.getenv("KV_CACHE_MANAGER_NUM_GPU_BLOCKS", None)
+
 @dataclass
 class PagedCausalLMBatch(Batch):
     batch_id: int
@@ -333,6 +336,11 @@ class PagedCausalLM(Model):
         else:
             self.speculator = None
 
+        if KV_CACHE_MANAGER_NUM_GPU_BLOCKS is not None:
+            total_num_gpu_blocks = int(KV_CACHE_MANAGER_NUM_GPU_BLOCKS)
+        else:
+            total_num_gpu_blocks = None
+
         self.kv_cache_manager = PagedKVCacheManager(
             model_config.num_hidden_layers,
             model_config.num_attention_heads,
@@ -341,7 +349,7 @@ class PagedCausalLM(Model):
             tensor_parallel_size=1,
             dtype=dtype,
             device=self.device,
-#            total_num_gpu_blocks=3600,
+            total_num_gpu_blocks=total_num_gpu_blocks,
         )
 
 
