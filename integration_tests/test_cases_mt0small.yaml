@@ -1166,7 +1166,7 @@
 
 
 # Length penalty
-- name: Length penalty
+- name: Length penalty with repetition penalty
   request:
     params:
       decoding:
@@ -1186,6 +1186,24 @@
         text: The very long story is
 
 
+# Length penalty
+- name: Length penalty
+  request:
+    params:
+      decoding:
+        length_penalty:
+          start_index: 3
+          decay_factor: 4.0
+      stopping:
+        maxNewTokens: 20
+    requests:
+      - {"text": "A very long story:\n"}
+  response:
+    responses:
+      - generatedTokenCount: 7
+        inputTokenCount: 8
+        stopReason: EOS_TOKEN
+        text: The very long story is
 
 # Multiple inputs
 - name: Multiple inputs
