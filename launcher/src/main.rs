@@ -91,6 +91,8 @@ struct Args {
     default_include_stop_seqs: bool,
     #[clap(long, env)]
     otlp_endpoint: Option<String>,
+    #[clap(long, env)]
+    otlp_service_name: Option<String>,
 }
 
 fn main() -> ExitCode {
@@ -331,6 +333,11 @@ fn main() -> ExitCode {
     if let Some(otlp_endpoint) = args.otlp_endpoint {
         argv.push("--otlp-endpoint".to_string());
         argv.push(otlp_endpoint);
+
+        if let Some(otlp_service_name) = args.otlp_service_name {
+            argv.push("--otlp-service-name".to_string());
+            argv.push(otlp_service_name);
+        }
     }
 
     if args.output_special_tokens {

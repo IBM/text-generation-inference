@@ -28,6 +28,7 @@ use crate::{
     },
     server::ServerState,
     tokenizer::AsyncTokenizer,
+    tracing::ExtractTelemetryContext,
     validation::{RequestSize, ValidationError},
     GenerateParameters, GenerateRequest,
 };
@@ -119,6 +120,7 @@ impl GenerationService for GenerationServicer {
         request: Request<BatchedGenerationRequest>,
     ) -> Result<Response<BatchedGenerationResponse>, Status> {
         let start_time = Instant::now();
+        let request = request.extract_context();
         let br = request.into_inner();
         let batch_size = br.requests.len();
         let kind = if batch_size == 1 { "single" } else { "batch" };
@@ -251,6 +253,7 @@ impl GenerationService for GenerationServicer {
         request: Request<SingleGenerationRequest>,
     ) -> Result<Response<Self::GenerateStreamStream>, Status> {
         let start_time = Instant::now();
+        let request = request.extract_context();
         metrics::increment_counter!("tgi_request_count", "kind" => "stream");
         self.input_counter.increment(1);
         let permit = self
