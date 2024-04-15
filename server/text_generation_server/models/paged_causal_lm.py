@@ -634,6 +634,10 @@ class PagedCausalLM(Model):
 
             bsize = batch.input_ids.shape[0]
 
+            tokens_remaining = 0
+            for i in range(len(batch.total_lengths)):
+                tokens_remaining += batch.total_lengths[i] - batch.input_lengths[i]
+
             spec_ind = []
             for i, sample in enumerate(batch.next_token_chooser.do_sample):
                 if not sample:
@@ -644,6 +648,7 @@ class PagedCausalLM(Model):
                 len(spec_ind) > 0 and
                 bsize <= SPECULATOR_MAX_BATCH_SIZE and
                 batch.next_token_chooser.repetition_processor is None
+                tokens_remaining < 0.25*len(self.kv_cache_manager.free_blocks)*self.kv_cache_manager.block_size
             )
 
             if speculate:
