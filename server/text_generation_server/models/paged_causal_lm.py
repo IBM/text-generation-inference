@@ -647,7 +647,7 @@ class PagedCausalLM(Model):
                 self.speculator is not None and
                 len(spec_ind) > 0 and
                 bsize <= SPECULATOR_MAX_BATCH_SIZE and
-                batch.next_token_chooser.repetition_processor is None
+                batch.next_token_chooser.repetition_processor is None and
                 tokens_remaining < 0.25*len(self.kv_cache_manager.free_blocks)*self.kv_cache_manager.block_size
             )
 
