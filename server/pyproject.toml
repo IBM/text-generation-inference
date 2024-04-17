@@ -9,15 +9,16 @@ text-generation-server = 'text_generation_server.cli:app'
 
 [tool.poetry.dependencies]
 python = ">=3.11.0,<3.13"
+# grpc is not yet compatible with newer protobuf
 protobuf = "^4.25.3"
 grpcio = "^1.62.1"
 grpcio-reflection = "^1.62.1"
 loguru = "^0.7.2"
-typer = "^0.9.0"
+typer = "^0.12.3"
 accelerate = { version = "0.27.2", optional = true }
 bitsandbytes = { version = "^0.42.0", optional = true }
 scipy = "^1.11.4"
-safetensors = "^0.4.2"
+safetensors = "^0.4.3"
 sentencepiece = "^0.2.0"
 datasets = { version = "^2.15.0", optional = true }
 texttable = { version = "^1.7.0", optional = true }
