@@ -281,9 +281,6 @@ RUN --mount=type=bind,from=flash-att-v2-cache,src=/usr/src/flash-attention-v2,ta
 # or are using a PyTorch nightly version
 RUN pip install auto-gptq=="${AUTO_GPTQ_VERSION}" --no-cache-dir
 
-# Install pre-release version of transformers
-RUN pip install tokenizers==0.19.1 git+https://github.com/huggingface/transformers.git@ec92f983af5295fc92414a37b988d8384785988a
-
 # Install server
 # git is required to pull the fms-extras dependency
 RUN dnf install -y git && dnf clean all
