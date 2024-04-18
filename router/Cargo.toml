@@ -17,33 +17,33 @@ path = "src/main.rs"
 axum = { version = "0.6.20", features = ["json"] }
 axum-tracing-opentelemetry = "0.10.0"
 text-generation-client = { path = "client" }
-clap = { version = "^4.5.2", features = ["derive", "env"] }
+clap = { version = "^4.5.4", features = ["derive", "env"] }
 futures = "^0.3.30"
 flume = "^0.11.0"
 metrics = "0.21.1"
 metrics-exporter-prometheus = { version = "0.12.2", features = [] }
-moka = { version = "0.12.5", features = ["future"] }
+moka = { version = "0.12.6", features = ["future"] }
 nohash-hasher = "^0.2.0"
-num = "^0.4.1"
+num = "^0.4.2"
 num_cpus = "^1.16.0"
 hyper = "^0.14.28" # Override to address CVE-2023-26964
 openssl = "^0.10.64" # Override to address WS-2023-0082, WS-2023-0083, WS-2023-0195
-openssl-sys = "^0.9.101" # Override to address WS-2023-0082, WS-2023-0083, WS-2023-0195
+openssl-sys = "^0.9.102" # Override to address WS-2023-0082, WS-2023-0083, WS-2023-0195
 rustls-webpki = "0.102.2" # Override to address WS-2023-0305, CVE-2018-16875
 rand = "^0.8.5"
-serde = "^1.0.197"
-serde_json = "^1.0.114"
+serde = "^1.0.198"
+serde_json = "^1.0.116"
 thiserror = "^1.0.57"
-tokenizers = "0.15.2"
-tokio = { version = "1.36.0", features = ["rt", "rt-multi-thread", "parking_lot", "signal", "sync", "fs"] }
-tokio-rustls = "^0.25.0"
-rustls = "0.22.2"
+tokenizers = "0.19.1"
+tokio = { version = "1.37.0", features = ["rt", "rt-multi-thread", "parking_lot", "signal", "sync", "fs"] }
+tokio-rustls = "^0.26.0"
+rustls = "0.22.3"
 tracing = "^0.1.40"
-prost = "^0.12.3"
+prost = "^0.12.4"
 tonic = { version = "^0.11.0", features = ["tls"] }
 tracing-subscriber = { version = "0.3.18", features = ["json", "env-filter"] }
 tracing-opentelemetry = "0.23.0"
-tokio-stream ="^0.1.14"
+tokio-stream ="^0.1.15"
 unicode-segmentation = "^1.11.0"
 unicode-truncate = "^0.2.0"
 opentelemetry = "0.22.0"
