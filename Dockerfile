@@ -155,9 +155,6 @@ WORKDIR /usr/src
 # Install specific version of torch
 RUN pip install torch=="$PYTORCH_VERSION+cpu" --index-url "${PYTORCH_INDEX}/cpu" --no-cache-dir
 
-# Install pre-release version of transformers
-RUN pip install tokenizers==0.19.1 git+https://github.com/huggingface/transformers.git@ec92f983af5295fc92414a37b988d8384785988a
-
 COPY server/Makefile server/Makefile
 
 # Install server
@@ -166,6 +163,9 @@ COPY server server
 RUN cd server && \
     make gen-server && \
     pip install ".[accelerate]" --no-cache-dir
+
+# temp: install newer transformers lib that optimum clashes with
+RUN pip install transformers==4.40.0 tokenizers==0.19.1 --no-cache-dir
 
 # Patch codegen model changes into transformers
 RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py
@@ -291,7 +291,7 @@ COPY server server
 RUN cd server && make gen-server && pip install ".[accelerate, ibm-fms, onnx-gpu, quantize]" --no-cache-dir --extra-index-url=https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
 
 # temp: install newer transformers lib that optimum clashes with
-RUN pip install transformers==4.40.0
+RUN pip install transformers==4.40.0 tokenizers==0.19.1 --no-cache-dir
 
 # Patch codegen model changes into transformers 4.35
 RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py
