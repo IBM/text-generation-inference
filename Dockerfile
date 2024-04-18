@@ -155,6 +155,9 @@ WORKDIR /usr/src
 # Install specific version of torch
 RUN pip install torch=="$PYTORCH_VERSION+cpu" --index-url "${PYTORCH_INDEX}/cpu" --no-cache-dir
 
+# Install pre-release version of transformers
+RUN pip install tokenizers==0.19.1 git+https://github.com/huggingface/transformers.git@ec92f983af5295fc92414a37b988d8384785988a
+
 COPY server/Makefile server/Makefile
 
 # Install server
@@ -277,6 +280,9 @@ RUN --mount=type=bind,from=flash-att-v2-cache,src=/usr/src/flash-attention-v2,ta
 # We only need to install a custom-built auto-gptq version if we need a pre-release
 # or are using a PyTorch nightly version
 RUN pip install auto-gptq=="${AUTO_GPTQ_VERSION}" --no-cache-dir
+
+# Install pre-release version of transformers
+RUN pip install tokenizers==0.19.1 git+https://github.com/huggingface/transformers.git@ec92f983af5295fc92414a37b988d8384785988a
 
 # Install server
 # git is required to pull the fms-extras dependency
