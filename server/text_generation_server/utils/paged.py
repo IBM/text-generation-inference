@@ -11,23 +11,20 @@ SPECULATOR_N_CANDIDATES = os.getenv("SPECULATOR_N_CANDIDATES", None)
 # number of candidates per head
 SPECULATOR_TOP_K_TOKENS_PER_HEAD = os.getenv("SPECULATOR_TOP_K_TOKENS_PER_HEAD", None)
 
+
 def fit_memory_scaling_model(
-        model_name: str,
-        revision: Optional[str],
-        deployment_framework: str,
-        dtype_str: Optional[str],
-        quantize: Optional[str],
-        max_sequence_length: int,
-        batch_safety_margin: int,
-        cuda_process_memory_fraction: float,
-        q_out: Queue
-    ):
-
-    import os
-
+    model_name: str,
+    revision: Optional[str],
+    deployment_framework: str,
+    dtype_str: Optional[str],
+    quantize: Optional[str],
+    max_sequence_length: int,
+    batch_safety_margin: int,
+    cuda_process_memory_fraction: float,
+    q_out: Queue
+):
     os.environ["PAGED_ATTENTION"] = "false"
 
-    import torch
     from text_generation_server.models import get_model
     from text_generation_server.utils import Estimator
 
@@ -54,13 +51,13 @@ def truncate_and_flatten(tensor: torch.Tensor, num_tokens_per_sequence: List[int
     return torch.cat([tensor_i[0, -num_tokens:] for tensor_i, num_tokens in
                                   zip(tensor_list, num_tokens_per_sequence)], dim=0)
 
+
 def prepare_inputs_without_speculation(
     input_ids,
     embeds,
     parent_sequence_ids,
     kv_cache_manager
-    ):
-    
+):
     bsize = input_ids.shape[0]
 
     num_tokens_per_sequence = [1 for _ in range(bsize)]
@@ -116,8 +113,7 @@ def prepare_inputs_for_prefill(
     input_ids,
     num_tokens_per_sequence,
     kv_cache_manager,
-    ):
-
+):
     cache_data = kv_cache_manager.allocate_tokens(num_tokens_per_sequence)
 
     # ** SPECIAL HANDLING FOR FLASH V2 **
@@ -144,8 +140,7 @@ def prepare_inputs_with_speculation(
     speculator,
     spec_ind,
     pad_token_id,
-    ):
-
+):
     bsize = input_ids.shape[0]
 
     n_adds = speculator.config.n_predict + 1
@@ -161,7 +156,7 @@ def prepare_inputs_with_speculation(
     else:
         top_k_tokens_per_head = speculator.config.top_k_tokens_per_head
 
-    flatting=True
+    flatting = True
 
     # create candidate sequences
     child_sequence_ids_list = []
@@ -232,7 +227,7 @@ def process_outputs_with_speculation(
     unflat_indices,
     input_ids_unflat,
     child_sequence_ids_list,
-    ):
+):
 
     bsize, top_k, n_adds = unflat_indices.shape
 

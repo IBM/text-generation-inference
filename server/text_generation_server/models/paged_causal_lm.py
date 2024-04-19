@@ -17,7 +17,6 @@ from text_generation_server.utils.hub import get_model_path
 from text_generation_server.utils.token_types import TokenInfo, InputTokens
 from text_generation_server.utils.tokens import HeterogeneousNextTokenChooser, get_token_info, get_input_tokens_info
 from text_generation_server.utils.paged import (
-    truncate_and_flatten,
     prepare_inputs_without_speculation,
     prepare_inputs_with_speculation,
     process_outputs_with_speculation,
@@ -33,6 +32,7 @@ SPECULATOR_MAX_BATCH_SIZE = int(os.getenv("SPECULATOR_MAX_BATCH_SIZE", "16"))
 
 # override number of KV cache manager blocks
 KV_CACHE_MANAGER_NUM_GPU_BLOCKS = os.getenv("KV_CACHE_MANAGER_NUM_GPU_BLOCKS", None)
+
 
 @dataclass
 class PagedCausalLMBatch(Batch):
@@ -99,7 +99,6 @@ class PagedCausalLMBatch(Batch):
             batch_inputs, truncation=True, max_length=max_seqlen, return_token_type_ids=False
         )["input_ids"]
 
-
         # Process inputs to generate the needed tensors
         input_ids = []
         next_token_chooser_parameters = []
@@ -153,7 +152,6 @@ class PagedCausalLMBatch(Batch):
     def concatenate(cls, batches: List["PagedCausalLMBatch"]) -> "PagedCausalLMBatch":
         """Concatenate multiple batches together by padding internal torch tensors"""
 
-
         # Batch attributes
         requests = []
         input_lengths = []
@@ -164,7 +162,7 @@ class PagedCausalLMBatch(Batch):
         ntc_return_logprobs = []
         sequence_ids = []
 
-        device = batches[0].input_ids.device
+        #device = batches[0].input_ids.device
 
         # Batch tensors
         input_ids = []
@@ -229,17 +227,7 @@ class PagedCausalLMBatch(Batch):
         )
 
     @classmethod
-    def free_sequences(cls, kv_cache_manager, parent_sequence_ids):
-        for parent_sequence_id in parent_sequence_ids:
-            prefix = kv_cache_manager.cbg_map[parent_sequence_id].prefix
-            kv_cache_manager.free(parent_sequence_id)
-            while prefix is not None:
-                kv_cache_manager.free(prefix.sequence_id)
-                prefix = prefix.prefix
-
-
-    @classmethod
-    def prune(cls, batch: "PagedCausalLMBatch", completed_ids: List[int], kv_cache_manager: "PagedKVCacheManager" = None) -> Optional["PagedCausalLMBatch"]:
+    def prune(cls, batch: "PagedCausalLMBatch", completed_ids: List[int]) -> Optional["PagedCausalLMBatch"]:
         """Prune completed entries from a batch"""
 
         if not completed_ids:
@@ -250,27 +238,20 @@ class PagedCausalLMBatch(Batch):
         # keep_indices = Model.get_indices_to_keep(batch.requests, completed_ids)
         # use this code instead:
         keep_indices = []
-        for i, request in enumerate(batch.requests):
-            if request.id not in completed_ids:
-                keep_indices.append(i)
-
-
         prune_indices = []
         seq_ids_to_prune = []
-        for i in range(len(batch)):
-            if i not in keep_indices:
+        for i, request in enumerate(batch.requests):
+            if request.id in completed_ids:
                 prune_indices.append(i)
                 seq_ids_to_prune.append(batch.sequence_ids[i])
-
-        cls.free_sequences(kv_cache_manager, seq_ids_to_prune)
+            else:
+                keep_indices.append(i)
 
         new_size = len(keep_indices)
-
 
         # If the whole batch has finished, discard it
         if new_size == 0:
             return None
-
 
         #TODO maybe a single loop for all these list slices
         slice_list = itemgetter(*keep_indices) if new_size > 1 else lambda l: (l[keep_indices[0]],)
@@ -289,6 +270,7 @@ class PagedCausalLMBatch(Batch):
         batch.all_input_ids_tensor = batch.all_input_ids_tensor[keep_indices, :max(batch.total_lengths)]
 
         return batch
+
 
 class PagedCausalLM(Model):
     def __init__(
@@ -352,7 +334,6 @@ class PagedCausalLM(Model):
             total_num_gpu_blocks=total_num_gpu_blocks,
         )
 
-
     @property
     def batch_type(self) -> Type[PagedCausalLMBatch]:
         return self._batch_type
@@ -361,8 +342,8 @@ class PagedCausalLM(Model):
     def batch_type(self, value):
         self._batch_type = value
 
+    @staticmethod
     def _process_tokens(
-        self,
         input,
         batch: PagedCausalLMBatch,
         generated_tokens: List[TokenInfo],
@@ -372,22 +353,14 @@ class PagedCausalLM(Model):
         logits: torch.Tensor = None,
         cum_seqlens: torch.Tensor = None,
     ):
-
-        for (
-            i,
-            next_tokens,
-            scores,
-            logprobs,
-        ) in input:
+        for (i, next_tokens, scores, logprobs) in input:
 
             request = batch.requests[i]
             all_input_ids = batch.all_input_ids_tensor[i]
 
             if batch.input_lengths[i] == batch.total_lengths[i]:
                 continue
-
             try:
-
                 # Ensure tok view is 1st order, everything else is second.
                 tok_view = next_tokens.view(-1)
                 scores_view = scores.view(-1, scores.shape[-1])
@@ -424,7 +397,6 @@ class PagedCausalLM(Model):
             all_input_ids[batch.input_lengths[i]] = token_info.token_id
             batch.input_lengths[i] += 1
 
-
     def _prefill(
         self,
         batch,
@@ -432,7 +404,6 @@ class PagedCausalLM(Model):
         input_token_infos,
         decode_errors,
     ):
-
         bsize = batch.input_ids.shape[0]
 
         input_ids, position_ids, cache_data = prepare_inputs_for_prefill(
@@ -483,7 +454,6 @@ class PagedCausalLM(Model):
 
         return t_forward_ns
 
-
     def _next_token_with_speculation(
         self,
         batch,
@@ -492,11 +462,12 @@ class PagedCausalLM(Model):
         decode_errors,
         spec_ind,
     ):
-
         bsize = batch.input_ids.shape[0]
 
-        input_ids, position_ids, cache_data, this_flatting, unflat_indices, input_ids_unflat, child_sequence_ids_list = prepare_inputs_with_speculation(
-            batch.input_ids, batch.embeds, batch.sequence_ids, self.kv_cache_manager, self.speculator, spec_ind, batch.pad_token_id
+        (input_ids, position_ids, cache_data, this_flatting,
+         unflat_indices, input_ids_unflat, child_sequence_ids_list) = prepare_inputs_with_speculation(
+            batch.input_ids, batch.embeds, batch.sequence_ids, self.kv_cache_manager,
+            self.speculator, spec_ind, batch.pad_token_id,
         )
 
         t0 = time.time_ns()
@@ -506,7 +477,8 @@ class PagedCausalLM(Model):
         t_forward_ns = time.time_ns()-t0
 
         logits, new_embeds, new_sequence_ids, next_tokens = process_outputs_with_speculation(
-            logits, embeds, self.kv_cache_manager, self.speculator, this_flatting, unflat_indices, input_ids_unflat, child_sequence_ids_list
+            logits, embeds, self.kv_cache_manager, self.speculator, this_flatting,
+            unflat_indices, input_ids_unflat, child_sequence_ids_list,
         )
 
         logits_full = logits.new_zeros(bsize, logits.shape[2])
@@ -572,7 +544,6 @@ class PagedCausalLM(Model):
         input_token_infos,
         decode_errors,
     ):
-
         bsize = batch.input_ids.shape[0]
 
         input_ids, position_ids, cache_data = prepare_inputs_without_speculation(
@@ -622,16 +593,13 @@ class PagedCausalLM(Model):
         decode_errors: List[GenerateError] = []
 
         if first:
-
             t_forward_ns = self._prefill(
                 batch,
                 generated_tokens,
                 input_token_infos,
                 decode_errors,
             )
-
         else:
-
             bsize = batch.input_ids.shape[0]
 
             tokens_remaining = 0
@@ -652,7 +620,6 @@ class PagedCausalLM(Model):
             )
 
             if speculate:
-
                 t_forward_ns = self._next_token_with_speculation(
                     batch,
                     generated_tokens,
@@ -660,9 +627,7 @@ class PagedCausalLM(Model):
                     decode_errors,
                     spec_ind,
                 )
-
             else:
-
                 t_forward_ns = self._next_token_without_speculation(
                     batch,
                     generated_tokens,
@@ -671,4 +636,3 @@ class PagedCausalLM(Model):
                 )
 
         return generated_tokens, input_token_infos, decode_errors, t_forward_ns
-
