@@ -164,6 +164,9 @@ RUN cd server && \
     make gen-server && \
     pip install ".[accelerate]" --no-cache-dir
 
+# temp: install newer transformers lib that optimum clashes with
+RUN pip install transformers==4.40.0 tokenizers==0.19.1 --no-cache-dir
+
 # Patch codegen model changes into transformers
 RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py
 
@@ -286,6 +289,9 @@ COPY server server
 # Extra url is required to install cuda-12 version of onnxruntime-gpu
 # Ref: https://onnxruntime.ai/docs/install/#install-onnx-runtime-gpu-cuda-12x
 RUN cd server && make gen-server && pip install ".[accelerate, ibm-fms, onnx-gpu, quantize]" --no-cache-dir --extra-index-url=https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
+
+# temp: install newer transformers lib that optimum clashes with
+RUN pip install transformers==4.40.0 tokenizers==0.19.1 --no-cache-dir
 
 # Patch codegen model changes into transformers 4.35
 RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py

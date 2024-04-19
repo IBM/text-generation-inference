@@ -55,7 +55,8 @@ def test_alignment_repetition_penalty_logits_processor():
         dtype=torch.float32,
         device=None,
     )
-    v_warped = vectorized_proc(input_ids=INPUT_IDS, scores=FULL_SCORES)
+    # Vectorized penalty happens in place; clone the score tensor!
+    v_warped = vectorized_proc(input_ids=INPUT_IDS, scores=FULL_SCORES.clone())
     # apply each penalty one at a time using the nonvectorized warper
     s_warped = []
     for penalty, logits, ids in zip(penalties, FULL_SCORES, INPUT_IDS):

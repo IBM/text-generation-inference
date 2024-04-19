@@ -182,7 +182,10 @@ class CausalLMBatch(Batch):
                 inputs_embeds[i, -input_length:-orig_length] = p
                 # Update attention mask with virtual prefix tokens
                 attention_mask[i, -input_length-padding_right_offset:-padding_right_offset] = 1
-            input_ids = None
+            # input_ids could be set to None here but this causes a problem in latest
+            # transformers prepare_inputs_for_generation impls.
+            # See https://github.com/huggingface/transformers/pull/29821
+            input_ids = all_input_ids
         else:
             input_ids = all_input_ids
             inputs_embeds = None
@@ -268,7 +271,7 @@ class CausalLMBatch(Batch):
             # Create empty tensor
             # input_ids is always of shape [batch_size, 1]
             # We do not need to pad it
-            if input_ids is None:
+            if input_ids is None or input_ids.shape[-1] != 1:
                 input_ids = batch.input_ids.new_empty((total_batch_size, 1))
             # Copy to correct indices
             input_ids[start_index:end_index] = batch.input_ids
