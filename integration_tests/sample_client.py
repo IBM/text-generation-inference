@@ -1,5 +1,4 @@
 import time
-import json
 import grpc
 from google.protobuf import json_format
 from text_generation_tests.pb import generation_pb2_grpc as gpb2, generation_pb2 as pb2

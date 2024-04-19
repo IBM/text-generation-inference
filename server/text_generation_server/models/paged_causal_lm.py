@@ -13,6 +13,7 @@ from text_generation_server.models.model import Model
 from text_generation_server.models.types import Batch, GenerateError
 from text_generation_server.pb import generate_pb2
 from text_generation_server.prompt_cache import PrefixCache
+from text_generation_server.utils import print_rank_n
 from text_generation_server.utils.hub import get_model_path
 from text_generation_server.utils.token_types import TokenInfo, InputTokens
 from text_generation_server.utils.tokens import HeterogeneousNextTokenChooser, get_token_info, get_input_tokens_info
@@ -237,15 +238,9 @@ class PagedCausalLMBatch(Batch):
         # this call doesn't work -> some assumption seems to break
         # keep_indices = Model.get_indices_to_keep(batch.requests, completed_ids)
         # use this code instead:
-        keep_indices = []
-        prune_indices = []
-        seq_ids_to_prune = []
-        for i, request in enumerate(batch.requests):
-            if request.id in completed_ids:
-                prune_indices.append(i)
-                seq_ids_to_prune.append(batch.sequence_ids[i])
-            else:
-                keep_indices.append(i)
+        keep_indices = [
+            i for i, request in enumerate(batch.requests) if request.id not in completed_ids
+        ]
 
         new_size = len(keep_indices)
 
@@ -307,9 +302,10 @@ class PagedCausalLM(Model):
 
         if SPECULATOR_NAME is not None:
             from fms_extras.models.hf.modeling_mlp_speculator import MLPSpeculatorPreTrainedModel
-            print(f"Speculation will be enabled up to batch size {SPECULATOR_MAX_BATCH_SIZE}")
             speculator_revision = os.getenv("SPECULATOR_REVISION", None)
             speculator_model_path = get_model_path(SPECULATOR_NAME, speculator_revision)
+            print_rank_n(f"Loading speculator model from: {speculator_model_path}")
+            print_rank_n(f"Speculation will be enabled up to batch size {SPECULATOR_MAX_BATCH_SIZE}")
             kwargs = {
                 "pretrained_model_name_or_path": speculator_model_path,
                 "local_files_only": True,

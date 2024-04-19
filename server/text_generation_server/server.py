@@ -17,6 +17,7 @@ from typing import List, Optional
 from text_generation_server.cache import Cache
 from text_generation_server.models import Model, get_model, Seq2SeqLM, PT2_COMPILE, PAGED_ATTENTION
 from text_generation_server.models.flash_causal_lm import FlashCausalLM
+from text_generation_server.models.types import Batch
 from text_generation_server.pb import generate_pb2_grpc, generate_pb2
 from text_generation_server.pb.generate_pb2 import ModelInfoResponse
 from text_generation_server.pb.generate_pb2 import MemoryScalingModel as MemoryScalingModelPB
@@ -109,13 +110,13 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
                 if batch_to_prune is None:
                     raise ValueError(f"Batch ID {cbatch.batch_id} not found in cache.")
 
-                if cbatch.HasField("status"):
+                completed_ids = cbatch.status.completed_ids if cbatch.HasField("status") else None
+                self._free_paged_sequences(batch_to_prune, completed_ids)
+                if completed_ids is not None:
                     completed_ids = cbatch.status.completed_ids
                     pruned_batch = self.model.batch_type.prune(batch_to_prune, completed_ids)
                     self.cache.set(pruned_batch)
-                else:
-                    completed_ids = None  # means that entire batch is completed
-                self._free_paged_sequences(batch_to_prune, completed_ids)
+                # else entire batch is completed
 
                 # Ensure completed batches are garbage collected before calling prefill
                 del batch_to_prune
@@ -182,16 +183,15 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
             batches = []
             for cbatch in request.batches:
                 batch = self.cache.pop(cbatch.batch_id)
-                if cbatch.HasField("status"):
+                completed_ids = cbatch.status.completed_ids if cbatch.HasField("status") else None
+                self._free_paged_sequences(batch, completed_ids)
+                if completed_ids is not None:
                     if batch is None:
                         raise ValueError(f"Batch ID {cbatch.batch_id} not found in cache.")
-                    completed_ids = cbatch.status.completed_ids
                     batch = self.model.batch_type.prune(batch, completed_ids)
                     if batch is not None:
                         batches.append(batch)
-                else:
-                    completed_ids = None
-                self._free_paged_sequences(batch, completed_ids)
+                # else entire batch is completed
 
             if len(self.cache) > 0:
                 print(f"WARN: Clearing additional batches found in cache: {self.cache.keys()}")
@@ -222,11 +222,19 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
 
     def _free_paged_sequences(self, batch: "Batch", completed_ids: Optional[List[int]]):
         """completed_ids == None means free entire batch"""
-        if hasattr(self.model, "kv_cache_manager"):
-            sequence_ids_to_free = batch.sequence_ids if not completed_ids else [
-                batch.sequence_ids[i] for i in completed_ids
+        if not hasattr(self.model, "kv_cache_manager") or batch is None:
+            return
+        # Here we assume that the batch type is PagedCausalLMBatch
+        if completed_ids is None:
+            sequence_ids_to_free = batch.sequence_ids  # free all
+        elif completed_ids:
+            sequence_ids_to_free = [
+                batch.sequence_ids[i] for i, request in enumerate(batch.requests)
+                if request.id in completed_ids
             ]
-            self.model.kv_cache_manager.free_sequences(sequence_ids_to_free, recursive=True)
+        else:
+            return
+        self.model.kv_cache_manager.free_sequences(sequence_ids_to_free, recursive=True)
 
 
 def serve(
