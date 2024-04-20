@@ -13,8 +13,9 @@ from text_generation_server.utils.hub import get_model_path, TRUST_REMOTE_CODE
 from transformers import AutoConfig, AutoModelForSeq2SeqLM, AutoModelForCausalLM, PretrainedConfig
 
 FLASH_ATTENTION = os.getenv("FLASH_ATTENTION", "false").lower() == "true"
+PAGED_ATTENTION = os.getenv("PAGED_ATTENTION", "false").lower() == "true"
 
-__all__ = ["Model", "CausalLM", "Seq2SeqLM", "get_model", "FLASH_ATTENTION", "PT2_COMPILE"]
+__all__ = ["Model", "CausalLM", "Seq2SeqLM", "get_model", "FLASH_ATTENTION", "PAGED_ATTENTION", "PT2_COMPILE"]
 
 # The flag below controls whether to allow TF32 on matmul. This flag defaults to False
 # in PyTorch 1.12 and later.
@@ -42,6 +43,38 @@ def get_model(
     # additional model configs (eg. for FMS), load the config as a dict
     model_config_dict, _kwargs = PretrainedConfig.get_config_dict(model_path)
     model_type = model_config_dict["model_type"]
+
+    if PAGED_ATTENTION:
+        print(f"Using Paged Attention")
+
+        if deployment_framework != "tgis_native":
+            print_rank_n(
+                f"WARNING: Using deployment engine tgis_native rather than {deployment_framework} "
+                "because PAGED_ATTENTION is enabled"
+            )
+            deployment_framework = "tgis_native"
+
+        if model_type == "llama":
+            # Custom config type for LLaMA models
+            from text_generation_server.models.custom_modeling.paged_llama_modeling import LlamaConfig
+            model_config = LlamaConfig.from_pretrained(model_path)
+        elif model_type == "gpt_bigcode":
+            from transformers import GPTBigCodeConfig
+            model_config = GPTBigCodeConfig.from_pretrained(model_path)
+            # num_key_value_heads is used in creating cache, here we add that attribute based on mqa
+            model_config.num_key_value_heads = 1 if model_config.multi_query else model_config.num_attention_heads
+        else:
+            raise NotImplementedError("PAGED_ATTENTION only supported for gpt_bigcode and llama for now")
+
+        from text_generation_server.models.paged_causal_lm import PagedCausalLM
+        return PagedCausalLM(
+            model_name,
+            revision,
+            deployment_framework,
+            dtype, quantize,
+            model_config,
+            max_sequence_length=max_sequence_length,
+        )
 
     if FLASH_ATTENTION:
         # This will raise an exception if flash attention is not supported by the device

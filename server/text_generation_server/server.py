@@ -15,8 +15,9 @@ from pathlib import Path
 from typing import List, Optional
 
 from text_generation_server.cache import Cache
-from text_generation_server.models import Model, get_model, Seq2SeqLM, PT2_COMPILE
+from text_generation_server.models import Model, get_model, Seq2SeqLM, PT2_COMPILE, PAGED_ATTENTION
 from text_generation_server.models.flash_causal_lm import FlashCausalLM
+from text_generation_server.models.types import Batch
 from text_generation_server.pb import generate_pb2_grpc, generate_pb2
 from text_generation_server.pb.generate_pb2 import ModelInfoResponse
 from text_generation_server.pb.generate_pb2 import MemoryScalingModel as MemoryScalingModelPB
@@ -109,9 +110,13 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
                 if batch_to_prune is None:
                     raise ValueError(f"Batch ID {cbatch.batch_id} not found in cache.")
 
-                if cbatch.HasField("status"):
-                    pruned_batch = self.model.batch_type.prune(batch_to_prune, cbatch.status.completed_ids)
+                completed_ids = cbatch.status.completed_ids if cbatch.HasField("status") else None
+                self._free_paged_sequences(batch_to_prune, completed_ids)
+                if completed_ids is not None:
+                    completed_ids = cbatch.status.completed_ids
+                    pruned_batch = self.model.batch_type.prune(batch_to_prune, completed_ids)
                     self.cache.set(pruned_batch)
+                # else entire batch is completed
 
                 # Ensure completed batches are garbage collected before calling prefill
                 del batch_to_prune
@@ -140,9 +145,13 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
                 output_tokens, input_token_info, decode_errors, forward_time_ns = self.model.generate_token(
                     batch, first=True, for_concat=for_concat,
                 )
-                clean_attribute("past_key_values", batch.past_key_values)
+                if hasattr(batch, "past_key_values"):
+                    clean_attribute("past_key_values", batch.past_key_values)
                 if not is_healthcheck:
                     self.cache.set(batch)
+                else:
+                    self._free_paged_sequences(batch, None)
+
                 batch_id = batch.get_id()
                 if errors:
                     errors.extend(decode_errors)
@@ -174,12 +183,15 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
             batches = []
             for cbatch in request.batches:
                 batch = self.cache.pop(cbatch.batch_id)
-                if cbatch.HasField("status"):
+                completed_ids = cbatch.status.completed_ids if cbatch.HasField("status") else None
+                self._free_paged_sequences(batch, completed_ids)
+                if completed_ids is not None:
                     if batch is None:
                         raise ValueError(f"Batch ID {cbatch.batch_id} not found in cache.")
-                    batch = self.model.batch_type.prune(batch, cbatch.status.completed_ids)
+                    batch = self.model.batch_type.prune(batch, completed_ids)
                     if batch is not None:
                         batches.append(batch)
+                # else entire batch is completed
 
             if len(self.cache) > 0:
                 print(f"WARN: Clearing additional batches found in cache: {self.cache.keys()}")
@@ -208,6 +220,22 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
                 )
             )
 
+    def _free_paged_sequences(self, batch: "Batch", completed_ids: Optional[List[int]]):
+        """completed_ids == None means free entire batch"""
+        if not hasattr(self.model, "kv_cache_manager") or batch is None:
+            return
+        # Here we assume that the batch type is PagedCausalLMBatch
+        if completed_ids is None:
+            sequence_ids_to_free = batch.sequence_ids  # free all
+        elif completed_ids:
+            sequence_ids_to_free = [
+                batch.sequence_ids[i] for i, request in enumerate(batch.requests)
+                if request.id in completed_ids
+            ]
+        else:
+            return
+        self.model.kv_cache_manager.free_sequences(sequence_ids_to_free, recursive=True)
+
 
 def serve(
     model_name: str,
@@ -235,6 +263,20 @@ def serve(
         batch_safety_margin: int,
         sharded: bool = False,
     ):
+        if ESTIMATE_MEMORY == "auto" and PAGED_ATTENTION:
+            # fit memory model using flash model in separate process (ensures GPU memory is entirely cleaned up)
+            from text_generation_server.utils.paged import fit_memory_scaling_model
+            from multiprocessing import get_context
+            mp = get_context("spawn")
+            q_out = mp.Queue(1)
+            proc = mp.Process(target=fit_memory_scaling_model, args=(
+                model_name, revision, deployment_framework, dtype_str, quantize,
+                max_sequence_length, batch_safety_margin, cuda_process_memory_fraction, q_out
+            ))
+            proc.start()
+            memory_scaling_model_ext = q_out.get()
+            proc.join()
+
         unix_socket_template = "unix://{}-{}"
         world_size = int(os.getenv("WORLD_SIZE", "1"))
         local_rank = int(os.getenv("RANK", "0"))
@@ -343,7 +385,10 @@ def serve(
         run_estimate = PT2_COMPILE or ESTIMATE_MEMORY == "auto"
         memory_scaling_model = MemoryScalingModel.disabled()
 
-        if run_estimate:
+        if run_estimate and PAGED_ATTENTION:
+            # use memory scaling model learned in separate process
+            memory_scaling_model = memory_scaling_model_ext
+        elif run_estimate:
             memory_scaling_model = estimate_memory()
 
             if PT2_COMPILE:
