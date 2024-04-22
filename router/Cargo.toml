@@ -27,6 +27,7 @@ nohash-hasher = "^0.2.0"
 num = "^0.4.2"
 num_cpus = "^1.16.0"
 hyper = "^0.14.28" # Override to address CVE-2023-26964
+h2 = "^0.3.26 "  # Override to address CVEs
 openssl = "^0.10.64" # Override to address WS-2023-0082, WS-2023-0083, WS-2023-0195
 openssl-sys = "^0.9.102" # Override to address WS-2023-0082, WS-2023-0083, WS-2023-0195
 rustls-webpki = "0.102.2" # Override to address WS-2023-0305, CVE-2018-16875
@@ -37,7 +38,7 @@ thiserror = "^1.0.57"
 tokenizers = "0.19.1"
 tokio = { version = "1.37.0", features = ["rt", "rt-multi-thread", "parking_lot", "signal", "sync", "fs"] }
 tokio-rustls = "^0.26.0"
-rustls = "0.22.3"
+rustls = "0.22.4"
 tracing = "^0.1.40"
 prost = "^0.12.4"
 tonic = { version = "^0.11.0", features = ["tls"] }
