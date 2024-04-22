@@ -593,8 +593,8 @@ transformers = ">=4.35.0"
 [package.source]
 type = "git"
 url = "https://github.com/foundation-model-stack/fms-extras"
-reference = "a010516ff2c938c206b9b342b16bd747ef07d43c"
-resolved_reference = "a010516ff2c938c206b9b342b16bd747ef07d43c"
+reference = "c983a2989f711bb27ca00314c7c8da5b5891d9ef"
+resolved_reference = "c983a2989f711bb27ca00314c7c8da5b5891d9ef"
 
 [[package]]
 name = "frozenlist"
@@ -919,12 +919,12 @@ pyreadline3 = {version = "*", markers = "sys_platform == \"win32\" and python_ve
 
 [[package]]
 name = "ibm-fms"
-version = "0.0.4"
+version = "0.0.5"
 description = "IBM Foundation Model Stack"
 optional = true
 python-versions = "*"
 files = [
-    {file = "ibm_fms-0.0.4-py3-none-any.whl", hash = "sha256:280ba61a79d375470b95f67681bdf5d0de44fb1a18cd3d0510b77c87d519d54f"},
+    {file = "ibm_fms-0.0.5-py3-none-any.whl", hash = "sha256:e628b2ec3cfc66aa5822b0e6f5d0a29f1a96cec3356041bc03723e8115f06c91"},
 ]
 
 [package.dependencies]
@@ -3000,4 +3000,4 @@ quantize = ["datasets", "texttable"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.11.0,<3.13"
-content-hash = "3dc74c0012af79598fca4fc5c91675075dc389998096a5790ee0c24afd4929bd"
+content-hash = "10b8739505f708f1974dfdc9e6d1b6feabd4be072964720762daf062cc3fce75"
