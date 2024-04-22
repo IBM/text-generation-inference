@@ -4,7 +4,7 @@ all: install run-dev
 .PHONY: gen-server
 gen-server:
 	# Compile protos
-	pip install grpcio-tools==1.62.1 mypy-protobuf==3.5.0 'types-protobuf>=3.20.4' --no-cache-dir
+	pip install grpcio-tools==1.62.2 mypy-protobuf==3.5.0 'types-protobuf>=3.20.4' --no-cache-dir
 	mkdir -p text_generation_server/pb
 	python -m grpc_tools.protoc -I../proto \
 		--python_out=text_generation_server/pb \
