@@ -64,6 +64,8 @@ class LlamaConfig(PretrainedConfig):
         tie_word_embeddings=False,
         rope_scaling=None,
         rope_theta=10000.0,
+        attention_bias=False,
+        mlp_bias=False,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -85,6 +87,8 @@ class LlamaConfig(PretrainedConfig):
         self.use_cache = use_cache
         self.rope_scaling = rope_scaling
         self.rope_theta = rope_theta
+        self.attention_bias = attention_bias
+        self.mlp_bias = mlp_bias
 
         super().__init__(
             pad_token_id=pad_token_id,
@@ -169,7 +173,7 @@ def _load_gqa(config, prefix: str, weights):
             config.hidden_size,
             ], f"{list(weight.shape)} != {[(num_heads + 2 * config.num_key_value_heads) * head_size, config.hidden_size]}"
 
-    return TensorParallelColumnLinear(get_linear(weight, bias=None, quantize=config.quantize))
+    return TensorParallelColumnLinear(get_linear(weight, bias=config.attention_bias, quantize=config.quantize))
 
 
 class PagedLlamaAttention(torch.nn.Module):
@@ -207,13 +211,13 @@ class PagedLlamaAttention(torch.nn.Module):
                 prefixes=[f"{prefix}.q_proj", f"{prefix}.k_proj", f"{prefix}.v_proj"],
                 dim=0,
                 weights=weights,
-                bias=False,
+                bias=config.attention_bias,
             )
         self.o_proj = TensorParallelRowLinear.load(
             config,
             prefix=f"{prefix}.o_proj",
             weights=weights,
-            bias=False,
+            bias=config.attention_bias,
         )
 
     def forward(
@@ -280,13 +284,13 @@ class LlamaMLP(nn.Module):
             prefixes=[f"{prefix}.gate_proj", f"{prefix}.up_proj"],
             weights=weights,
             dim=0,
-            bias=False,
+            bias=config.mlp_bias,
         )
         self.down_proj = TensorParallelRowLinear.load(
             config,
             prefix=f"{prefix}.down_proj",
             weights=weights,
-            bias=False,
+            bias=config.mlp_bias,
         )
         self.intermediate_size = (
             config.intermediate_size // weights.process_group.size()
