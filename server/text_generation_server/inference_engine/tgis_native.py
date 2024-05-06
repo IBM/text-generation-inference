@@ -101,6 +101,11 @@ class InferenceEngine(BaseInferenceEngine):
             model_class = FlashRWForCausalLM
 
         elif model_type == "llama":
+            # See: https://github.com/ibm-granite/vllm_granite/blob/main/vllm/model_executor/models/llama.py#L353-L354
+            if self._config.tie_word_embeddings:
+                aliases = {
+                    "lm_head.weight": ["model.embed_tokens.weight"]
+                }
             if PAGED_ATTENTION:
                 from text_generation_server.models.custom_modeling.paged_llama_modeling import PagedLlamaForCausalLM
                 model_class = PagedLlamaForCausalLM
