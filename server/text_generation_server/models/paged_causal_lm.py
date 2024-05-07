@@ -333,6 +333,9 @@ class PagedCausalLM(Model):
             total_num_gpu_blocks=total_num_gpu_blocks,
         )
 
+        # log number of free blocks at init
+        print("[PagedKVCacheManager] number of free blocks: %d" % (len(self.kv_cache_manager.free_blocks)))
+
     @property
     def batch_type(self) -> Type[PagedCausalLMBatch]:
         return self._batch_type
