@@ -156,10 +156,9 @@ def _load_gqa(config, prefix: str, weights):
     assert config.hidden_size % config.num_attention_heads == 0
     assert config.num_attention_heads % weights.process_group.size() == 0
 
+    prefixes=[f"{prefix}.q_proj", f"{prefix}.k_proj", f"{prefix}.v_proj"]
     weight = weights.get_multi_weights_col(
-        prefixes=[f"{prefix}.q_proj", f"{prefix}.k_proj", f"{prefix}.v_proj"],
-        quantize=config.quantize,
-        dim=0
+        prefixes=prefixes, quantize=config.quantize, dim=0
     )
 
     if config.quantize != "gptq":
@@ -173,7 +172,12 @@ def _load_gqa(config, prefix: str, weights):
             config.hidden_size,
             ], f"{list(weight.shape)} != {[(num_heads + 2 * config.num_key_value_heads) * head_size, config.hidden_size]}"
 
-    return TensorParallelColumnLinear(get_linear(weight, bias=config.attention_bias, quantize=config.quantize))
+    if config.attention_bias:
+        bias = torch.cat([weights.get_sharded(f"{p}.bias", dim=0) for p in prefixes], dim=0)
+    else:
+        bias = None
+
+    return TensorParallelColumnLinear(get_linear(weight, bias=bias, quantize=config.quantize))
 
 
 class FlashLlamaAttention(torch.nn.Module):
