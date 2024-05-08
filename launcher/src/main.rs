@@ -149,18 +149,15 @@ fn main() -> ExitCode {
     let mut cache_env_var: String = "".to_string();
     let mut cache_path: String = "".to_string();
 
-    match env::var("HF_HUB_CACHE") {
-        Ok(t) => {
-            cache_env_var = "HF_HUB_CACHE".into();
-            cache_path = t.into();
-        },
-        _ => {}
+    if let Ok(t) = env::var("HF_HUB_CACHE") {
+        cache_env_var = "HF_HUB_CACHE".into();
+        cache_path = t.into();
     }
 
     for deprecated_env_var in vec!["TRANSFORMERS_CACHE", "HUGGINGFACE_HUB_CACHE"] {
         match (
             env::var(deprecated_env_var),
-            cache_env_var.len() > 0,
+            !cache_env_var.is_empty(),
         ) {
             (Ok(t), false) => {
                 cache_env_var = deprecated_env_var.into();
@@ -179,11 +176,11 @@ fn main() -> ExitCode {
     // ensure HF_HUB_CACHE is set for downstream usage
     // default value to match huggingface_hub
     // REF: https://github.com/huggingface/huggingface_hub/blob/5ff2d150d121d04799b78bc08f2343c21b8f07a9/docs/source/en/package_reference/environment_variables.md?plain=1#L32
-    if cache_path.len() == 0 {
-        if let Some(hf_home) = env::var("HF_HOME").ok() {
-            cache_path = hf_home + "/hub".into();
+    if cache_path.is_empty() {
+        cache_path = if let Ok(hf_home) = env::var("HF_HOME") {
+             hf_home + "/hub".into()
         } else {
-            cache_path = "~/.cache/huggingface/hub".into();
+             "~/.cache/huggingface/hub".into()
         }
     }
 
