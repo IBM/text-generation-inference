@@ -1,0 +1,30 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lm-eval-job
+spec:
+  template:
+    spec:
+      containers:
+      - name: eval
+        image: quay.io/wxpe/lm-eval-tgis:0.0.7
+        command:
+          - python3
+          - -m
+          - tgis_eval
+          - --model_args
+          - server=flan-t5-inference-server,port=8033
+          - --model=tgis_eval
+          - --batch_size=16
+          - --tasks
+          - ai2_arc,hellaswag,mmlu,truthfulqa,winogrande,gsm8k
+          #- --limit=10
+        volumeMounts:
+        - name: cache-volume
+          mountPath: /cache
+      restartPolicy: Never
+      volumes:
+      - name: cache-volume
+        emptyDir: {}
+  backoffLimit: 0
+
