@@ -147,11 +147,11 @@ fn main() -> ExitCode {
     // We allow multiple to be set for compatibility, but then the values must match.
 
     let mut cache_env_var: String = "".to_string();
-    let mut cache_path: String = "".to_string();
+    let mut cache_env_value: String = "".to_string();
 
     if let Ok(t) = env::var("HF_HUB_CACHE") {
         cache_env_var = "HF_HUB_CACHE".into();
-        cache_path = t.into();
+        cache_env_value = t.into();
     }
 
     for deprecated_env_var in vec!["TRANSFORMERS_CACHE", "HUGGINGFACE_HUB_CACHE"] {
@@ -161,9 +161,9 @@ fn main() -> ExitCode {
         ) {
             (Ok(t), false) => {
                 cache_env_var = deprecated_env_var.into();
-                cache_path = t.into();
+                cache_env_value = t.into();
             },
-            (Ok(t), true) if t != cache_path => panic!(
+            (Ok(t), true) if t != cache_env_value => panic!(
                 "{deprecated_env_var} and {cache_env_var} env vars can't be set to different values"
             ),
             (Ok(_), true) => warn!(
@@ -176,15 +176,17 @@ fn main() -> ExitCode {
     // ensure HF_HUB_CACHE is set for downstream usage
     // default value to match huggingface_hub
     // REF: https://github.com/huggingface/huggingface_hub/blob/5ff2d150d121d04799b78bc08f2343c21b8f07a9/docs/source/en/package_reference/environment_variables.md?plain=1#L32
-    if cache_path.is_empty() {
-        cache_path = if let Ok(hf_home) = env::var("HF_HOME") {
-             hf_home + "/hub".into()
-        } else {
-             "~/.cache/huggingface/hub".into()
-        }
-    }
+    let cache_path = if !cache_env_value.is_empty() {
+        PathBuf::from(cache_env_value)
+    } else if let Ok(hf_home) = env::var("HF_HOME") {
+        PathBuf::from(hf_home).join("hub")
+    } else if let Ok(home) = env::var("HOME") {
+        PathBuf::from(home).join(".cache").join("huggingface").join("hub")
+    } else {
+        PathBuf::new()
+    };
 
-    let config_path: PathBuf = resolve_config_path(&cache_path, &args.model_name, args.revision.as_deref())
+    let config_path: PathBuf = resolve_config_path(cache_path.clone(), &args.model_name, args.revision.as_deref())
         .expect("Failed to resolve config path")
         .into();
 
@@ -268,9 +270,10 @@ fn main() -> ExitCode {
     let (status_sender, status_receiver) = mpsc::channel();
 
     // Start shard processes
+    let cache_path_string = cache_path.into_os_string();
     for rank in 0..num_shard {
         let args = args.clone();
-        let cache_path = cache_path.clone();
+        let cache_path = cache_path_string.clone();
         let deployment_framework = deployment_framework.to_string();
         let status_sender = status_sender.clone();
         let shutdown = shutdown.clone();
@@ -595,7 +598,7 @@ enum ShardStatus {
 #[allow(clippy::too_many_arguments)]
 fn shard_manager(
     model_name: String,
-    cache_path: String,
+    cache_path: OsString,
     revision: Option<String>,
     deployment_framework: String,
     dtype: Option<String>,
@@ -814,8 +817,8 @@ fn write_termination_log(msg: &str) -> Result<(), io::Error> {
     Ok(())
 }
 
-fn resolve_config_path(cache_path: &str, model_name: &str, revision: Option<&str>) -> Result<String, io::Error> {
-    let model_hf_cache_dir = Path::new(cache_path).join(format!("models--{}", model_name.replace('/', "--")));
+fn resolve_config_path(cache_path: PathBuf, model_name: &str, revision: Option<&str>) -> Result<String, io::Error> {
+    let model_hf_cache_dir = cache_path.join(format!("models--{}", model_name.replace('/', "--")));
     let model_dir = if model_hf_cache_dir.try_exists()? {
         Some(model_hf_cache_dir)
     } else {
