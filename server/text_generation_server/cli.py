@@ -252,4 +252,14 @@ def convert_to_fast_tokenizer(
 
 
 if __name__ == "__main__":
+
+    # Use of TRANSFORMERS_CACHE is deprecated
+    if (tc := os.getenv("TRANSFORMERS_CACHE")) is not None:
+        print("WARNING: Using TRANSFORMERS_CACHE is deprecated. Use HF_HUB_CACHE instead.")
+        hc = os.getenv("HF_HUB_CACHE")
+        if tc != hc:
+            raise ValueError("Conflicting model cache values between TRANSFORMERS_CACHE and HF_HUB_CACHE")
+        if hc is None:
+            os.putenv("HF_HUB_CACHE", tc)
+
     app()
