@@ -85,8 +85,7 @@ check-test-image:
 integration-tests: check-test-image ## Run integration tests
 	mkdir -p /tmp/transformers_cache
 	docker run --rm -v /tmp/transformers_cache:/transformers_cache \
-		-e HUGGINGFACE_HUB_CACHE=/transformers_cache \
-		-e TRANSFORMERS_CACHE=/transformers_cache \
+		-e HF_HUB_CACHE=/transformers_cache \
 		-w /usr/src/integration_tests \
 		$(TEST_IMAGE_NAME) make test
 
@@ -94,8 +93,7 @@ integration-tests: check-test-image ## Run integration tests
 python-tests: check-test-image ## Run Python tests
 	mkdir -p /tmp/transformers_cache
 	docker run --rm -v /tmp/transformers_cache:/transformers_cache \
-		-e HUGGINGFACE_HUB_CACHE=/transformers_cache \
-		-e TRANSFORMERS_CACHE=/transformers_cache \
+		-e HF_HUB_CACHE=/transformers_cache \
 		$(TEST_IMAGE_NAME) pytest -sv --ignore=server/tests/test_utils.py server/tests
 
 .PHONY: clean

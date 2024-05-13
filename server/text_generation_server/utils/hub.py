@@ -79,7 +79,6 @@ def get_model_path(model_name: str, revision: Optional[str] = None):
     try:
         config_path = try_to_load_from_cache(
             model_name, config_file,
-            cache_dir=os.getenv("TRANSFORMERS_CACHE"),  # will fall back to HUGGINGFACE_HUB_CACHE
             revision=revision,
         )
         if config_path is not None:

@@ -79,7 +79,7 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
         return generate_pb2.ModelInfoResponse(
             model_type=ModelInfoResponse.ModelType.SEQ2SEQ_LM
                 if isinstance(self.model, Seq2SeqLM) else ModelInfoResponse.ModelType.CAUSAL_LM,
-            eos_token=self.model.config.eos_token_id,
+            eos_token=getattr(self.model.tokenizer, 'model_eos_token_id', self.model.tokenizer.eos_token_id),
             batch_padding=not isinstance(self.model, FlashCausalLM),
             memory_scaling_model=self.memory_scaling_model,
         )
