@@ -169,7 +169,12 @@ def prepare_inputs_with_speculation(
         child_sequence_ids_flattened.extend(child_sequence_ids)
 
     # add n_adds tokens to each candidate
-    cache_data = kv_cache_manager.allocate_tokens(num_tokens_per_sequence, child_sequence_ids_flattened)
+    try:
+        cache_data = kv_cache_manager.allocate_tokens(num_tokens_per_sequence, child_sequence_ids_flattened)
+    except:
+        kv_cache_manager.free_sequences(child_sequence_ids_flattened)
+        raise
+
     position_ids = cache_data.position_ids
 
     # Get candidate set of speculations
