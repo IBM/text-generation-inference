@@ -141,10 +141,15 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
             batch_id = 0
             if batch is not None:
                 for_concat = len(self.cache) > 0
-                # Prefill and generate first token
-                output_tokens, input_token_info, decode_errors, forward_time_ns = self.model.generate_token(
-                    batch, first=True, for_concat=for_concat,
-                )
+                try:
+                    # Prefill and generate first token
+                    output_tokens, input_token_info, decode_errors, forward_time_ns = self.model.generate_token(
+                        batch, first=True, for_concat=for_concat,
+                    )
+                except:
+                    self._free_paged_sequences(batch, None)
+                    raise
+
                 if hasattr(batch, "past_key_values"):
                     clean_attribute("past_key_values", batch.past_key_values)
                 if not is_healthcheck:
@@ -206,7 +211,12 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
             # Ensure batches are garbage-collected post-concatenation
             del batches
 
-            output_tokens, _, errors, forward_time_ns = self.model.generate_token(batch)
+            try:
+                output_tokens, _, errors, forward_time_ns = self.model.generate_token(batch)
+            except:
+                self._free_paged_sequences(batch, None)
+                raise
+
             self.cache.set(batch)
 
             return generate_pb2.NextTokenResponse(
