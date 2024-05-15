@@ -16,9 +16,9 @@ pub fn increment_counter(name: &'static str, value: u64) {
 }
 
 
-pub fn increment_labeled_counter(name: &'static str, labels: Vec<(&'static str, &'static str)>, value: u64) {
-    let counter1 = metrics::counter!(name, labels.as_slice());
-    let counter2 = metrics::counter!(format!("{name}_total"));
+pub fn increment_labeled_counter(name: &'static str, labels: &[(&'static str, &'static str)], value: u64) {
+    let counter1 = metrics::counter!(name, labels);
+    let counter2 = metrics::counter!(format!("{name}_total"), labels);
 
     counter1.increment(value);
     counter2.increment(value);

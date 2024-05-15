@@ -121,7 +121,7 @@ impl GenerationService for GenerationServicer {
         let br = request.into_inner();
         let batch_size = br.requests.len();
         let kind = if batch_size == 1 { "single" } else { "batch" };
-        increment_labeled_counter("tgi_request_count", vec![("kind", kind)], 1);
+        increment_labeled_counter("tgi_request_count", &[("kind", kind)], 1);
         if batch_size == 0 {
             return Ok(Response::new(BatchedGenerationResponse {
                 responses: vec![],
@@ -134,7 +134,7 @@ impl GenerationService for GenerationServicer {
             .limit_concurrent_requests
             .try_acquire_many(batch_size as u32)
             .map_err(|_| {
-                increment_labeled_counter("tgi_request_failure", vec![("err", "conc_limit")], 1);
+                increment_labeled_counter("tgi_request_failure", &[("err", "conc_limit")], 1);
                 tracing::error!("Model is overloaded");
                 Status::resource_exhausted("Model is overloaded")
             })?;
@@ -214,11 +214,11 @@ impl GenerationService for GenerationServicer {
         }
         .map_err(|err| match err {
             InferError::RequestQueueFull() => {
-                increment_labeled_counter("tgi_request_failure", vec![("err", "queue_full")], 1);
+                increment_labeled_counter("tgi_request_failure", &[("err", "queue_full")], 1);
                 Status::resource_exhausted(err.to_string())
             }
             _ => {
-                increment_labeled_counter("tgi_request_failure", vec![("err", "generate")], 1);
+                increment_labeled_counter("tgi_request_failure", &[("err", "generate")], 1);
                 tracing::error!("{err}");
                 Status::from_error(Box::new(err))
             }
@@ -251,7 +251,7 @@ impl GenerationService for GenerationServicer {
     ) -> Result<Response<Self::GenerateStreamStream>, Status> {
         let start_time = Instant::now();
         let request = request.extract_context();
-        increment_labeled_counter("tgi_request_count", vec![("kind", "stream")], 1);
+        increment_labeled_counter("tgi_request_count", &[("kind", "stream")], 1);
         increment_counter("tgi_request_input_count", 1);
         let permit = self
             .state
@@ -259,7 +259,7 @@ impl GenerationService for GenerationServicer {
             .clone()
             .try_acquire_owned()
             .map_err(|_| {
-                increment_labeled_counter("tgi_request_failure", vec![("err", "conc_limit")], 1);
+                increment_labeled_counter("tgi_request_failure", &[("err", "conc_limit")], 1);
                 tracing::error!("Model is overloaded");
                 Status::resource_exhausted("Model is overloaded")
             })?;
@@ -289,7 +289,7 @@ impl GenerationService for GenerationServicer {
                 |ctx, count, reason, request_id, times, out, err| {
                     let _enter = ctx.span.enter();
                     if let Some(e) = err {
-                        increment_labeled_counter("tgi_request_failure", vec![("err", "generate")], 1);
+                        increment_labeled_counter("tgi_request_failure", &[("err", "generate")], 1);
                         tracing::error!(
                             "Streaming response failed after {count} tokens, \
                         output so far: '{:?}': {e}",
@@ -319,11 +319,11 @@ impl GenerationService for GenerationServicer {
             .await
             .map_err(|err| match err {
                 InferError::RequestQueueFull() => {
-                    increment_labeled_counter("tgi_request_failure", vec![("err", "queue_full")], 1);
+                    increment_labeled_counter("tgi_request_failure", &[("err", "queue_full")], 1);
                     Status::resource_exhausted(err.to_string())
                 }
                 _ => {
-                    increment_labeled_counter("tgi_request_failure", vec![("err", "unknown")], 1);
+                    increment_labeled_counter("tgi_request_failure", &[("err", "unknown")], 1);
                     tracing::error!("{err}");
                     Status::from_error(Box::new(err))
                 }
@@ -425,7 +425,7 @@ impl GenerationServicer {
             Err(err) => Err(err),
         }
         .map_err(|err| {
-            increment_labeled_counter("tgi_request_failure", vec![("err", "validation")], 1);
+            increment_labeled_counter("tgi_request_failure", &[("err", "validation")], 1);
             tracing::error!("{err}");
             Status::invalid_argument(err.to_string())
         })
@@ -483,11 +483,11 @@ fn log_response(
 
     // Metrics
     match reason {
-        Error => increment_labeled_counter("tgi_request_failure", vec![("err", "generate")], 1),
+        Error => increment_labeled_counter("tgi_request_failure", &[("err", "generate")], 1),
         Cancelled => (), // recorded where cancellation is detected
         _ => {
             increment_labeled_counter(
-                "tgi_request_success", vec![("stop_reason", reason.as_str_name()), ("kind", kind)], 1
+                "tgi_request_success", &[("stop_reason", reason.as_str_name()), ("kind", kind)], 1
             );
             observe_histogram("tgi_request_duration", total_time.as_secs_f64());
             observe_histogram("tgi_request_generated_tokens", generated_tokens as f64);

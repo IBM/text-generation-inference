@@ -673,7 +673,7 @@ impl<'a> TokenProcessor<'a> {
         start_id: Option<u64>,
         queue: &mut Queue<B>,
     ) -> (Option<CachedBatch>, Duration) {
-        increment_labeled_counter("tgi_batch_inference_count", vec![("method", method)], 1);
+        increment_labeled_counter("tgi_batch_inference_count", &[("method", method)], 1);
 
         // We process the shared queue while waiting for the response from the python shard(s)
         let queue_servicer = queue.service_queue().fuse();
@@ -713,7 +713,7 @@ impl<'a> TokenProcessor<'a> {
                 );
                 // Probably don't need this additional counter because the duration histogram
                 // records a total count
-                increment_labeled_counter("tgi_batch_inference_success", vec![("method", method)], 1);
+                increment_labeled_counter("tgi_batch_inference_success", &[("method", method)], 1);
                 Some(CachedBatch {
                     batch_id: next_batch_id,
                     status: completed_request_ids.map(|c| RequestsStatus { completed_ids: c }),
@@ -730,7 +730,7 @@ impl<'a> TokenProcessor<'a> {
                     ClientError::Connection(_) => "connection",
                     _ => "error",
                 };
-                increment_labeled_counter("tgi_batch_inference_failure", vec![("method", method), ("reason", reason)], 1);
+                increment_labeled_counter("tgi_batch_inference_failure", &[("method", method), ("reason", reason)], 1);
                 self.send_errors(err, start_id);
                 None
             }
@@ -981,7 +981,7 @@ impl<'a> TokenProcessor<'a> {
                     // If receiver closed (request cancelled), cancel this entry
                     let e = self.entries.remove(&request_id).unwrap();
                     stop_reason = Cancelled;
-                    increment_labeled_counter("tgi_request_failure", vec![("err", "cancelled")], 1);
+                    increment_labeled_counter("tgi_request_failure", &[("err", "cancelled")], 1);
                     //TODO include request context in log message
                     warn!(
                         "Aborted streaming request {request_id} cancelled by client \
@@ -995,7 +995,7 @@ impl<'a> TokenProcessor<'a> {
                 // If receiver closed (request cancelled), cancel this entry
                 let e = self.entries.remove(&request_id).unwrap();
                 stop_reason = Cancelled;
-                increment_labeled_counter("tgi_request_failure", vec![("err", "cancelled")], 1);
+                increment_labeled_counter("tgi_request_failure", &[("err", "cancelled")], 1);
                 //TODO include request context in log message
                 warn!(
                     "Aborted request {request_id} cancelled by client \

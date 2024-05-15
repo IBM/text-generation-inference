@@ -200,13 +200,13 @@ impl<B: BatchType> Queue<B> {
         let mut pruned = false;
         self.buffer.retain_mut(|entry| match entry {
             entry if entry.is_cancelled() => {
-                increment_labeled_counter("tgi_request_failure", vec![("err", "cancelled")], 1);
+                increment_labeled_counter("tgi_request_failure", &[("err", "cancelled")], 1);
                 pruned = true;
                 false
             }
             entry if entry.deadline_exceeded() => {
                 // Send timeout response
-                increment_labeled_counter("tgi_request_failure", vec![("err", "timeout")], 1);
+                increment_labeled_counter("tgi_request_failure", &[("err", "timeout")], 1);
                 entry.batch_time = Some(Instant::now());
                 entry
                     .send_final(Ok(InferResponse::early_timeout(entry)))
