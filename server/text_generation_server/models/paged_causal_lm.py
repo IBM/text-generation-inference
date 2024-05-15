@@ -318,8 +318,8 @@ class PagedCausalLM(Model):
             dtype_size = torch.tensor([], dtype=dtype).element_size()
             cache_block_size = dtype_size * total_size
 
-            max_coef = 0.5 * (memory_scaling_model.linear_fit_params[0] + memory_scaling_model.next_token_params[1])
-            cache_block_ratio = cache_block_size / block_size / max_coef
+            #max_coef = 0.5 * (memory_scaling_model.linear_fit_params[0] + memory_scaling_model.next_token_params[1])
+            cache_block_ratio = cache_block_size / block_size / memory_scaling_model.next_token_params[1]
             total_num_gpu_blocks = int(cache_block_ratio * memory_scaling_model.free_memory // cache_block_size)
 
             print("[tpa] cache_block_ratio: ", cache_block_ratio)
