@@ -56,11 +56,13 @@ def log_rpc_handler_errors(func):
 
 
 class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
-    def __init__(self, model: Model, cache: Cache, server_urls: List[str], memory_scaling_model: MemoryScalingModelPB):
+    def __init__(self, model: Model, cache: Cache, server_urls: List[str], memory_scaling_model: MemoryScalingModel):
         self.cache = cache
         self.model = model
         self.server_urls = server_urls
         self.memory_scaling_model = memory_scaling_model
+        if PAGED_ATTENTION:
+            self.model.memory_scaling_model = memory_scaling_model
 
     async def ServiceDiscovery(
         self, request: generate_pb2.ServiceDiscoveryRequest, context
@@ -81,7 +83,7 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
                 if isinstance(self.model, Seq2SeqLM) else ModelInfoResponse.ModelType.CAUSAL_LM,
             eos_token=getattr(self.model.tokenizer, 'model_eos_token_id', self.model.tokenizer.eos_token_id),
             batch_padding=not isinstance(self.model, FlashCausalLM),
-            memory_scaling_model=self.memory_scaling_model,
+            memory_scaling_model=self.memory_scaling_model.as_pb(),
         )
 
     @log_rpc_handler_errors
@@ -141,15 +143,28 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
             batch_id = 0
             if batch is not None:
                 for_concat = len(self.cache) > 0
-                try:
-                    # Prefill and generate first token
-                    output_tokens, input_token_info, decode_errors, forward_time_ns = self.model.generate_token(
-                        batch, first=True, for_concat=for_concat,
-                    )
-                except:
-                    self._free_paged_sequences(batch, None)
-                    raise
 
+                print("[tpa] batch.max_seqlen: ", batch.max_seqlen)
+                print("[tpa] batch.input_lengths: ", batch.input_lengths)
+                print("[tpa] batch.total_lengths: ", batch.total_lengths)
+
+                # Compute batch weight
+                weight = 0
+                if for_concat:
+                    for k in self.cache.keys():
+                        weight += sum(self.cache.cache[k].total_lengths) * self.memory_scaling_model.next_token_params[1]
+                print("[tpa] weight-cache     ", weight)
+                weight += sum(batch.input_lengths) * self.memory_scaling_model.linear_fit_params[0]
+                print("[tpa] weight:         ", weight)
+                print("[tpa] weight_limit:   ", self.memory_scaling_model.weight_limit)
+                print("[tpa] frac:           ", weight/self.memory_scaling_model.weight_limit)
+
+                kwargs = {"mem_usage_frac": weight/self.memory_scaling_model.weight_limit} if PAGED_ATTENTION else {}
+
+                # Prefill and generate first token
+                output_tokens, input_token_info, decode_errors, forward_time_ns = self.model.generate_token(
+                    batch, first=True, for_concat=for_concat, **kwargs
+                )
                 if hasattr(batch, "past_key_values"):
                     clean_attribute("past_key_values", batch.past_key_values)
                 if not is_healthcheck:
@@ -211,12 +226,18 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
             # Ensure batches are garbage-collected post-concatenation
             del batches
 
-            try:
-                output_tokens, _, errors, forward_time_ns = self.model.generate_token(batch)
-            except:
-                self._free_paged_sequences(batch, None)
-                raise
+            print("[tpa] batch.max_seqlen: ", batch.max_seqlen)
+            print("[tpa] batch.input_lengths: ", batch.input_lengths)
+            print("[tpa] batch.total_lengths: ", batch.total_lengths)
 
+            # Compute batch weight
+            weight = sum(batch.total_lengths) * self.memory_scaling_model.next_token_params[1]
+            print("[tpa] weight:         ", weight)
+            print("[tpa] weight_limit:   ", self.memory_scaling_model.weight_limit)
+            print("[tpa] frac:           ", weight/self.memory_scaling_model.weight_limit)
+
+            kwargs = {"mem_usage_frac": weight/self.memory_scaling_model.weight_limit} if PAGED_ATTENTION else {}
+            output_tokens, _, errors, forward_time_ns = self.model.generate_token(batch, **kwargs)
             self.cache.set(batch)
 
             return generate_pb2.NextTokenResponse(
@@ -244,6 +265,7 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
             ]
         else:
             return
+        print("freeing sequence ids: ", sequence_ids_to_free)
         self.model.kv_cache_manager.free_sequences(sequence_ids_to_free, recursive=True)
 
 
@@ -285,7 +307,10 @@ def serve(
             ))
             proc.start()
             memory_scaling_model_ext = q_out.get()
+            weight_limit = memory_scaling_model_ext.weight_limit
             proc.join()
+        else:
+            weight_limit = None
 
         unix_socket_template = "unix://{}-{}"
         world_size = int(os.getenv("WORLD_SIZE", "1"))
@@ -317,7 +342,7 @@ def serve(
             torch.cuda.set_per_process_memory_fraction(cuda_process_memory_fraction)
 
         model = get_model(
-            model_name, revision, deployment_framework, dtype_str, quantize, max_sequence_length
+            model_name, revision, deployment_framework, dtype_str, quantize, max_sequence_length, weight_limit,
         )
 
         device = model.engine.get_device()
@@ -424,7 +449,7 @@ def serve(
 
         server = aio.server()
         generate_pb2_grpc.add_TextGenerationServiceServicer_to_server(
-            TextGenerationService(model, Cache(), server_urls, memory_scaling_model.as_pb()), server
+            TextGenerationService(model, Cache(), server_urls, memory_scaling_model), server
         )
         # SERVICE_NAMES = (
         #     generate_pb2.DESCRIPTOR.services_by_name["TextGenerationService"].full_name,

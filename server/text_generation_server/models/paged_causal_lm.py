@@ -13,20 +13,18 @@ from text_generation_server.models.model import Model
 from text_generation_server.models.types import Batch, GenerateError
 from text_generation_server.pb import generate_pb2
 from text_generation_server.prompt_cache import PrefixCache
-from text_generation_server.utils import print_rank_n
 from text_generation_server.utils.hub import get_model_path
+from text_generation_server.utils import print_rank_n
 from text_generation_server.utils.token_types import TokenInfo, InputTokens
 from text_generation_server.utils.tokens import HeterogeneousNextTokenChooser, get_token_info, get_input_tokens_info
 from text_generation_server.utils.paged import (
+    load_speculator,
     prepare_inputs_without_speculation,
     prepare_inputs_with_speculation,
     process_outputs_with_speculation,
     prepare_inputs_for_prefill
 )
 from text_generation_server.inference_engine import get_inference_engine_class
-
-# HF name or path to speculator model (None means no speculation will be used)
-SPECULATOR_NAME = os.getenv("SPECULATOR_NAME", None)
 
 # we will only do speculation if the batch size is <= this parameter
 SPECULATOR_MAX_BATCH_SIZE = int(os.getenv("SPECULATOR_MAX_BATCH_SIZE", "16"))
@@ -277,6 +275,7 @@ class PagedCausalLM(Model):
         quantize: Optional[str],
         model_config: Union[Any] = None,
         max_sequence_length: Optional[int] = None,
+        weight_limit: Optional[int] = None,
     ):
         model_path = get_model_path(model_name, revision)
 
@@ -300,27 +299,25 @@ class PagedCausalLM(Model):
 
         from fms_extras.utils.cache.paged import PagedKVCacheManager
 
-        if SPECULATOR_NAME is not None:
-            from fms_extras.models.hf.modeling_mlp_speculator import MLPSpeculatorPreTrainedModel
-            speculator_revision = os.getenv("SPECULATOR_REVISION", None)
-            speculator_model_path = get_model_path(SPECULATOR_NAME, speculator_revision)
-            print_rank_n(f"Loading speculator model from: {speculator_model_path}")
+        # laod speculator
+        self.speculator = load_speculator(self.device, dtype)
+
+        if self.speculator is not None:
             print_rank_n(f"Speculation will be enabled up to batch size {SPECULATOR_MAX_BATCH_SIZE}")
-            kwargs = {
-                "pretrained_model_name_or_path": speculator_model_path,
-                "local_files_only": True,
-                "torch_dtype": dtype,
-            }
-            with self.device:
-                self.speculator = MLPSpeculatorPreTrainedModel.from_pretrained(**kwargs)
-                self.speculator.to(device=self.device)
-        else:
-            self.speculator = None
+
+        block_size = 16
 
         if KV_CACHE_MANAGER_NUM_GPU_BLOCKS is not None:
             total_num_gpu_blocks = int(KV_CACHE_MANAGER_NUM_GPU_BLOCKS)
         else:
-            total_num_gpu_blocks = None
+            print("[tpa] weight_limit: ", weight_limit)
+            print("[tpa] self.model.model.num_key_value_heads: ", self.model.model.num_key_value_heads)
+            print("[tpa] self.model.model.head_size: ", self.model.model.head_size)
+            kv_cache_block_size = block_size * self.model.model.num_key_value_heads * self.model.model.head_size * 2
+            total_size = model_config.num_hidden_layers * kv_cache_block_size
+            dtype_size = torch.tensor([], dtype=dtype).element_size()
+            cache_block_size = dtype_size * total_size
+            total_num_gpu_blocks = int(weight_limit // cache_block_size)
 
         self.kv_cache_manager = PagedKVCacheManager(
             model_config.num_hidden_layers,
@@ -331,10 +328,14 @@ class PagedCausalLM(Model):
             dtype=dtype,
             device=self.device,
             total_num_gpu_blocks=total_num_gpu_blocks,
+            block_size=block_size,
         )
 
         # log number of free blocks at init
         print("[PagedKVCacheManager] number of free blocks: %d" % (len(self.kv_cache_manager.free_blocks)))
+
+        # will get set by server
+        self.memory_scaling_model = None
 
     @property
     def batch_type(self) -> Type[PagedCausalLMBatch]:
@@ -586,7 +587,7 @@ class PagedCausalLM(Model):
         return t_forward_ns
 
     def generate_token(
-        self, batch: PagedCausalLMBatch, first: bool = False, for_concat: bool = False,
+        self, batch: PagedCausalLMBatch, first: bool = False, for_concat: bool = False, mem_usage_frac: float = 0.0,
     ) -> Tuple[List[TokenInfo], Optional[List[InputTokens]], List[GenerateError], int]:
 
         # Generated tokens
@@ -618,7 +619,7 @@ class PagedCausalLM(Model):
                 len(spec_ind) > 0 and
                 bsize <= SPECULATOR_MAX_BATCH_SIZE and
                 batch.next_token_chooser.repetition_processor is None and
-                tokens_remaining < 0.25*len(self.kv_cache_manager.free_blocks)*self.kv_cache_manager.block_size
+                mem_usage_frac <= 0.75
             )
 
             if speculate:

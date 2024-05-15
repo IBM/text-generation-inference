@@ -5,12 +5,37 @@ import torch
 
 from fms_extras.models.speculator import flatten_batch, apply_index_map
 
+# HF name or path to speculator model (None means no speculation will be used)
+SPECULATOR_NAME = os.getenv("SPECULATOR_NAME", None)
+
+# speculator revision
+SPECULATOR_REVISION = os.getenv("SPECULATOR_REVISION", None)
+
 # number of candidates during speculation
 SPECULATOR_N_CANDIDATES = os.getenv("SPECULATOR_N_CANDIDATES", None)
 
 # number of candidates per head
 SPECULATOR_TOP_K_TOKENS_PER_HEAD = os.getenv("SPECULATOR_TOP_K_TOKENS_PER_HEAD", None)
 
+def load_speculator(device, dtype):
+
+    if SPECULATOR_NAME is not None:
+        from fms_extras.models.hf.modeling_mlp_speculator import MLPSpeculatorPreTrainedModel
+        from text_generation_server.utils.hub import get_model_path
+        from text_generation_server.utils import print_rank_n
+        speculator_model_path = get_model_path(SPECULATOR_NAME, SPECULATOR_REVISION)
+        print_rank_n(f"Loading speculator model from: {speculator_model_path}")
+        kwargs = {
+            "pretrained_model_name_or_path": speculator_model_path,
+            "local_files_only": True,
+            "torch_dtype": dtype,
+        }
+        with device:
+            speculator = MLPSpeculatorPreTrainedModel.from_pretrained(**kwargs)
+            speculator.to(device=device)
+        return speculator
+    else:
+        return None
 
 def fit_memory_scaling_model(
     model_name: str,
@@ -37,6 +62,8 @@ def fit_memory_scaling_model(
     model = get_model(
         model_name, revision, deployment_framework, dtype_str, quantize, max_sequence_length
     )
+
+    speculator = load_speculator(model.device, model.dtype)
 
     memory_scaling_model = Estimator.build_from_env(
         model,
@@ -169,12 +196,7 @@ def prepare_inputs_with_speculation(
         child_sequence_ids_flattened.extend(child_sequence_ids)
 
     # add n_adds tokens to each candidate
-    try:
-        cache_data = kv_cache_manager.allocate_tokens(num_tokens_per_sequence, child_sequence_ids_flattened)
-    except:
-        kv_cache_manager.free_sequences(child_sequence_ids_flattened)
-        raise
-
+    cache_data = kv_cache_manager.allocate_tokens(num_tokens_per_sequence, child_sequence_ids_flattened)
     position_ids = cache_data.position_ids
 
     # Get candidate set of speculations

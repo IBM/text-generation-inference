@@ -35,6 +35,7 @@ def get_model(
     dtype_str: str,
     quantize: Optional[str],
     max_sequence_length: Optional[int],
+    weight_limit: Optional[int] = None,
 ) -> Model:
     dtype = get_torch_dtype(dtype_str)
     model_path = get_model_path(model_name, revision)
@@ -74,6 +75,7 @@ def get_model(
             dtype, quantize,
             model_config,
             max_sequence_length=max_sequence_length,
+            weight_limit=weight_limit,
         )
 
     if FLASH_ATTENTION:

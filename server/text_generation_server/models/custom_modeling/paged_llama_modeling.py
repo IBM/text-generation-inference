@@ -207,6 +207,7 @@ class PagedLlamaAttention(torch.nn.Module):
         self.num_key_value_heads = (
             config.num_key_value_heads // weights.process_group.size()
         )
+
         if config.num_attention_heads != config.num_key_value_heads:
             self.query_key_value = _load_gqa(config, prefix, weights)
         else:
@@ -239,7 +240,6 @@ class PagedLlamaAttention(torch.nn.Module):
             ],
             dim=1,
         )
-
         query = query.view(-1, self.num_heads, self.head_size)
         kv = kv.view(-1, 2, self.num_key_value_heads, self.head_size)
         key = torch.select(kv, dim=1, index=0)
