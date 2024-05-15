@@ -11,6 +11,7 @@ pub mod server;
 mod tokenizer;
 mod validation;
 mod tracing;
+mod metrics;
 
 use batcher::Batcher;
 use serde::{Deserialize, Serialize};

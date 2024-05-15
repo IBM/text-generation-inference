@@ -11,6 +11,7 @@ use thiserror::Error;
 use tokio::time::Instant;
 
 use crate::{tokenizer::AsyncTokenizer, ErrorResponse, GenerateParameters, GenerateRequest};
+use crate::metrics::{increment_counter, observe_histogram};
 
 const MAX_STOP_SEQS: usize = 6;
 const MAX_STOP_SEQ_LENGTH: usize = 240;
@@ -125,7 +126,7 @@ impl Validation {
             self.tokenizer
                 .tokenize(input, false)
                 .map_ok(|(input, input_length, _)| {
-                    metrics::histogram!("tgi_request_raw_input_length", input_length as f64);
+                    observe_histogram("tgi_request_raw_input_length", input_length as f64);
                     (input, input_length)
                 })
         });
@@ -200,11 +201,11 @@ impl Validation {
                     .map(|results| {
                         // Only record these for successful validation
                         for (request_size, _) in &results {
-                            metrics::histogram!(
+                            observe_histogram(
                                 "tgi_request_input_length",
                                 request_size.input_length as f64
                             );
-                            metrics::histogram!(
+                            observe_histogram(
                                 "tgi_request_max_new_tokens",
                                 max_new_tokens as f64
                             );
@@ -224,12 +225,12 @@ async fn prompt_prefix_lookup(
     let start_time = Instant::now();
     let result = client.clone().prefix_lookup(prefix_id).await;
     if result.is_ok() {
-        metrics::histogram!(
+        observe_histogram(
             "tgi_prompt_load_duration",
             start_time.elapsed().as_secs_f64()
         );
     } else {
-        metrics::increment_counter!("tgi_prompt_load_failure");
+        increment_counter("tgi_prompt_load_failure", 1);
     }
     result
 }

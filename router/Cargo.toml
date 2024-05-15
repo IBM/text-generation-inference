@@ -20,7 +20,7 @@ text-generation-client = { path = "client" }
 clap = { version = "^4.5.4", features = ["derive", "env"] }
 futures = "^0.3.30"
 flume = "^0.11.0"
-metrics = "0.21.1"
+metrics = "0.22.3"
 metrics-exporter-prometheus = { version = "0.12.2", features = [] }
 moka = { version = "0.12.6", features = ["future"] }
 nohash-hasher = "^0.2.0"
