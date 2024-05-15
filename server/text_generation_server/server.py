@@ -46,6 +46,7 @@ def log_rpc_handler_errors(func):
             # raised during handling of requests.
             raise
         except torch.cuda.OutOfMemoryError as e:
+            print("HELLO i'm in the error handling: ", e)
             context = kwargs.get("context", None) or args[-1]
             logging.exception(f"{func.__name__} caused GPU OOM error")
             await context.abort(StatusCode.RESOURCE_EXHAUSTED, str(e))
@@ -281,8 +282,9 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
             ]
         else:
             return
-        print("freeing sequence ids: ", sequence_ids_to_free)
-        self.model.kv_cache_manager.free_sequences(sequence_ids_to_free, recursive=True)
+        if sequence_ids_to_free is not None:
+            print("freeing sequence ids: ", sequence_ids_to_free)
+            self.model.kv_cache_manager.free_sequences(sequence_ids_to_free, recursive=True)
 
 
 def serve(

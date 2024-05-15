@@ -310,7 +310,7 @@ class PagedCausalLM(Model):
         if KV_CACHE_MANAGER_NUM_GPU_BLOCKS is not None:
             total_num_gpu_blocks = int(KV_CACHE_MANAGER_NUM_GPU_BLOCKS)
         else:
-            print("[tpa] weight_limit: ", memory_scaling_model.weight_limit)
+            print("[tpa] free_memory: ", memory_scaling_model.free_memory)
             print("[tpa] self.model.model.num_key_value_heads: ", self.model.model.num_key_value_heads)
             print("[tpa] self.model.model.head_size: ", self.model.model.head_size)
             kv_cache_block_size = block_size * self.model.model.num_key_value_heads * self.model.model.head_size * 2
@@ -318,9 +318,9 @@ class PagedCausalLM(Model):
             dtype_size = torch.tensor([], dtype=dtype).element_size()
             cache_block_size = dtype_size * total_size
 
-            max_coef = max(memory_scaling_model.linear_fit_params[0], memory_scaling_model.next_token_params[1])
+            max_coef = 0.5 * (memory_scaling_model.linear_fit_params[0] + memory_scaling_model.next_token_params[1])
             cache_block_ratio = cache_block_size / block_size / max_coef
-            total_num_gpu_blocks = int(0.5 * cache_block_ratio * memory_scaling_model.weight_limit // cache_block_size)
+            total_num_gpu_blocks = int(cache_block_ratio * memory_scaling_model.free_memory // cache_block_size)
 
             print("[tpa] cache_block_ratio: ", cache_block_ratio)
 
