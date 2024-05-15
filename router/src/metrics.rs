@@ -8,36 +8,27 @@
 // Cite: https://prometheus.github.io/client_python/instrumenting/counter/
 
 pub fn increment_counter(name: &'static str, value: u64) {
-    let counter1 = metrics::counter!(name);
-    let counter2 = metrics::counter!(format!("{name}_total"));
-
-    counter1.increment(value);
-    counter2.increment(value);
+    metrics::counter!(name).increment(value);
+    metrics::counter!(format!("{name}_total")).increment(value);
 }
 
 
 pub fn increment_labeled_counter(name: &'static str, labels: &[(&'static str, &'static str)], value: u64) {
-    let counter1 = metrics::counter!(name, labels);
-    let counter2 = metrics::counter!(format!("{name}_total"), labels);
-
-    counter1.increment(value);
-    counter2.increment(value);
+    metrics::counter!(name, labels).increment(value);
+    metrics::counter!(format!("{name}_total"), labels).increment(value);
 }
 
 
 pub fn set_gauge(name: &'static str, value: f64) {
-    let gauge = metrics::gauge!(name);
-    gauge.set(value);
+    metrics::gauge!(name).set(value);
 }
 
 
 pub fn observe_histogram(name: &'static str, value: f64) {
-    let histogram = metrics::histogram!(name);
-    histogram.record(value)
+    metrics::histogram!(name).record(value);
 }
 
 
 pub fn observe_labeled_histogram(name: &'static str, labels: &[(&'static str, &'static str)], value: f64) {
-    let histogram = metrics::histogram!(name, labels);
-    histogram.record(value)
+    metrics::histogram!(name, labels).record(value);
 }
