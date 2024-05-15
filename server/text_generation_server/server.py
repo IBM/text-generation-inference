@@ -106,6 +106,9 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
     @log_rpc_handler_errors
     async def Prefill(self, request: generate_pb2.PrefillRequest, context) -> generate_pb2.PrefillResponse:
         with self.model.context_manager():
+
+            print("hello0")
+
             # Prune any existing batches first
             for cbatch in request.to_prune:
                 batch_to_prune = self.cache.pop(cbatch.batch_id)
@@ -129,6 +132,8 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
                 self.cache.compact()
 
             # Construct new batch
+            print("hello1")
+
             input_token_info = None
             batch, errors = self.model.batch_type.from_pb(
                 request.batch,
@@ -139,32 +144,38 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
                 prefix_cache=self.model.prefix_cache,
                 use_position_ids=self.model.use_position_ids,
             )
+            print("hello2")
 
             batch_id = 0
             if batch is not None:
                 for_concat = len(self.cache) > 0
 
-                print("[tpa] batch.max_seqlen: ", batch.max_seqlen)
-                print("[tpa] batch.input_lengths: ", batch.input_lengths)
-                print("[tpa] batch.total_lengths: ", batch.total_lengths)
+                #print("[tpa] batch.max_seqlen: ", batch.max_seqlen)
+                #print("[tpa] batch.input_lengths: ", batch.input_lengths)
+                #print("[tpa] batch.total_lengths: ", batch.total_lengths)
 
                 # Compute batch weight
                 weight = 0
                 if for_concat:
                     for k in self.cache.keys():
                         weight += sum(self.cache.cache[k].total_lengths) * self.memory_scaling_model.next_token_params[1]
-                print("[tpa] weight-cache     ", weight)
+                #print("[tpa] weight-cache     ", weight)
                 weight += sum(batch.input_lengths) * self.memory_scaling_model.linear_fit_params[0]
-                print("[tpa] weight:         ", weight)
-                print("[tpa] weight_limit:   ", self.memory_scaling_model.weight_limit)
-                print("[tpa] frac:           ", weight/self.memory_scaling_model.weight_limit)
+                #print("[tpa] weight:         ", weight)
+                #print("[tpa] weight_limit:   ", self.memory_scaling_model.weight_limit)
+                #print("[tpa] frac:           ", weight/self.memory_scaling_model.weight_limit)
 
                 kwargs = {"mem_usage_frac": weight/self.memory_scaling_model.weight_limit} if PAGED_ATTENTION else {}
 
-                # Prefill and generate first token
-                output_tokens, input_token_info, decode_errors, forward_time_ns = self.model.generate_token(
-                    batch, first=True, for_concat=for_concat, **kwargs
-                )
+                try:
+                    # Prefill and generate first token
+                    output_tokens, input_token_info, decode_errors, forward_time_ns = self.model.generate_token(
+                        batch, first=True, for_concat=for_concat, **kwargs
+                    )
+                except:
+                    self._free_paged_sequences(batch, None)
+                    raise
+
                 if hasattr(batch, "past_key_values"):
                     clean_attribute("past_key_values", batch.past_key_values)
                 if not is_healthcheck:
@@ -226,18 +237,23 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
             # Ensure batches are garbage-collected post-concatenation
             del batches
 
-            print("[tpa] batch.max_seqlen: ", batch.max_seqlen)
-            print("[tpa] batch.input_lengths: ", batch.input_lengths)
-            print("[tpa] batch.total_lengths: ", batch.total_lengths)
+            #print("[tpa] batch.max_seqlen: ", batch.max_seqlen)
+            #print("[tpa] batch.input_lengths: ", batch.input_lengths)
+            #print("[tpa] batch.total_lengths: ", batch.total_lengths)
 
             # Compute batch weight
             weight = sum(batch.total_lengths) * self.memory_scaling_model.next_token_params[1]
-            print("[tpa] weight:         ", weight)
-            print("[tpa] weight_limit:   ", self.memory_scaling_model.weight_limit)
-            print("[tpa] frac:           ", weight/self.memory_scaling_model.weight_limit)
+            #print("[tpa] weight:         ", weight)
+            #print("[tpa] weight_limit:   ", self.memory_scaling_model.weight_limit)
+            #print("[tpa] frac:           ", weight/self.memory_scaling_model.weight_limit)
 
             kwargs = {"mem_usage_frac": weight/self.memory_scaling_model.weight_limit} if PAGED_ATTENTION else {}
-            output_tokens, _, errors, forward_time_ns = self.model.generate_token(batch, **kwargs)
+            try:
+                output_tokens, _, errors, forward_time_ns = self.model.generate_token(batch, **kwargs)
+            except:
+                self._free_paged_sequences(batch, None)
+                raise
+
             self.cache.set(batch)
 
             return generate_pb2.NextTokenResponse(
@@ -307,10 +323,9 @@ def serve(
             ))
             proc.start()
             memory_scaling_model_ext = q_out.get()
-            weight_limit = memory_scaling_model_ext.weight_limit
             proc.join()
         else:
-            weight_limit = None
+            memory_scaling_model_ext = None
 
         unix_socket_template = "unix://{}-{}"
         world_size = int(os.getenv("WORLD_SIZE", "1"))
@@ -342,7 +357,7 @@ def serve(
             torch.cuda.set_per_process_memory_fraction(cuda_process_memory_fraction)
 
         model = get_model(
-            model_name, revision, deployment_framework, dtype_str, quantize, max_sequence_length, weight_limit,
+            model_name, revision, deployment_framework, dtype_str, quantize, max_sequence_length, memory_scaling_model_ext,
         )
 
         device = model.engine.get_device()
