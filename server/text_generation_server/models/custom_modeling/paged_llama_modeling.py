@@ -434,6 +434,9 @@ class PagedLlamaForCausalLM(torch.nn.Module):
             weights=weights,
         )
 
+    def get_kv_cache_block_size(self, block_size: int) -> int:
+        return block_size * self.model.num_key_value_heads * self.model.head_size * 2
+
     def get_input_embeddings(self) -> nn.Module:
         return self.model.embed_tokens
 

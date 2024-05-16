@@ -46,7 +46,6 @@ def log_rpc_handler_errors(func):
             # raised during handling of requests.
             raise
         except torch.cuda.OutOfMemoryError as e:
-            print("HELLO i'm in the error handling: ", e)
             context = kwargs.get("context", None) or args[-1]
             logging.exception(f"{func.__name__} caused GPU OOM error")
             await context.abort(StatusCode.RESOURCE_EXHAUSTED, str(e))
@@ -62,8 +61,6 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
         self.model = model
         self.server_urls = server_urls
         self.memory_scaling_model = memory_scaling_model
-        if PAGED_ATTENTION:
-            self.model.memory_scaling_model = memory_scaling_model
 
     async def ServiceDiscovery(
         self, request: generate_pb2.ServiceDiscoveryRequest, context
@@ -108,8 +105,6 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
     async def Prefill(self, request: generate_pb2.PrefillRequest, context) -> generate_pb2.PrefillResponse:
         with self.model.context_manager():
 
-            print("hello0")
-
             # Prune any existing batches first
             for cbatch in request.to_prune:
                 batch_to_prune = self.cache.pop(cbatch.batch_id)
@@ -132,9 +127,6 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
             if COMPACT_BEFORE_PREFILL and not is_healthcheck:
                 self.cache.compact()
 
-            # Construct new batch
-            print("hello1")
-
             input_token_info = None
             batch, errors = self.model.batch_type.from_pb(
                 request.batch,
@@ -145,33 +137,15 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
                 prefix_cache=self.model.prefix_cache,
                 use_position_ids=self.model.use_position_ids,
             )
-            print("hello2")
 
             batch_id = 0
             if batch is not None:
                 for_concat = len(self.cache) > 0
 
-                #print("[tpa] batch.max_seqlen: ", batch.max_seqlen)
-                #print("[tpa] batch.input_lengths: ", batch.input_lengths)
-                #print("[tpa] batch.total_lengths: ", batch.total_lengths)
-
-                # Compute batch weight
-                weight = 0
-                if for_concat:
-                    for k in self.cache.keys():
-                        weight += sum(self.cache.cache[k].total_lengths) * self.memory_scaling_model.next_token_params[1]
-                #print("[tpa] weight-cache     ", weight)
-                weight += sum(batch.input_lengths) * self.memory_scaling_model.linear_fit_params[0]
-                #print("[tpa] weight:         ", weight)
-                #print("[tpa] weight_limit:   ", self.memory_scaling_model.weight_limit)
-                #print("[tpa] frac:           ", weight/self.memory_scaling_model.weight_limit)
-
-                kwargs = {"mem_usage_frac": weight/self.memory_scaling_model.weight_limit} if PAGED_ATTENTION else {}
-
                 try:
                     # Prefill and generate first token
                     output_tokens, input_token_info, decode_errors, forward_time_ns = self.model.generate_token(
-                        batch, first=True, for_concat=for_concat, **kwargs
+                        batch, first=True, for_concat=for_concat,
                     )
                 except:
                     self._free_paged_sequences(batch, None)
@@ -238,19 +212,8 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
             # Ensure batches are garbage-collected post-concatenation
             del batches
 
-            #print("[tpa] batch.max_seqlen: ", batch.max_seqlen)
-            #print("[tpa] batch.input_lengths: ", batch.input_lengths)
-            #print("[tpa] batch.total_lengths: ", batch.total_lengths)
-
-            # Compute batch weight
-            weight = sum(batch.total_lengths) * self.memory_scaling_model.next_token_params[1]
-            #print("[tpa] weight:         ", weight)
-            #print("[tpa] weight_limit:   ", self.memory_scaling_model.weight_limit)
-            #print("[tpa] frac:           ", weight/self.memory_scaling_model.weight_limit)
-
-            kwargs = {"mem_usage_frac": weight/self.memory_scaling_model.weight_limit} if PAGED_ATTENTION else {}
             try:
-                output_tokens, _, errors, forward_time_ns = self.model.generate_token(batch, **kwargs)
+                output_tokens, _, errors, forward_time_ns = self.model.generate_token(batch)
             except:
                 self._free_paged_sequences(batch, None)
                 raise

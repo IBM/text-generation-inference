@@ -310,20 +310,13 @@ class PagedCausalLM(Model):
         if KV_CACHE_MANAGER_NUM_GPU_BLOCKS is not None:
             total_num_gpu_blocks = int(KV_CACHE_MANAGER_NUM_GPU_BLOCKS)
         else:
-            print("[tpa] free_memory: ", memory_scaling_model.free_memory)
-            print("[tpa] self.model.model.num_key_value_heads: ", self.model.model.num_key_value_heads)
-            print("[tpa] self.model.model.head_size: ", self.model.model.head_size)
-            kv_cache_block_size = block_size * self.model.model.num_key_value_heads * self.model.model.head_size * 2
+            # determine what fraction of memory usage corresponds to KV cache
+            kv_cache_block_size = self.model.get_kv_cache_block_size(block_size)
             total_size = model_config.num_hidden_layers * kv_cache_block_size
             dtype_size = torch.tensor([], dtype=dtype).element_size()
             cache_block_size = dtype_size * total_size
-
-            #max_coef = 0.5 * (memory_scaling_model.linear_fit_params[0] + memory_scaling_model.next_token_params[1])
             cache_block_ratio = cache_block_size / block_size / memory_scaling_model.next_token_params[1]
             total_num_gpu_blocks = int(cache_block_ratio * memory_scaling_model.free_memory // cache_block_size)
-
-            print("[tpa] cache_block_ratio: ", cache_block_ratio)
-
 
         self.kv_cache_manager = PagedKVCacheManager(
             model_config.num_hidden_layers,
@@ -339,9 +332,6 @@ class PagedCausalLM(Model):
 
         # log number of free blocks at init
         print("[PagedKVCacheManager] number of free blocks: %d" % (len(self.kv_cache_manager.free_blocks)))
-
-        # will get set by server
-        self.memory_scaling_model = None
 
     @property
     def batch_type(self) -> Type[PagedCausalLMBatch]:
@@ -593,7 +583,7 @@ class PagedCausalLM(Model):
         return t_forward_ns
 
     def generate_token(
-        self, batch: PagedCausalLMBatch, first: bool = False, for_concat: bool = False, mem_usage_frac: float = 0.0,
+        self, batch: PagedCausalLMBatch, first: bool = False, for_concat: bool = False,
     ) -> Tuple[List[TokenInfo], Optional[List[InputTokens]], List[GenerateError], int]:
 
         # Generated tokens
@@ -620,12 +610,15 @@ class PagedCausalLM(Model):
                 if not sample:
                     spec_ind.append(i)
 
+            # batch weight
+            weight = sum(batch.total_lengths) * self.memory_scaling_model.next_token_params[1]
+
             speculate = (
                 self.speculator is not None and
                 len(spec_ind) > 0 and
                 bsize <= SPECULATOR_MAX_BATCH_SIZE and
                 batch.next_token_chooser.repetition_processor is None and
-                mem_usage_frac <= 0.75
+                (weight/self.memory_scaling_model.weight_limit) <= 0.75
             )
 
             if speculate:
