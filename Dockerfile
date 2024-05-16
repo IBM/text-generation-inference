@@ -85,8 +85,8 @@ ENV LIBRARY_PATH="$CUDA_HOME/lib64/stubs"
 
 
 ## Rust builder ################################################################
-# Specific debian version so that compatible glibc version is used
-FROM rust:1.77.2-bullseye as rust-builder
+# Using bookworm for compilation so the rust binaries get linked against libssl.so.3
+FROM rust:1.78-bookworm as rust-builder
 ARG PROTOC_VERSION
 
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
