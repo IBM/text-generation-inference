@@ -41,6 +41,7 @@ impl Health {
         };
 
         let ok = if generation_healthy {
+            print!("HEALTH_CHECK: running basic grpc check");
             // Generation is healthy, we only check that the shards are answering gRPC calls
             self.client
                 .health()
@@ -48,6 +49,7 @@ impl Health {
                 .map_err(|err| tracing::error!("Basic shard healthcheck error: {err}"))
                 .is_ok()
         } else {
+            print!("HEALTH_CHECK: running generation check");
             // Generation is unhealthy or have not sent any generation request yet
 
             // Dummy batch of 1 token and 1 generated token
@@ -81,6 +83,7 @@ impl Health {
             self.generation_health.store(value, Ordering::SeqCst);
             value
         };
+        print!("HEALTH_CHECK: check took {}ms", guard.start_time.expect("start time is none").elapsed().as_millis());
         guard.start_time = None;
         ok
     }

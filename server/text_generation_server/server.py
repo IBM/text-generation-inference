@@ -86,8 +86,10 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
 
     @log_rpc_handler_errors
     async def Health(self, request, context):
+        start = time.time()
         if self.model.device.type == "cuda":
             torch.zeros((2, 2)).cuda()
+        print(f"HEALTH_CHECK: health check took {time.time()-start} seconds")
         return generate_pb2.HealthResponse()
 
     @log_rpc_handler_errors
