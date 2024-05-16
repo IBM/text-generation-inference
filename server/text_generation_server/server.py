@@ -104,7 +104,6 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
     @log_rpc_handler_errors
     async def Prefill(self, request: generate_pb2.PrefillRequest, context) -> generate_pb2.PrefillResponse:
         with self.model.context_manager():
-
             # Prune any existing batches first
             for cbatch in request.to_prune:
                 batch_to_prune = self.cache.pop(cbatch.batch_id)
@@ -127,6 +126,7 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
             if COMPACT_BEFORE_PREFILL and not is_healthcheck:
                 self.cache.compact()
 
+            # Construct new batch
             input_token_info = None
             batch, errors = self.model.batch_type.from_pb(
                 request.batch,
@@ -141,7 +141,6 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
             batch_id = 0
             if batch is not None:
                 for_concat = len(self.cache) > 0
-
                 try:
                     # Prefill and generate first token
                     output_tokens, input_token_info, decode_errors, forward_time_ns = self.model.generate_token(
@@ -245,10 +244,9 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
             ]
         else:
             return
-        if sequence_ids_to_free is not None:
-            print("freeing sequence ids: ", sequence_ids_to_free)
-            self.model.kv_cache_manager.free_sequences(sequence_ids_to_free, recursive=True)
 
+        if sequence_ids_to_free is not None:
+            self.model.kv_cache_manager.free_sequences(sequence_ids_to_free, recursive=True)
 
 def serve(
     model_name: str,

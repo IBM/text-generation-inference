@@ -13,8 +13,8 @@ from text_generation_server.models.model import Model
 from text_generation_server.models.types import Batch, GenerateError
 from text_generation_server.pb import generate_pb2
 from text_generation_server.prompt_cache import PrefixCache
-from text_generation_server.utils.hub import get_model_path
 from text_generation_server.utils import print_rank_n
+from text_generation_server.utils.hub import get_model_path
 from text_generation_server.utils.token_types import TokenInfo, InputTokens
 from text_generation_server.utils.tokens import HeterogeneousNextTokenChooser, get_token_info, get_input_tokens_info
 from text_generation_server.utils.paged import (
@@ -299,7 +299,7 @@ class PagedCausalLM(Model):
 
         from fms_extras.utils.cache.paged import PagedKVCacheManager
 
-        # laod speculator
+        # load speculator
         self.speculator = load_speculator(self.device, dtype)
 
         if self.speculator is not None:
@@ -315,8 +315,13 @@ class PagedCausalLM(Model):
             total_size = model_config.num_hidden_layers * kv_cache_block_size
             dtype_size = torch.tensor([], dtype=dtype).element_size()
             cache_block_size = dtype_size * total_size
-            cache_block_ratio = cache_block_size / block_size / memory_scaling_model.next_token_params[1]
-            total_num_gpu_blocks = int(cache_block_ratio * memory_scaling_model.free_memory // cache_block_size)
+            pf_cache_block_ratio = cache_block_size / block_size / memory_scaling_model.linear_fit_params[0]
+            nt_cache_block_ratio = cache_block_size / block_size / memory_scaling_model.next_token_params[1]
+            total_num_gpu_blocks = int(nt_cache_block_ratio * memory_scaling_model.free_memory // cache_block_size)
+            # we may need to increase the safety margin a bit to ensure that prefill forward does not run OOM
+            recommend_safety_margin = 5 + int(100*(1.0 - (1.0 - nt_cache_block_ratio)/(1.0 - pf_cache_block_ratio)))
+            if memory_scaling_model.safety_margin < recommend_safety_margin:
+                print(f"WARN: We recommend increasing the value of BATCH_SAFETY_MARGIN to: {recommend_safety_margin}")
 
         self.kv_cache_manager = PagedKVCacheManager(
             model_config.num_hidden_layers,
@@ -329,6 +334,8 @@ class PagedCausalLM(Model):
             total_num_gpu_blocks=total_num_gpu_blocks,
             block_size=block_size,
         )
+
+        self.memory_scaling_model = memory_scaling_model
 
         # log number of free blocks at init
         print("[PagedKVCacheManager] number of free blocks: %d" % (len(self.kv_cache_manager.free_blocks)))
@@ -410,12 +417,17 @@ class PagedCausalLM(Model):
         )
 
         t0 = time.time_ns()
-        output = self.model(
-            input_ids,
-            position_ids=position_ids,
-            cache_data=cache_data,
-            return_embeds=True,
-        )
+        try:
+            output = self.model(
+                input_ids,
+                position_ids=position_ids,
+                cache_data=cache_data,
+                return_embeds=True,
+            )
+        except:
+            # if something goes wrong during forward, we still need to set the sequence ids
+            batch.sequence_ids = cache_data.sequence_ids
+            raise
         t_forward_ns = time.time_ns()-t0
         logits, embeds = output
 
@@ -600,18 +612,12 @@ class PagedCausalLM(Model):
             )
         else:
             bsize = batch.input_ids.shape[0]
-
-            tokens_remaining = 0
-            for i in range(len(batch.total_lengths)):
-                tokens_remaining += batch.total_lengths[i] - batch.input_lengths[i]
+            weight = sum(batch.total_lengths) * self.memory_scaling_model.next_token_params[1]
 
             spec_ind = []
             for i, sample in enumerate(batch.next_token_chooser.do_sample):
                 if not sample:
                     spec_ind.append(i)
-
-            # batch weight
-            weight = sum(batch.total_lengths) * self.memory_scaling_model.next_token_params[1]
 
             speculate = (
                 self.speculator is not None and

@@ -408,7 +408,7 @@ class PagedSantacoderForCausalLM(nn.Module):
         )
 
     def get_kv_cache_block_size(self, block_size: int) -> int:
-        return block_size * self.model.head_size * 2
+        return block_size * self.transformer.head_size * 2
 
     def get_input_embeddings(self) -> nn.Module:
         return self.transformer.wte
