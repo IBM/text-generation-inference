@@ -310,7 +310,7 @@ class PagedCausalLM(Model):
         if KV_CACHE_MANAGER_NUM_GPU_BLOCKS is not None:
             total_num_gpu_blocks = int(KV_CACHE_MANAGER_NUM_GPU_BLOCKS)
         else:
-            # Firstly, let's compute the size of a cache in bytes
+            # Firstly, let's compute the size of a cache block in bytes
             kv_cache_block_size = self.model.get_kv_cache_block_size(block_size)
             total_size = model_config.num_hidden_layers * kv_cache_block_size
             dtype_size = torch.tensor([], dtype=dtype).element_size()
