@@ -310,15 +310,27 @@ class PagedCausalLM(Model):
         if KV_CACHE_MANAGER_NUM_GPU_BLOCKS is not None:
             total_num_gpu_blocks = int(KV_CACHE_MANAGER_NUM_GPU_BLOCKS)
         else:
-            # determine what fraction of memory usage corresponds to KV cache
+            # Firstly, let's compute the size of a cache in bytes
             kv_cache_block_size = self.model.get_kv_cache_block_size(block_size)
             total_size = model_config.num_hidden_layers * kv_cache_block_size
             dtype_size = torch.tensor([], dtype=dtype).element_size()
             cache_block_size = dtype_size * total_size
+            # We then use our memory scaling model to determine the fraction of the prefill memory
+            # usage that is due to cache blocks (as opposed to the other stuff needed for forward):
             pf_cache_block_ratio = cache_block_size / block_size / memory_scaling_model.linear_fit_params[0]
+            # We can then do the same for the next token (decoding) step:
             nt_cache_block_ratio = cache_block_size / block_size / memory_scaling_model.next_token_params[1]
+            # In general we know that the next token phase can use many more cache blocks
+            # relative to the prefill phase (e.g., nt_cache_block_ratio > pf_cache_block_ratio).
+            # Thus, we need to allocate enough cache blocks to handle the more extreme case:
             total_num_gpu_blocks = int(nt_cache_block_ratio * memory_scaling_model.free_memory // cache_block_size)
-            # we may need to increase the safety margin a bit to ensure that prefill forward does not run OOM
+            # This creates an issue though, because if we then try to perform a large prefill, while we
+            # will certainly have enough cache blocks available, we may not have enough memory leftover
+            # to allocate the other data structures needed during a forward pass.
+            # To overcome this, we can set the batch_safety_margin a bit to ensure that:
+            # free_memory * (1.0-batch_safety_margin/100-0.05) * (1.0-pf_cache_block_ratio) <
+            #      free_memory * (1.0-nf_cache_block_ratio)
+            # This should ensure that our prefills batches can never get so big as to cause OOM.
             recommend_safety_margin = 5 + int(100*(1.0 - (1.0 - nt_cache_block_ratio)/(1.0 - pf_cache_block_ratio)))
             if memory_scaling_model.safety_margin < recommend_safety_margin:
                 print(f"WARN: We recommend increasing the value of BATCH_SAFETY_MARGIN to: {recommend_safety_margin}")
