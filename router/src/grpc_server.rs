@@ -32,6 +32,7 @@ use crate::{
     validation::{RequestSize, ValidationError},
     GenerateParameters, GenerateRequest,
 };
+use crate::metrics::{increment_counter, increment_labeled_counter, observe_histogram};
 use crate::pb::fmaas::tokenize_response::Offset;
 
 /// Whether to fail if sampling parameters are provided in greedy-mode requests
@@ -67,8 +68,6 @@ pub(crate) async fn start_grpc_server<F: Future<Output = ()> + Send + 'static>(
     let grpc_service = GenerationServicer {
         state: shared_state,
         tokenizer,
-        input_counter: metrics::register_counter!("tgi_request_input_count"),
-        tokenize_input_counter: metrics::register_counter!("tgi_tokenize_request_input_count"),
     };
     let grpc_server = builder
         .add_service(GenerationServiceServer::new(grpc_service))
@@ -92,8 +91,6 @@ async fn load_pem(path: String, name: &str) -> Vec<u8> {
 pub struct GenerationServicer {
     state: ServerState,
     tokenizer: AsyncTokenizer,
-    input_counter: metrics::Counter,
-    tokenize_input_counter: metrics::Counter,
 }
 
 #[tonic::async_trait]
@@ -124,20 +121,20 @@ impl GenerationService for GenerationServicer {
         let br = request.into_inner();
         let batch_size = br.requests.len();
         let kind = if batch_size == 1 { "single" } else { "batch" };
-        metrics::increment_counter!("tgi_request_count", "kind" => kind);
+        increment_labeled_counter("tgi_request_count", &[("kind", kind)], 1);
         if batch_size == 0 {
             return Ok(Response::new(BatchedGenerationResponse {
                 responses: vec![],
             }));
         }
-        self.input_counter.increment(batch_size as u64);
+        increment_counter("tgi_request_input_count", batch_size as u64);
         // Limit concurrent requests by acquiring a permit from the semaphore
         let _permit = self
             .state
             .limit_concurrent_requests
             .try_acquire_many(batch_size as u32)
             .map_err(|_| {
-                metrics::increment_counter!("tgi_request_failure", "err" => "conc_limit");
+                increment_labeled_counter("tgi_request_failure", &[("err", "conc_limit")], 1);
                 tracing::error!("Model is overloaded");
                 Status::resource_exhausted("Model is overloaded")
             })?;
@@ -217,11 +214,11 @@ impl GenerationService for GenerationServicer {
         }
         .map_err(|err| match err {
             InferError::RequestQueueFull() => {
-                metrics::increment_counter!("tgi_request_failure", "err" => "queue_full");
+                increment_labeled_counter("tgi_request_failure", &[("err", "queue_full")], 1);
                 Status::resource_exhausted(err.to_string())
             }
             _ => {
-                metrics::increment_counter!("tgi_request_failure", "err" => "generate");
+                increment_labeled_counter("tgi_request_failure", &[("err", "generate")], 1);
                 tracing::error!("{err}");
                 Status::from_error(Box::new(err))
             }
@@ -254,15 +251,15 @@ impl GenerationService for GenerationServicer {
     ) -> Result<Response<Self::GenerateStreamStream>, Status> {
         let start_time = Instant::now();
         let request = request.extract_context();
-        metrics::increment_counter!("tgi_request_count", "kind" => "stream");
-        self.input_counter.increment(1);
+        increment_labeled_counter("tgi_request_count", &[("kind", "stream")], 1);
+        increment_counter("tgi_request_input_count", 1);
         let permit = self
             .state
             .limit_concurrent_requests
             .clone()
             .try_acquire_owned()
             .map_err(|_| {
-                metrics::increment_counter!("tgi_request_failure", "err" => "conc_limit");
+                increment_labeled_counter("tgi_request_failure", &[("err", "conc_limit")], 1);
                 tracing::error!("Model is overloaded");
                 Status::resource_exhausted("Model is overloaded")
             })?;
@@ -292,7 +289,7 @@ impl GenerationService for GenerationServicer {
                 |ctx, count, reason, request_id, times, out, err| {
                     let _enter = ctx.span.enter();
                     if let Some(e) = err {
-                        metrics::increment_counter!("tgi_request_failure", "err" => "generate");
+                        increment_labeled_counter("tgi_request_failure", &[("err", "generate")], 1);
                         tracing::error!(
                             "Streaming response failed after {count} tokens, \
                         output so far: '{:?}': {e}",
@@ -322,11 +319,11 @@ impl GenerationService for GenerationServicer {
             .await
             .map_err(|err| match err {
                 InferError::RequestQueueFull() => {
-                    metrics::increment_counter!("tgi_request_failure", "err" => "queue_full");
+                    increment_labeled_counter("tgi_request_failure", &[("err", "queue_full")], 1);
                     Status::resource_exhausted(err.to_string())
                 }
                 _ => {
-                    metrics::increment_counter!("tgi_request_failure", "err" => "unknown");
+                    increment_labeled_counter("tgi_request_failure", &[("err", "unknown")], 1);
                     tracing::error!("{err}");
                     Status::from_error(Box::new(err))
                 }
@@ -341,9 +338,9 @@ impl GenerationService for GenerationServicer {
         request: Request<BatchedTokenizeRequest>,
     ) -> Result<Response<BatchedTokenizeResponse>, Status> {
         let br = request.into_inner();
-        metrics::increment_counter!("tgi_tokenize_request_count");
+        increment_counter("tgi_tokenize_request_count", 1);
         let start_time = Instant::now();
-        self.tokenize_input_counter.increment(br.requests.len() as u64);
+        increment_counter("tgi_tokenize_request_input_count", br.requests.len() as u64);
 
         let truncate_to = match br.truncate_input_tokens {
             0 => u32::MAX,
@@ -378,8 +375,8 @@ impl GenerationService for GenerationServicer {
         .await?;
 
         let token_total: u32 = responses.iter().map(|tr| tr.token_count).sum();
-        metrics::histogram!("tgi_tokenize_request_tokens", token_total as f64);
-        metrics::histogram!(
+        observe_histogram("tgi_tokenize_request_tokens", token_total as f64);
+        observe_histogram(
             "tgi_tokenize_request_duration",
             start_time.elapsed().as_secs_f64()
         );
@@ -428,12 +425,12 @@ impl GenerationServicer {
             Err(err) => Err(err),
         }
         .map_err(|err| {
-            metrics::increment_counter!("tgi_request_failure", "err" => "validation");
+            increment_labeled_counter("tgi_request_failure", &[("err", "validation")], 1);
             tracing::error!("{err}");
             Status::invalid_argument(err.to_string())
         })
         .map(|requests| {
-            metrics::histogram!(
+            observe_histogram(
                 "tgi_request_validation_duration",
                 start_time.elapsed().as_secs_f64()
             );
@@ -474,11 +471,11 @@ fn log_response(
         span.record("total_time", format!("{total_time:?}"));
         span.record("input_toks", input_tokens);
 
-        metrics::histogram!(
+        observe_histogram(
             "tgi_request_inference_duration",
             inference_time.as_secs_f64()
         );
-        metrics::histogram!(
+        observe_histogram(
             "tgi_request_mean_time_per_token_duration",
             time_per_token.as_secs_f64()
         );
@@ -486,15 +483,15 @@ fn log_response(
 
     // Metrics
     match reason {
-        Error => metrics::increment_counter!("tgi_request_failure", "err" => "generate"),
+        Error => increment_labeled_counter("tgi_request_failure", &[("err", "generate")], 1),
         Cancelled => (), // recorded where cancellation is detected
         _ => {
-            metrics::increment_counter!(
-                "tgi_request_success", "stop_reason" => reason.as_str_name(), "kind" => kind
+            increment_labeled_counter(
+                "tgi_request_success", &[("stop_reason", reason.as_str_name()), ("kind", kind)], 1
             );
-            metrics::histogram!("tgi_request_duration", total_time.as_secs_f64());
-            metrics::histogram!("tgi_request_generated_tokens", generated_tokens as f64);
-            metrics::histogram!(
+            observe_histogram("tgi_request_duration", total_time.as_secs_f64());
+            observe_histogram("tgi_request_generated_tokens", generated_tokens as f64);
+            observe_histogram(
                 "tgi_request_total_tokens",
                 (generated_tokens as usize + input_tokens) as f64
             );

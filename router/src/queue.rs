@@ -25,6 +25,7 @@ use crate::{
     batch_types::BatchType, batcher::InferResponse, decoder::IncrementalDecoderWrapper,
     GenerateParameters, GenerateRequest,
 };
+use crate::metrics::{increment_counter, increment_labeled_counter, observe_histogram, set_gauge};
 
 // Requests that fit into the next batch can overtake others
 // that don't as long as they arrive within this amount of time after
@@ -199,13 +200,13 @@ impl<B: BatchType> Queue<B> {
         let mut pruned = false;
         self.buffer.retain_mut(|entry| match entry {
             entry if entry.is_cancelled() => {
-                metrics::increment_counter!("tgi_request_failure", "err" => "cancelled");
+                increment_labeled_counter("tgi_request_failure", &[("err", "cancelled")], 1);
                 pruned = true;
                 false
             }
             entry if entry.deadline_exceeded() => {
                 // Send timeout response
-                metrics::increment_counter!("tgi_request_failure", "err" => "timeout");
+                increment_labeled_counter("tgi_request_failure", &[("err", "timeout")], 1);
                 entry.batch_time = Some(Instant::now());
                 entry
                     .send_final(Ok(InferResponse::early_timeout(entry)))
@@ -217,7 +218,7 @@ impl<B: BatchType> Queue<B> {
         });
 
         if pruned {
-            metrics::gauge!("tgi_queue_size", self.buffer.len() as f64);
+            set_gauge("tgi_queue_size", self.buffer.len() as f64);
         }
 
         while let Some(ents) = self.receiver.recv().await {
@@ -227,7 +228,7 @@ impl<B: BatchType> Queue<B> {
 
     fn add_to_buffer(&mut self, new_entries: Vec<Entry>) {
         self.buffer.extend(new_entries);
-        metrics::gauge!("tgi_queue_size", self.buffer.len() as f64);
+        set_gauge("tgi_queue_size", self.buffer.len() as f64);
     }
 
     /// Get the next batch without blocking.
@@ -340,14 +341,14 @@ impl<B: BatchType> Queue<B> {
                     time_cutoff.get_or_insert_with(|| entry.queue_time.add(CUTOFF_DURATION));
                     continue;
                 }
-                metrics::increment_counter!("tgi_granular_batch_addition");
+                increment_counter("tgi_granular_batch_addition", 1);
             } else if let Some(tree) = btree.as_mut() {
                 // If we initialized the btree for a prior request, keep it updated
                 tree.insert((output_len, input_len, tree.len()));
             }
             // Here, we can add this request to the batch without breaching memory limit
             if time_cutoff.is_some() {
-                metrics::increment_counter!("tgi_queue_jump");
+                increment_counter("tgi_queue_jump", 1);
             }
 
             // Also check whether adding this request will breach the prefill weight limit
@@ -361,7 +362,7 @@ impl<B: BatchType> Queue<B> {
                         .prefill_weight(&next_prefill_stats, batch_size);
                     if prefill_weight > effective_prefill_weight_limit {
                         skip = true;
-                        metrics::increment_counter!("tgi_prefill_weight_limit_exceeded");
+                        increment_counter("tgi_prefill_weight_limit_exceeded", 1);
                     }
                 }
                 if !skip && max_prefill_padding < 1.0 {
@@ -370,7 +371,7 @@ impl<B: BatchType> Queue<B> {
                         skip = true;
                         //TODO if we skip due to padding and added other requests from queue,
                         // we could consider doing another pass since the padding proportion may have decreased
-                        metrics::increment_counter!("tgi_prefill_padding_limit_exceeded");
+                        increment_counter("tgi_prefill_padding_limit_exceeded", 1);
                     }
                 }
                 if skip {
@@ -379,7 +380,7 @@ impl<B: BatchType> Queue<B> {
                         tree.remove(&(output_len, input_len, tree.len() - 1));
                     }
                     time_cutoff.get_or_insert_with(|| entry.queue_time.add(CUTOFF_DURATION));
-                    metrics::increment_counter!("tgi_prefill_weight_limit_exceeded");
+                    increment_counter("tgi_prefill_weight_limit_exceeded", 1);
                     continue;
                 }
                 prefill_stats = next_prefill_stats;
@@ -434,7 +435,7 @@ impl<B: BatchType> Queue<B> {
                 };
                 // Set batch_time
                 entry.batch_time = some_now;
-                metrics::histogram!(
+                observe_histogram(
                     "tgi_request_queue_duration",
                     (now - entry.queue_time).as_secs_f64()
                 );
@@ -448,7 +449,7 @@ impl<B: BatchType> Queue<B> {
             requests.iter().map(|r| r.input_length as usize),
             chosen_count,
         );
-        metrics::gauge!("tgi_queue_size", self.buffer.len() as f64);
+        set_gauge("tgi_queue_size", self.buffer.len() as f64);
         let batch = Batch {
             id: self.next_batch_id,
             requests,
