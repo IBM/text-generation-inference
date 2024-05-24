@@ -305,11 +305,14 @@ class TensorParallelRowLinear(SuperLayer):
     @classmethod
     def load(cls, config, prefix: str, weights, bias: bool):
         weight = weights.get_multi_weights_row(prefix, quantize=config.quantize)
-        if bias and weights.process_group.rank() == 0:
-            # Rank is only on the first rank process
-            bias = weights.get_tensor(f"{prefix}.bias")
+        if hasattr(weights, "push_tensor"):
+            bias = weights.push_tensor(f"{prefix}.bias", 0) if bias else None
         else:
-            bias = None
+            if bias and weights.process_group.rank() == 0:
+                # Rank is only on the first rank process
+                bias = weights.get_tensor(f"{prefix}.bias")
+            else:
+                bias = None
         return cls(
             get_linear(weight, bias, config.quantize),
             process_group=weights.process_group,

@@ -14,6 +14,8 @@ from text_generation_server.inference_engine import BaseInferenceEngine
 from text_generation_server.utils.dist import initialize_torch_distributed
 from text_generation_server.utils.hub import local_weight_files
 
+from fastsafetensors.connectors.tgis_weights import Weights as FastWeights
+
 NONTP_FLASH_TYPES = ["RefinedWeb", "RefinedWebModel", "gpt_neox", "gpt_bigcode", "llama", "falcon"]
 TP_NONFLASH_TYPES = ["bloom", "t5", "gpt_neox"]
 TP_FLASH_TYPES = NONTP_FLASH_TYPES  # All flash types currently support TP
@@ -123,9 +125,19 @@ class InferenceEngine(BaseInferenceEngine):
         if not filenames:
             raise ValueError("No safetensors weights found - required for tgis_native engine")
 
-        weights = Weights(
-            filenames, device=self.device, dtype=dtype, process_group=self.process_group, aliases=aliases
-        )
+        use_fst = os.getenv("USE_FST")
+        if use_fst is not None and use_fst == "1":
+            nogds = os.getenv("FST_NOGDS")                              # disable GDS if FST_NOGDS==1
+            max_threads = int(os.getenv("FST_THREADS", "16"))           # number of copy threads at host CPU
+            bbuf_size_kb = int(os.getenv("FST_BBUF_SIZE_KB", "163840")) # size of bounce buffer at host memory for FST_NOGDS==1
+            nogds = nogds is not None and nogds == "1"
+            weights = FastWeights(
+                filenames, device=self.device, dtype=dtype, pg=self.process_group, aliases=aliases, nogds=nogds, max_copier_threads=max_threads, bbuf_size_kb_total=bbuf_size_kb,
+            )
+        else:
+            weights = Weights(
+                filenames, device=self.device, dtype=dtype, process_group=self.process_group, aliases=aliases
+            )
 
         if quantize == "gptq":
             weights._set_gptq_params(model_config, model_path)
