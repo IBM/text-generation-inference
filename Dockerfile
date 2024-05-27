@@ -323,7 +323,7 @@ COPY --from=launcher-builder /usr/local/cargo/bin/text-generation-launcher /usr/
 RUN dnf config-manager \
        --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo \
     && dnf install -y libcufile-12-1 numactl-libs
-RUN pip install -v fastsafetensors==0.1.0 --no-cache-dir
+RUN pip install -v fastsafetensors==0.1.1 --no-cache-dir
 
 ENV PORT=3000 \
     GRPC_PORT=8033 \
@@ -333,7 +333,7 @@ ENV PORT=3000 \
 RUN chmod -R g+rwx ${HOME}
 
 # Temporary for dev
-RUN chmod -R g+w ${SITE_PACKAGES}/text_generation_server /usr/src /usr/local/bin
+RUN chmod -R g+w ${SITE_PACKAGES}/text_generation_server /usr/src /usr/local/bin ${SITE_PACKAGES}/fastsafetensors
 
 # Run as non-root user by default
 USER tgis

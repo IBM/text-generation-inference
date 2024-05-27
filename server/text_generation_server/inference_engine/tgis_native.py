@@ -8,13 +8,11 @@ from typing import Optional, Any
 from transformers.models.auto.auto_factory import _BaseAutoModelClass
 
 from text_generation_server.models import FLASH_ATTENTION, PAGED_ATTENTION
-from text_generation_server.utils import Weights
+from text_generation_server.utils import Weights, FastWeights
 
 from text_generation_server.inference_engine import BaseInferenceEngine
 from text_generation_server.utils.dist import initialize_torch_distributed
 from text_generation_server.utils.hub import local_weight_files
-
-from fastsafetensors.connectors.tgis_weights import Weights as FastWeights
 
 NONTP_FLASH_TYPES = ["RefinedWeb", "RefinedWebModel", "gpt_neox", "gpt_bigcode", "llama", "falcon"]
 TP_NONFLASH_TYPES = ["bloom", "t5", "gpt_neox"]

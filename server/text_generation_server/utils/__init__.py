@@ -7,6 +7,7 @@ from text_generation_server.utils.dist import (
     RANK,
 )
 from text_generation_server.utils.weights import Weights
+from text_generation_server.utils.fastweight import FastWeights
 from text_generation_server.utils.hub import (
     get_model_path,
     local_weight_files,
