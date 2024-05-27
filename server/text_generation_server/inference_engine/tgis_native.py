@@ -125,12 +125,8 @@ class InferenceEngine(BaseInferenceEngine):
 
         use_fst = os.getenv("USE_FST")
         if use_fst is not None and use_fst == "1":
-            nogds = os.getenv("FST_NOGDS")                              # disable GDS if FST_NOGDS==1
-            max_threads = int(os.getenv("FST_THREADS", "16"))           # number of copy threads at host CPU
-            bbuf_size_kb = int(os.getenv("FST_BBUF_SIZE_KB", "163840")) # size of bounce buffer at host memory for FST_NOGDS==1
-            nogds = nogds is not None and nogds == "1"
             weights = FastWeights(
-                filenames, device=self.device, dtype=dtype, pg=self.process_group, aliases=aliases, nogds=nogds, max_copier_threads=max_threads, bbuf_size_kb_total=bbuf_size_kb,
+                filenames, device=self.device, dtype=dtype, pg=self.process_group, aliases=aliases,
             )
         else:
             weights = Weights(

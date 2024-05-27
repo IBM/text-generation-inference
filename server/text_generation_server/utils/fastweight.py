@@ -2,10 +2,42 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import os
+import glob
 import torch
 import torch.distributed as dist
-from typing import List, Tuple, Optional, Dict
-from fastsafetensors.loader import SafeTensorsFileLoader
+from typing import List, Optional, Dict, Tuple
+
+def get_config(device_index: int) -> Tuple[bool, int, int]:
+    auto_config = os.getenv("FST_CONFIG", "auto")
+    nogds = os.getenv("FST_NOGDS") # disable GDS if FST_NOGDS==1
+    nogds = nogds is not None and nogds == "1"
+    max_copier_threads = int(os.getenv("FST_THREADS", "16"))           # number of copy threads at host CPU
+    bbuf_size_kb_total = int(os.getenv("FST_BBUF_SIZE_KB", "163840")) # size of bounce buffer at host memory for FST_NOGDS==1
+    if auto_config == "auto":
+        nogds = not os.path.exists("/run/udev") # udev directory is required for GDS
+        from fastsafetensors.common import get_device_numa_node
+        node = get_device_numa_node(device_index)
+        total_l2_size = 0
+        phys_cpus = {}
+        failed = False
+        for cpudir in glob.glob(f"/sys/devices/system/node/node{node}/cpu[0-9]*"):
+            try:
+                with open(f"{cpudir}/cache/index2/size") as f: # L2 cache size for a cpu
+                    size_str = f.read().strip()
+                    if size_str[-1] != "K":
+                        raise Exception(f"cannot parse {cpudir}/cache/index2/size")
+                    total_l2_size += int(size_str[:-1])
+                with open(f"{cpudir}/topology/core_id") as f: # physical core ID
+                    phys_cpus[f.read().strip()] = True
+            except Exception as e:
+                failed = True
+                print(f"Failed to auto-configure fastsafetensors. reason: {e}")
+                break
+        if not failed and total_l2_size > 0:
+            bbuf_size_kb_total = total_l2_size
+        if not failed and len(phys_cpus) > 0:
+            max_copier_threads = len(phys_cpus)
+    return (nogds, max_copier_threads, bbuf_size_kb_total)
 
 class FastWeights:
     def __init__(self, filenames:List[str],
@@ -15,10 +47,9 @@ class FastWeights:
                  debug_log: bool=False,
                  aliases: Optional[Dict[str, List[str]]] = None,
                  prefix: Optional[str] = None,
-                 nogds: bool = False,
-                 max_copier_threads: int = 16, # should be same as the number of physical CPUs on a node
-                 bbuf_size_kb_total = 160 * 1024, # should be same as L2 cache size
             ):
+        from fastsafetensors.loader import SafeTensorsFileLoader
+        (nogds, max_copier_threads, bbuf_size_kb_total) = get_config(device.index)
         self._loader = SafeTensorsFileLoader(pg, device, bbuf_size_kb=bbuf_size_kb_total//pg.size(), max_threads=max_copier_threads, nogds=nogds, debug_log=debug_log)
         rank_filenames: Dict[str, List[str]] = {rank: [] for rank in range(0, pg.size())}
         max_copy_block_size = 1
@@ -34,6 +65,10 @@ class FastWeights:
             max_copy_block_size = total_size // pg.size() // max_copier_threads
             if max_copy_block_size % bbuf_size_kb_total*1024 > 0:
                 max_copy_block_size = max_copy_block_size - max_copy_block_size % (bbuf_size_kb_total*1024) + (bbuf_size_kb_total*1024)
+        msg = f"Fastsafetensors configuration: GDS={not nogds}, maximum number of file copy threads={max_copier_threads}, copy block size={max_copy_block_size}B"
+        if nogds:
+            msg += f", total bounce buffer size={bbuf_size_kb_total * 1024}B"
+        print(msg)
         self._fb = self._loader.copy_files_to_device(dtype, max_copy_block_size=max_copy_block_size)
         self.device = device
         self.dtype = dtype
