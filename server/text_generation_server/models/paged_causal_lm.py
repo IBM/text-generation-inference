@@ -18,15 +18,13 @@ from text_generation_server.utils.hub import get_model_path
 from text_generation_server.utils.token_types import TokenInfo, InputTokens
 from text_generation_server.utils.tokens import HeterogeneousNextTokenChooser, get_token_info, get_input_tokens_info
 from text_generation_server.utils.paged import (
+    load_speculator,
     prepare_inputs_without_speculation,
     prepare_inputs_with_speculation,
     process_outputs_with_speculation,
     prepare_inputs_for_prefill
 )
 from text_generation_server.inference_engine import get_inference_engine_class
-
-# HF name or path to speculator model (None means no speculation will be used)
-SPECULATOR_NAME = os.getenv("SPECULATOR_NAME", None)
 
 # we will only do speculation if the batch size is <= this parameter
 SPECULATOR_MAX_BATCH_SIZE = int(os.getenv("SPECULATOR_MAX_BATCH_SIZE", "16"))
@@ -277,6 +275,7 @@ class PagedCausalLM(Model):
         quantize: Optional[str],
         model_config: Union[Any] = None,
         max_sequence_length: Optional[int] = None,
+        memory_scaling_model: Optional["MemoryScalingModel"] = None,
     ):
         model_path = get_model_path(model_name, revision)
 
@@ -300,27 +299,41 @@ class PagedCausalLM(Model):
 
         from fms_extras.utils.cache.paged import PagedKVCacheManager
 
-        if SPECULATOR_NAME is not None:
-            from fms_extras.models.hf.modeling_mlp_speculator import MLPSpeculatorPreTrainedModel
-            speculator_revision = os.getenv("SPECULATOR_REVISION", None)
-            speculator_model_path = get_model_path(SPECULATOR_NAME, speculator_revision)
-            print_rank_n(f"Loading speculator model from: {speculator_model_path}")
+        # load speculator
+        self.speculator = load_speculator(self.device, dtype)
+
+        if self.speculator is not None:
             print_rank_n(f"Speculation will be enabled up to batch size {SPECULATOR_MAX_BATCH_SIZE}")
-            kwargs = {
-                "pretrained_model_name_or_path": speculator_model_path,
-                "local_files_only": True,
-                "torch_dtype": dtype,
-            }
-            with self.device:
-                self.speculator = MLPSpeculatorPreTrainedModel.from_pretrained(**kwargs)
-                self.speculator.to(device=self.device)
-        else:
-            self.speculator = None
+
+        block_size = 16
 
         if KV_CACHE_MANAGER_NUM_GPU_BLOCKS is not None:
             total_num_gpu_blocks = int(KV_CACHE_MANAGER_NUM_GPU_BLOCKS)
         else:
-            total_num_gpu_blocks = None
+            # Firstly, let's compute the size of a cache block in bytes
+            kv_cache_block_size = self.model.get_kv_cache_block_size(block_size)
+            total_size = model_config.num_hidden_layers * kv_cache_block_size
+            dtype_size = torch.tensor([], dtype=dtype).element_size()
+            cache_block_size = dtype_size * total_size
+            # We then use our memory scaling model to determine the fraction of the prefill memory
+            # usage that is due to cache blocks (as opposed to the other stuff needed for forward):
+            pf_cache_block_ratio = cache_block_size / block_size / memory_scaling_model.linear_fit_params[0]
+            # We can then do the same for the next token (decoding) step:
+            nt_cache_block_ratio = cache_block_size / block_size / memory_scaling_model.next_token_params[1]
+            # In general we know that the next token phase can use many more cache blocks
+            # relative to the prefill phase (e.g., nt_cache_block_ratio > pf_cache_block_ratio).
+            # Thus, we need to allocate enough cache blocks to handle the more extreme case:
+            total_num_gpu_blocks = int(nt_cache_block_ratio * memory_scaling_model.free_memory // cache_block_size)
+            # This creates an issue though, because if we then try to perform a large prefill, while we
+            # will certainly have enough cache blocks available, we may not have enough memory leftover
+            # to allocate the other data structures needed during a forward pass.
+            # To overcome this, we can set the batch_safety_margin a bit to ensure that:
+            # free_memory * (1.0-batch_safety_margin/100-0.05) * (1.0-pf_cache_block_ratio) <
+            #      free_memory * (1.0-nf_cache_block_ratio)
+            # This should ensure that our prefills batches can never get so big as to cause OOM.
+            recommend_safety_margin = 5 + int(100*(1.0 - (1.0 - nt_cache_block_ratio)/(1.0 - pf_cache_block_ratio)))
+            if memory_scaling_model.safety_margin < recommend_safety_margin:
+                print(f"WARN: We recommend increasing the value of BATCH_SAFETY_MARGIN to: {recommend_safety_margin}")
 
         self.kv_cache_manager = PagedKVCacheManager(
             model_config.num_hidden_layers,
@@ -331,7 +344,10 @@ class PagedCausalLM(Model):
             dtype=dtype,
             device=self.device,
             total_num_gpu_blocks=total_num_gpu_blocks,
+            block_size=block_size,
         )
+
+        self.memory_scaling_model = memory_scaling_model
 
         # log number of free blocks at init
         print("[PagedKVCacheManager] number of free blocks: %d" % (len(self.kv_cache_manager.free_blocks)))
@@ -413,12 +429,18 @@ class PagedCausalLM(Model):
         )
 
         t0 = time.time_ns()
-        output = self.model(
-            input_ids,
-            position_ids=position_ids,
-            cache_data=cache_data,
-            return_embeds=True,
-        )
+        try:
+            output = self.model(
+                input_ids,
+                position_ids=position_ids,
+                cache_data=cache_data,
+                return_embeds=True,
+            )
+        except:
+            # if something goes wrong during forward, we still need to set the sequence ids
+            #TODO it would be better to fix the forward method to avoid possibility of partial failures
+            batch.sequence_ids = cache_data.sequence_ids
+            raise
         t_forward_ns = time.time_ns()-t0
         logits, embeds = output
 
@@ -603,10 +625,7 @@ class PagedCausalLM(Model):
             )
         else:
             bsize = batch.input_ids.shape[0]
-
-            tokens_remaining = 0
-            for i in range(len(batch.total_lengths)):
-                tokens_remaining += batch.total_lengths[i] - batch.input_lengths[i]
+            weight = sum(batch.total_lengths) * self.memory_scaling_model.next_token_params[1]
 
             spec_ind = []
             for i, sample in enumerate(batch.next_token_chooser.do_sample):
@@ -618,7 +637,7 @@ class PagedCausalLM(Model):
                 len(spec_ind) > 0 and
                 bsize <= SPECULATOR_MAX_BATCH_SIZE and
                 batch.next_token_chooser.repetition_processor is None and
-                tokens_remaining < 0.25*len(self.kv_cache_manager.free_blocks)*self.kv_cache_manager.block_size
+                (weight/self.memory_scaling_model.weight_limit) <= 0.75
             )
 
             if speculate:
