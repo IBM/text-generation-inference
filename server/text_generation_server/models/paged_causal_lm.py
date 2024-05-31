@@ -438,6 +438,7 @@ class PagedCausalLM(Model):
             )
         except:
             # if something goes wrong during forward, we still need to set the sequence ids
+            #TODO it would be better to fix the forward method to avoid possibility of partial failures
             batch.sequence_ids = cache_data.sequence_ids
             raise
         t_forward_ns = time.time_ns()-t0
