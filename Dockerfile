@@ -3,15 +3,13 @@ ARG BASE_UBI_IMAGE_TAG=9.3-1552
 ARG PROTOC_VERSION=25.2
 ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
 # ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
-
-# match PyTorch version that was used to compile flash-attention v2 pre-built wheels
-# e.g. flash-attn v2.5.2 => torch ['1.12.1', '1.13.1', '2.0.1', '2.1.2', '2.2.0', '2.3.0.dev20240126']
-# https://github.com/Dao-AILab/flash-attention/blob/v2.5.2/.github/workflows/publish.yml#L47
-# use nightly build index for torch .dev pre-release versions
 ARG PYTORCH_VERSION=2.1.1
-
 ARG PYTHON_VERSION=3.11
 
+# This is overriden in the Makefile such that `-private` is used for CI builds;
+# use public by default for local development
+ARG CACHE_REGISTRY=docker-na-public.artifactory.swg-devops.com/wcp-ai-foundation-team-docker-virtual
+ARG AUTO_GPTQ_CACHE_TAG=auto-gptq-cache.0b32a42
 
 ## Base Layer ##################################################################
 FROM registry.access.redhat.com/ubi9/ubi:${BASE_UBI_IMAGE_TAG} as base
@@ -30,7 +28,6 @@ RUN dnf remove -y --disableplugin=subscription-manager \
 
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
-
 
 ## CUDA Base ###################################################################
 FROM base as cuda-base
@@ -55,7 +52,6 @@ ENV CUDA_HOME="/usr/local/cuda" \
     PATH="/usr/local/nvidia/bin:${CUDA_HOME}/bin:${PATH}" \
     LD_LIBRARY_PATH="/usr/local/nvidia/lib:/usr/local/nvidia/lib64:$CUDA_HOME/lib64:$CUDA_HOME/extras/CUPTI/lib64:${LD_LIBRARY_PATH}"
 
-
 ## CUDA Runtime ################################################################
 FROM cuda-base as cuda-runtime
 
@@ -73,7 +69,6 @@ RUN dnf config-manager \
         libcublas-11-8-${NV_LIBCUBLAS_VERSION} \
         libnccl-${NV_LIBNCCL_PACKAGE_VERSION} \
     && dnf clean all
-
 
 ## CUDA Development ############################################################
 FROM cuda-base as cuda-devel
@@ -99,7 +94,6 @@ RUN dnf config-manager \
 
 ENV LIBRARY_PATH="$CUDA_HOME/lib64/stubs"
 
-
 ## Rust builder ################################################################
 # Specific debian version so that compatible glibc version is used
 FROM rust:1.76-bullseye as rust-builder
@@ -118,7 +112,6 @@ COPY rust-toolchain.toml rust-toolchain.toml
 
 RUN rustup component add rustfmt
 
-
 ## Internal router builder #####################################################
 FROM rust-builder as router-builder
 
@@ -130,7 +123,6 @@ WORKDIR /usr/src/router
 #RUN --mount=type=cache,target=/root/.cargo --mount=type=cache,target=/usr/src/router/target cargo install --path .
 RUN cargo install --path .
 
-
 ## Launcher builder ############################################################
 FROM rust-builder as launcher-builder
 
@@ -141,7 +133,6 @@ WORKDIR /usr/src/launcher
 
 #RUN --mount=type=cache,target=/root/.cargo --mount=type=cache,target=/usr/src/launcher/target cargo install --path .
 RUN env GIT_COMMIT_HASH=${GIT_COMMIT_HASH} cargo install --path .
-
 
 ## Tests base ##################################################################
 FROM base as test-base
@@ -158,7 +149,6 @@ RUN pip install --upgrade pip --no-cache-dir && pip install pytest --no-cache-di
 # CPU only
 ENV CUDA_VISIBLE_DEVICES=""
 
-
 ## Tests #######################################################################
 FROM test-base as cpu-tests
 ARG PYTORCH_INDEX
@@ -170,8 +160,6 @@ WORKDIR /usr/src
 
 # Install specific version of torch
 RUN pip install torch=="$PYTORCH_VERSION+cpu" --index-url "${PYTORCH_INDEX}/cpu" --no-cache-dir
-# There is no rocm 6.0 wheel in the python repo as of March 1st 2023
-RUN pip install "https://repo.radeon.com/rocm/manylinux/rocm-rel-6.0/torch-${PYTORCH_VERSION}+rocm6.0-cp311-cp311-linux_x86_64.whl" --no-cache-dir
 
 COPY server/Makefile server/Makefile
 
@@ -193,7 +181,6 @@ COPY --from=launcher-builder /usr/local/cargo/bin/text-generation-launcher /usr/
 # Install integration tests
 COPY integration_tests integration_tests
 RUN cd integration_tests && make install
-
 
 ## Python builder #############################################################
 FROM cuda-devel as python-builder
@@ -219,23 +206,11 @@ ENV PATH=/opt/tgis/bin/:$PATH
 
 # Install specific version of torch
 RUN pip install ninja==1.11.1.1 --no-cache-dir
-RUN pip install packaging --no-cache-dir
-RUN pip install torch==$PYTORCH_VERSION+cu118 --index-url "${PYTORCH_INDEX}/cu118" --no-cache-dir
-
-
-## Build flash attention v2 ####################################################
-FROM python-builder as flash-att-v2-builder
-ARG FLASH_ATT_VERSION=v2.5.2
-
-WORKDIR /usr/src/flash-attention-v2
-
-# Download the wheel or build it if a pre-compiled release doesn't exist
-# MAX_JOBS: For CI, limit number of parallel compilation threads otherwise the github runner goes OOM
-RUN MAX_JOBS=2  pip --verbose wheel --no-deps flash-attn==${FLASH_ATT_VERSION} \
-    "git+https://github.com/Dao-AILab/flash-attention.git@${FLASH_ATT_VERSION}#subdirectory=csrc/layer_norm" \
-    "git+https://github.com/Dao-AILab/flash-attention.git@${FLASH_ATT_VERSION}#subdirectory=csrc/rotary" \
-    --no-build-isolation --no-cache-dir
-
+#RUN pip install torch==$PYTORCH_VERSION+cu121 --index-url "${PYTORCH_INDEX}/cu121" --no-cache-dir
+# Remaining on pytorch cuda 11.8 for now
+#RUN pip install torch==$PYTORCH_VERSION+cu118 --index-url "${PYTORCH_INDEX}/cu118" --no-cache-dir
+# There is no rocm 6.0 wheel in the python repo as of March 1st 2023
+RUN pip install "https://repo.radeon.com/rocm/manylinux/rocm-rel-6.0/torch-${PYTORCH_VERSION}+rocm6.0-cp311-cp311-linux_x86_64.whl" --no-cache-dir
 
 ## Install auto-gptq ###########################################################
 FROM python-builder as auto-gptq-installer
@@ -246,46 +221,15 @@ WORKDIR /usr/src/auto-gptq-wheel
 # numpy is required to run auto-gptq's setup.py
 RUN pip install numpy
 RUN DISABLE_QIGEN=1 pip wheel git+https://github.com/AutoGPTQ/AutoGPTQ@${AUTO_GPTQ_REF} --no-cache-dir --no-deps --verbose
-
-## Build libraries #############################################################
 FROM python-builder as build
-
-# Build custom kernels
-COPY server/custom_kernels/ /usr/src/.
-RUN cd /usr/src && python setup.py build_ext && python setup.py install
-
-
-## Build transformers exllama kernels ##########################################
-FROM python-builder as exllama-kernels-builder
-
-WORKDIR /usr/src
-
-COPY server/exllama_kernels/ .
-RUN python setup.py build
-
-
-## Build transformers exllamav2 kernels ########################################
-FROM python-builder as exllamav2-kernels-builder
-
-WORKDIR /usr/src
-
-COPY server/exllamav2_kernels/ .
-RUN python setup.py build
-
-
-## Flash attention v2 cached build image #######################################
-FROM base as flash-att-v2-cache
-
-# Copy just the wheels we built for flash-attention
-COPY --from=flash-att-v2-builder /usr/src/flash-attention-v2 /usr/src/flash-attention-v2
-
 
 ## Auto gptq cached build image
 FROM base as auto-gptq-cache
 
-# Copy just the wheel we built for auto-gptq
+# Cache just the wheel we built for auto-gptq
 COPY --from=auto-gptq-installer /usr/src/auto-gptq-wheel /usr/src/auto-gptq-wheel
 
+FROM ${CACHE_REGISTRY}/auto-gptq-cache:${AUTO_GPTQ_CACHE_TAG} as auto-gptq-remote-cache
 
 ## Final Inference Server image ################################################
 FROM cuda-runtime as server-release
@@ -302,30 +246,17 @@ COPY --from=build /opt/tgis /opt/tgis
 
 ENV PATH=/opt/tgis/bin:$PATH
 
-# Install flash attention v2 from the cache build
-RUN --mount=type=bind,from=flash-att-v2-cache,src=/usr/src/flash-attention-v2,target=/usr/src/flash-attention-v2 \
-    pip install /usr/src/flash-attention-v2/*.whl --no-cache-dir
-
-# Copy build artifacts from exllama kernels builder
-COPY --from=exllama-kernels-builder /usr/src/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
-
-# Copy build artifacts from exllamav2 kernels builder
-COPY --from=exllamav2-kernels-builder /usr/src/build/lib.linux-x86_64-cpython-* ${SITE_PACKAGES}
-
 # Copy over the auto-gptq wheel and install it
-RUN --mount=type=bind,from=auto-gptq-cache,src=/usr/src/auto-gptq-wheel,target=/usr/src/auto-gptq-wheel \
+RUN --mount=type=bind,from=auto-gptq-remote-cache,src=/usr/src/auto-gptq-wheel,target=/usr/src/auto-gptq-wheel \
     pip install /usr/src/auto-gptq-wheel/*.whl --no-cache-dir
 
 # Install server
 COPY proto proto
 COPY server server
-RUN cd server && make gen-server && pip install ".[accelerate, ibm-fms, onnx-gpu, quantize]" --no-cache-dir
+RUN cd server && make gen-server && pip install ".[accelerate, ibm-fms, quantize]" --no-cache-dir
 
 # Patch codegen model changes into transformers 4.35
 RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py
-
-# Print a list of all installed packages and versions
-RUN pip list -v --disable-pip-version-check --no-python-version-warning
 
 # Install router
 COPY --from=router-builder /usr/local/cargo/bin/text-generation-router /usr/local/bin/text-generation-router
