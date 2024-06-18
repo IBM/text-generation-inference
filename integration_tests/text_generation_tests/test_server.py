@@ -29,7 +29,7 @@ def start_server(
     master_port: int,
     timeout=30,
     model_path=None,
-    include_cache_env_vars=True,
+    env=None,
     output_special_tokens=False,
 ):
     # Download weights to the cache first
@@ -66,13 +66,12 @@ def start_server(
     if output_special_tokens:
         args.append("--output-special-tokens")
 
-    env = os.environ.copy()
+    if env is None:
+        env = os.environ.copy()
+
     env["RUST_BACKTRACE"] = "full"
     env["ESTIMATE_MEMORY"] = "manual"
     env["PREFIX_STORE_PATH"] = os.path.join(TESTS_DIR, "prompt_prefixes")
-    if not include_cache_env_vars:
-        env.pop("TRANSFORMERS_CACHE", None)
-        env.pop("HUGGING_FACE_HUB_CACHE", None)
 
     # Start the process
     process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
@@ -455,9 +454,13 @@ async def test_time_limit_stopping(server_fixture):
 
 # Test loading when an explicit local path is provided
 def test_explicit_path():
-    # Test with and without providing TRANSFORMERS_CACHE env var
-    path = glob.glob(f'{os.environ["TRANSFORMERS_CACHE"]}/models--bigscience--mt0-small/snapshots/*')[0]
-    for include_env_vars in [False, True]:
+    path = glob.glob(f'{os.environ["HF_HUB_CACHE"]}/models--bigscience--mt0-small/snapshots/*')[0]
+
+    # Test with and without providing HF_HUB_CACHE
+    env_with = os.environ.copy()
+    env_without = os.environ.copy()
+    env_without.pop("HF_HUB_CACHE", None)
+    for env in [env_with, env_without]:
         p = start_server(
             "bigscience/mt0-small",
             ".bin,.json,.model",
@@ -465,7 +468,7 @@ def test_explicit_path():
             3000,
             29502,
             model_path=path,
-            include_cache_env_vars=include_env_vars,
+            env=env,
         )
         try:
             async def test_model_info() -> pb2.ModelInfoResponse:
@@ -478,6 +481,32 @@ def test_explicit_path():
             assert result.model_kind == pb2.ModelInfoResponse.ModelKind.ENCODER_DECODER
         finally:
             p.terminate()
+
+    assert p.wait(8.0) == 0
+
+# Test loading with only TRANSFORMERS_CACHE set
+def test_transformers_cache():
+    env = os.environ.copy()
+    env["TRANSFORMERS_CACHE"] = env.pop("HF_HUB_CACHE")
+    p = start_server(
+        "bigscience/mt0-small",
+        ".bin,.json,.model",
+        1,
+        3000,
+        29502,
+        env=env,
+    )
+    try:
+        async def test_model_info() -> pb2.ModelInfoResponse:
+            async with grpc.aio.insecure_channel('localhost:8033') as channel:
+                return await gpb2.GenerationServiceStub(channel).ModelInfo(pb2.ModelInfoRequest(model_id="unused"))
+
+        result = asyncio.get_event_loop().run_until_complete(test_model_info())
+        assert result.max_sequence_length == 200
+        assert result.max_new_tokens == 169
+        assert result.model_kind == pb2.ModelInfoResponse.ModelKind.ENCODER_DECODER
+    finally:
+        p.terminate()
 
     assert p.wait(8.0) == 0
 

@@ -5,6 +5,7 @@ from torch import nn
 from transformers.activations import ACT2FN
 from typing import Optional
 
+from fms_extras.utils.cache.paged import PagedAttentionCacheData, PagedAttentionCacheDataLayer
 from text_generation_server.utils.flash_attn import attention
 from text_generation_server.utils.layers import (
     TensorParallelRowLinear,
@@ -17,7 +18,7 @@ from text_generation_server.utils.layers import (
 
 
 def load_multi_mqa(
-    config, prefix: str, weights, bias: bool, head_size, num_heads, hidden_size
+        config, prefix: str, weights, bias: bool, head_size, num_heads, hidden_size
 ):
     return (_load_multi_mqa_gptq if config.quantize == "gptq" else _load_multi_mqa)(
         config, prefix, weights, bias, head_size, num_heads, hidden_size
@@ -25,7 +26,7 @@ def load_multi_mqa(
 
 
 def _load_multi_mqa_gptq(
-    config, prefix: str, weights, bias: bool, head_size, num_heads, hidden_size
+        config, prefix: str, weights, bias: bool, head_size, num_heads, hidden_size
 ):
     if any("c_attn" in k for k in weights.routing.keys()) and not config.transpose:
         world_size = weights.process_group.size()
@@ -38,7 +39,7 @@ def _load_multi_mqa_gptq(
         stop = (rank + 1) * block_size
         assert (shape[1] - 2 * head_size) % world_size == 0
         q_tensor = slice_[:, start:stop]
-        kv_tensor = slice_[:, -2 * head_size :]
+        kv_tensor = slice_[:, -2 * head_size:]
         qweight = torch.cat([q_tensor, kv_tensor], dim=1)
         qweight = qweight.to(device=weights.device)
 
@@ -49,7 +50,7 @@ def _load_multi_mqa_gptq(
         stop = (rank + 1) * block_size
         assert (shape[1] - 2 * head_size) % world_size == 0
         q_tensor = slice_[:, start:stop]
-        kv_tensor = slice_[:, -2 * head_size :]
+        kv_tensor = slice_[:, -2 * head_size:]
         scales = torch.cat([q_tensor, kv_tensor], dim=1)
         scales = scales.to(device=weights.device)
 
@@ -60,7 +61,7 @@ def _load_multi_mqa_gptq(
         stop = (rank + 1) * block_size
         assert 2 * head_size % (32 // 4) == 0
         q_tensor = slice_[:, start:stop]
-        kv_tensor = slice_[:, -2 * head_size * 4 // 32 :]
+        kv_tensor = slice_[:, -2 * head_size * 4 // 32:]
         qzeros = torch.cat([q_tensor, kv_tensor], dim=1)
         qzeros = qzeros.to(device=weights.device)
 
@@ -68,19 +69,19 @@ def _load_multi_mqa_gptq(
         g_idx = g_idx.to(device=weights.device)
         bits, groupsize = weights._get_gptq_params()
 
-        from text_generation_server.utils.layers import HAS_GPTQ_CUDA
-        weight = (qweight, qzeros, scales, g_idx, bits, groupsize, HAS_GPTQ_CUDA)
+        from text_generation_server.utils.layers import HAS_EXLLAMA
+        weight = (qweight, qzeros, scales, g_idx, bits, groupsize, HAS_EXLLAMA)
 
         if bias:
             slice_ = weights._get_slice(f"{prefix}.c_attn.bias")
             shape = slice_.get_shape()
             block_size = (shape[0] - 2 * head_size) // world_size
             assert (shape[0] - 2 * head_size) % world_size == 0
-            #q_tensor = slice_[start:stop]
+            # q_tensor = slice_[start:stop]
             start = rank * block_size
             stop = (rank + 1) * block_size
             q_tensor = slice_[start:stop]
-            kv_tensor = slice_[-2 * head_size :]
+            kv_tensor = slice_[-2 * head_size:]
             bias = torch.cat([q_tensor, kv_tensor], dim=0)
             bias = bias.to(device=weights.device)
 
@@ -90,7 +91,7 @@ def _load_multi_mqa_gptq(
 
 
 def _load_multi_mqa(
-    config, prefix: str, weights, bias: bool, head_size, num_heads, hidden_size
+        config, prefix: str, weights, bias: bool, head_size, num_heads, hidden_size
 ):
     if any("c_attn" in k for k in weights.routing.keys()):
         slice_ = weights._get_slice(f"{prefix}.c_attn.weight")
@@ -103,7 +104,7 @@ def _load_multi_mqa(
             stop = (rank + 1) * block_size
             assert (shape[1] - 2 * head_size) % world_size == 0
             q_tensor = slice_[:, start:stop]
-            kv_tensor = slice_[:, -2 * head_size :]
+            kv_tensor = slice_[:, -2 * head_size:]
             weight = torch.cat([q_tensor, kv_tensor], dim=1).T
         else:
             block_size = (shape[0] - 2 * head_size) // world_size
@@ -111,18 +112,18 @@ def _load_multi_mqa(
             stop = (rank + 1) * block_size
             assert (shape[0] - 2 * head_size) % world_size == 0
             q_tensor = slice_[start:stop]
-            kv_tensor = slice_[-2 * head_size :]
+            kv_tensor = slice_[-2 * head_size:]
             weight = torch.cat([q_tensor, kv_tensor], dim=0)
         if bias:
             slice_ = weights._get_slice(f"{prefix}.c_attn.bias")
             shape = slice_.get_shape()
             block_size = (shape[0] - 2 * head_size) // world_size
             assert (shape[0] - 2 * head_size) % world_size == 0
-            #q_tensor = slice_[start:stop]
+            # q_tensor = slice_[start:stop]
             start = rank * block_size
             stop = (rank + 1) * block_size
             q_tensor = slice_[start:stop]
-            kv_tensor = slice_[-2 * head_size :]
+            kv_tensor = slice_[-2 * head_size:]
             bias = torch.cat([q_tensor, kv_tensor], dim=0)
     else:
         if config.transpose:
@@ -191,7 +192,7 @@ def load_row(config, prefix: str, weights, bias: bool):
     )
 
 
-class FlashMQAttention(torch.nn.Module):
+class PagedMQAttention(torch.nn.Module):
     def __init__(self, prefix, config, weights):
         super().__init__()
         num_heads = config.num_attention_heads
@@ -224,13 +225,9 @@ class FlashMQAttention(torch.nn.Module):
         )
 
     def forward(
-        self,
-        hidden_states,
-        cu_seqlens,
-        max_s,
-        layer_past,
-        layer_past_present_indices,
-        cu_seqlens_q,
+            self,
+            hidden_states,
+            cache_data_layer: PagedAttentionCacheDataLayer,
     ):
         qkv = self.c_attn(hidden_states)
 
@@ -242,40 +239,28 @@ class FlashMQAttention(torch.nn.Module):
         # Prepare query and key_value for indexing
         query = query.view(-1, self.num_heads, self.head_size)
         key_value = key_value.view(-1, 2, 1, self.head_size)
+        key = torch.select(key_value, dim=1, index=0)
+        value = torch.select(key_value, dim=1, index=1)
+
+        key_after_store, value_after_store = cache_data_layer.store(key, value)
 
         # Prefill
-        if layer_past_present_indices is None:
-            # Copy to layer past
-            layer_past[...] = key_value
+        if not cache_data_layer.is_filled():
 
             # flash attention
             attn_output = attention(
                 query,
-                torch.select(key_value, dim=1, index=0),
-                torch.select(key_value, dim=1, index=1),
-                cu_seqlens,
-                max_s,
+                key,
+                value,
+                cache_data_layer.context_lengths.int(),
+                cache_data_layer.max_sequence_length,
                 self.softmax_scale,
             )
         # Decode
         else:
-            # Add present to the layer_past tensor at the correct indices
-            layer_past[layer_past_present_indices] = key_value
+            attn_output = cache_data_layer.attend(query)
 
-            # flash attention
-            attn_output = attention(
-                query,
-                layer_past[:, 0],
-                layer_past[:, 1],
-                cu_seqlens,
-                max_s,
-                self.softmax_scale,
-                cu_seqlens_q,
-                1,
-                False,
-            )
-
-        return self.c_proj(attn_output.reshape(-1, self.num_heads * self.head_size))
+        return self.c_proj(attn_output.view(-1, self.num_heads * self.head_size))
 
 
 class MLP(nn.Module):
@@ -317,7 +302,7 @@ class Block(nn.Module):
         self.ln_2 = FastLayerNorm.load(
             prefix=f"{prefix}.ln_2", weights=weights, eps=config.layer_norm_epsilon
         )
-        self.attn = FlashMQAttention(
+        self.attn = PagedMQAttention(
             prefix=f"{prefix}.attn",
             config=config,
             weights=weights,
@@ -332,20 +317,12 @@ class Block(nn.Module):
         self,
         hidden_states,
         residual,
-        cu_seqlens,
-        max_s,
-        layer_past,
-        layer_past_present_indices,
-        cu_seqlens_q,
+        cache_data_layer: PagedAttentionCacheDataLayer
     ):
         hidden_states, residual = self.ln_1(hidden_states, residual)
         hidden_states = self.attn(
             hidden_states,
-            cu_seqlens,
-            max_s,
-            layer_past,
-            layer_past_present_indices,
-            cu_seqlens_q,
+            cache_data_layer,
         )
 
         hidden_states, residual = self.ln_2(hidden_states, residual)
@@ -355,7 +332,7 @@ class Block(nn.Module):
         return mlp_output, residual
 
 
-class FlashSantacoderModel(nn.Module):
+class PagedSantacoderModel(nn.Module):
     def __init__(self, config, weights):
         super().__init__()
         self.config = config
@@ -393,18 +370,14 @@ class FlashSantacoderModel(nn.Module):
         self,
         input_ids,
         position_ids,
-        cu_seqlens,
-        cu_seqlens_q,
-        max_s,
+        cache_data: PagedAttentionCacheData,
         inputs_embeds: Optional[torch.Tensor] = None,
-        past_key_values: Optional[torch.Tensor] = None,
-        pre_allocate_past_size: Optional[int] = None,
     ):
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError(
                 "You cannot specify both input_ids and inputs_embeds at the same time"
             )
-        
+
         if inputs_embeds is not None:
             hidden_states = inputs_embeds + self.wpe(position_ids)
         else:
@@ -413,59 +386,29 @@ class FlashSantacoderModel(nn.Module):
         if self.process_group.size() > 1:
             torch.distributed.all_reduce(hidden_states, group=self.process_group)
 
-        # Prefill
-        if past_key_values is None:
-            # Create past tensor
-            past_key_values = hidden_states.new_empty(
-                (
-                    len(self.h),
-                    len(hidden_states)
-                    if pre_allocate_past_size is None
-                    else pre_allocate_past_size,
-                    2,
-                    1,
-                    self.head_size,
-                )
-            )
-            layer_past_present_indices = None
-            slice_past_index = len(hidden_states)
-        # Decode
-        else:
-            # Create indices from cumulative sequence lengths
-            layer_past_present_indices = cu_seqlens[1:] - 1
-            slice_past_index = None
-
         residual = None
         for i, layer in enumerate(self.h):
-            # We added padding that we now need to slice
-            layer_past_key_values = (
-                past_key_values[i]
-                if slice_past_index is None
-                else past_key_values[i, :slice_past_index]
-            )
-
             hidden_states, residual = layer(
                 hidden_states,
                 residual,
-                cu_seqlens,
-                max_s,
-                layer_past_key_values,
-                layer_past_present_indices,
-                cu_seqlens_q,
+                cache_data.get_layer(i),
             )
 
         hidden_states, _ = self.ln_f(hidden_states, residual)
 
-        return hidden_states, past_key_values
+        return hidden_states
 
 
-class FlashSantacoderForCausalLM(nn.Module):
+class PagedSantacoderForCausalLM(nn.Module):
     def __init__(self, config, weights):
         super().__init__()
-        self.transformer = FlashSantacoderModel(config, weights)
+        self.transformer = PagedSantacoderModel(config, weights)
         self.lm_head = TensorParallelHead.load(
             config, prefix="transformer.wte", weights=weights
         )
+
+    def get_kv_cache_block_size(self, block_size: int) -> int:
+        return block_size * self.transformer.head_size * 2
 
     def get_input_embeddings(self) -> nn.Module:
         return self.transformer.wte
@@ -474,25 +417,18 @@ class FlashSantacoderForCausalLM(nn.Module):
         self,
         input_ids,
         position_ids,
-        cu_seqlens,
-        cu_seqlens_q,
-        max_s,
+        cache_data: Optional[PagedAttentionCacheData],
         inputs_embeds: Optional[torch.Tensor] = None,
-        past_key_values: Optional[torch.Tensor] = None,
-        pre_allocate_past_size: Optional[int] = None,
-        lm_head_indices: Optional[torch.Tensor] = None,
+        return_embeds: bool = False,
     ):
-        hidden_states, present = self.transformer(
+        hidden_states = self.transformer(
             input_ids,
             position_ids,
-            cu_seqlens,
-            cu_seqlens_q,
-            max_s,
+            cache_data,
             inputs_embeds,
-            past_key_values,
-            pre_allocate_past_size,
         )
-        if lm_head_indices is not None:
-            hidden_states = hidden_states[lm_head_indices]
         logits = self.lm_head(hidden_states)
-        return logits, present
+        if return_embeds:
+            return logits, hidden_states
+        else:
+            return logits

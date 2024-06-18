@@ -1,4 +1,6 @@
 import os
+from enum import Enum
+
 import torch
 import torch.distributed
 
@@ -11,8 +13,10 @@ from text_generation_server.utils import print_rank_n
 from accelerate import init_empty_weights
 
 HAS_BITS_AND_BYTES = False
-HAS_EXLLAMA = False
 EXLLAMA_VERSION = None
+HAS_GPTQ_CUDA = False
+GPTQ_CUDA_TYPE = os.getenv("GPTQ_CUDA_TYPE", "exllama").lower()
+GPTQ_CUDA_LINEAR = None
 
 if torch.cuda.is_available():
     try:
@@ -24,24 +28,34 @@ if torch.cuda.is_available():
 
     from text_generation_server.utils.gptq.quant_linear import QuantLinear
 
-    if os.getenv("DISABLE_EXLLAMA", "False").lower() != "true":
-        try:
-            EXLLAMA_VERSION = os.getenv("EXLLAMA_VERSION", "2") # Use v2 as default
-            if EXLLAMA_VERSION == "1":
-                from text_generation_server.utils.gptq.exllama import Ex4bitLinear as ExllamaQuantLinear
-            elif EXLLAMA_VERSION == "2":
-                from text_generation_server.utils.gptq.exllamav2 import Ex4bitLinearV2 as ExllamaQuantLinear
-            else:
-                raise ValueError(f"Unsupported value for EXLLAMA_VERSION: {EXLLAMA_VERSION}")
-            HAS_EXLLAMA = True
-        except ImportError as e:
-            print_rank_n(f"Error importing ExllamaV{EXLLAMA_VERSION} kernels: {e}")
-            EXLLAMA_VERSION = None
+    if os.getenv("DISABLE_EXLLAMA", "False").lower() != "true": # Turn off all GPTQ CUDA kernels if set to true
+        if GPTQ_CUDA_TYPE == "exllama":
+            try:
+                EXLLAMA_VERSION = os.getenv("EXLLAMA_VERSION", "2") # Use v2 as default
+                if EXLLAMA_VERSION == "1": # TODO: consider removing v1 kernel
+                    from text_generation_server.utils.gptq.exllama import Ex4bitLinear as ExllamaQuantLinear
+                elif EXLLAMA_VERSION == "2":
+                    from text_generation_server.utils.gptq.exllamav2 import Ex4bitLinearV2 as ExllamaQuantLinear
+                else:
+                    raise ValueError(f"Unsupported value for EXLLAMA_VERSION: {EXLLAMA_VERSION}")
+                HAS_GPTQ_CUDA = True
+                GPTQ_CUDA_LINEAR = ExllamaQuantLinear
+            except ImportError as e:
+                print_rank_n(f"Error importing ExllamaV{EXLLAMA_VERSION} kernels: {e}")
+                EXLLAMA_VERSION = None
+        elif GPTQ_CUDA_TYPE == "marlin":
+            try:
+                from text_generation_server.utils.gptq.marlin import MarlinQuantLinear
+                GPTQ_CUDA_LINEAR = MarlinQuantLinear
+                HAS_GPTQ_CUDA = True
+            except ImportError as e:
+                print_rank_n(f"Error importing Marlin kernels: {e}")
+        else:
+            print_rank_n(f"Invalid GPTQ_CUDA_TYPE {GPTQ_CUDA_TYPE}")
 
     print_rank_n(
-        f"HAS_BITS_AND_BYTES={HAS_BITS_AND_BYTES}, HAS_EXLLAMA={HAS_EXLLAMA}, EXLLAMA_VERSION={EXLLAMA_VERSION}"
+        f"HAS_BITS_AND_BYTES={HAS_BITS_AND_BYTES}, HAS_GPTQ_CUDA={HAS_GPTQ_CUDA}, EXLLAMA_VERSION={EXLLAMA_VERSION}, GPTQ_CUDA_TYPE={GPTQ_CUDA_TYPE}"
     )
-
 
 # Monkey patching
 @classmethod
@@ -169,13 +183,13 @@ def get_linear(weight, bias, quantize):
             linear.bias = nn.Parameter(bias)
     elif quantize == "gptq":
         try:
-            qweight, qzeros, scales, g_idx, bits, groupsize, use_exllama = weight
+            qweight, qzeros, scales, g_idx, bits, groupsize, use_gptq_cuda = weight
         except Exception:
             raise NotImplementedError(
                 f"The passed weight is not `gptq` compatible, loader needs to be updated."
             )
-
-        linear = (ExllamaQuantLinear if use_exllama else QuantLinear)(
+        
+        linear = (QuantLinear if not use_gptq_cuda else GPTQ_CUDA_LINEAR)(
             qweight,
             qzeros,
             scales,
@@ -389,11 +403,12 @@ try:
     from flash_attn.layers.rotary import RotaryEmbedding
     import rotary_emb
 
-    class PositionRotaryEmbedding(nn.Module):
-        def __init__(self, inv_freq):
+    class BasePositionRotaryEmbedding(nn.Module):
+        def __init__(self, inv_freq, scaling_factor=1.0):
             super().__init__()
 
             self.inv_freq = inv_freq
+            self.scaling_factor = scaling_factor
             self._seq_len_cached = 0
             self._cos_cached = None
             self._sin_cached = None
@@ -401,12 +416,12 @@ try:
             self._sin_k_cached = None
 
         @classmethod
-        def static(cls, dim, base, device):
+        def static(cls, dim, base, device, scaling_factor=1.0):
             inv_freq = 1.0 / (
                 base
                 ** (torch.arange(0, dim, 2, device=device, dtype=torch.float32) / dim)
             )
-            return cls(inv_freq)
+            return cls(inv_freq, scaling_factor)
 
         @classmethod
         def load(cls, prefix, weights):
@@ -427,6 +442,8 @@ try:
             ):
                 self._seq_len_cached = seqlen
                 t = torch.arange(seqlen, device=device, dtype=self.inv_freq.dtype)
+                if self.scaling_factor != 1.0:
+                    t = t / self.scaling_factor
                 # Don't do einsum, it converts fp32 to fp16
                 # freqs = torch.einsum("i,j->ij", t, self.inv_freq)
                 freqs = torch.outer(t, self.inv_freq.to(device=t.device))
@@ -453,6 +470,24 @@ try:
 
             rotary_emb.apply_rotary(x1, x2, cos, sin, x1, x2, False)
             return x
+
+    class PositionRotaryEmbedding(BasePositionRotaryEmbedding):
+        @classmethod
+        def static(cls, dim, base, device):
+            inv_freq = 1.0 / (
+                base
+                ** (torch.arange(0, dim, 2, device=device, dtype=torch.float32) / dim)
+            )
+            return cls(inv_freq)
+
+    class LinearScalingPositionRotaryEmbedding(BasePositionRotaryEmbedding):
+        @classmethod
+        def static(cls, dim, base, scaling_factor, device):
+            inv_freq = 1.0 / (
+                base
+                ** (torch.arange(0, dim, 2, device=device, dtype=torch.float32) / dim)
+            )
+            return cls(inv_freq, scaling_factor)
 
 except ImportError:
     pass

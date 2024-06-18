@@ -166,6 +166,7 @@ def convert_to_safetensors(
         config = transformers.AutoConfig.from_pretrained(
             model_name,
             revision=revision,
+            trust_remote_code=utils.TRUST_REMOTE_CODE
         )
         architecture = config.architectures[0]
 
@@ -184,7 +185,7 @@ def convert_to_safetensors(
         local_st_index_file = local_pt_index_file.parent / f"{st_prefix}.safetensors.index.json"
 
         if os.path.exists(local_st_index_file):
-            print("Existing .safetensors.index.json file found, remove it first to reconvert")
+            print("Existing model.safetensors.index.json file found, remove it first to reconvert")
             return
 
         utils.convert_index_file(local_pt_index_file, local_st_index_file, local_pt_files, local_st_files)
@@ -251,4 +252,14 @@ def convert_to_fast_tokenizer(
 
 
 if __name__ == "__main__":
+
+    # Use of TRANSFORMERS_CACHE is deprecated
+    if (tc := os.getenv("TRANSFORMERS_CACHE")) is not None:
+        print("WARNING: Using TRANSFORMERS_CACHE is deprecated. Use HF_HUB_CACHE instead.")
+        hc = os.getenv("HF_HUB_CACHE")
+        if tc != hc:
+            raise ValueError("Conflicting model cache values between TRANSFORMERS_CACHE and HF_HUB_CACHE")
+        if hc is None:
+            os.putenv("HF_HUB_CACHE", tc)
+
     app()

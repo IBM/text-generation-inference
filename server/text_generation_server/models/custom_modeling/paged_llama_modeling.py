@@ -29,13 +29,13 @@ from typing import Optional
 # Flash attention imports
 import dropout_layer_norm
 
+from fms_extras.utils.cache.paged import PagedAttentionCacheData, PagedAttentionCacheDataLayer
 from text_generation_server.utils.flash_attn import attention
 from text_generation_server.utils.layers import (
     TensorParallelRowLinear,
     TensorParallelColumnLinear,
     TensorParallelEmbedding,
     PositionRotaryEmbedding,
-    LinearScalingPositionRotaryEmbedding,
     TensorParallelHead,
     get_linear,
 )
@@ -180,7 +180,7 @@ def _load_gqa(config, prefix: str, weights):
     return TensorParallelColumnLinear(get_linear(weight, bias=bias, quantize=config.quantize))
 
 
-class FlashLlamaAttention(torch.nn.Module):
+class PagedLlamaAttention(torch.nn.Module):
     def __init__(
         self,
         prefix: str,
@@ -192,22 +192,9 @@ class FlashLlamaAttention(torch.nn.Module):
         self.hidden_size = config.hidden_size
         self.head_size = self.hidden_size // self.num_heads
 
-        if config.rope_scaling and "type" in config.rope_scaling:
-            if config.rope_scaling["type"] == "linear":
-                self.rotary_emb = LinearScalingPositionRotaryEmbedding.static(
-                    dim=self.head_size,
-                    base=config.rope_theta,
-                    scaling_factor=config.rope_scaling.get("factor", 1.0),
-                    device=weights.device
-                )
-            else:
-                raise ValueError(
-                    f"rope_scaling of type f{config.rope_scaling.type} is not supported with FLASH_ATTENTION=True"
-                )
-        else:
-            self.rotary_emb = PositionRotaryEmbedding.static(
-                dim=self.head_size, base=config.rope_theta, device=weights.device
-            )
+        self.rotary_emb = PositionRotaryEmbedding.static(
+            dim=self.head_size, base=config.rope_theta, device=weights.device
+        )
 
         self.softmax_scale = self.head_size**-0.5
 
@@ -242,11 +229,7 @@ class FlashLlamaAttention(torch.nn.Module):
         hidden_states,
         cos,
         sin,
-        cu_seqlens,
-        max_s,
-        layer_past,
-        layer_past_present_indices,
-        cu_seqlens_q,
+        cache_data_layer: PagedAttentionCacheDataLayer
     ):
         qkv = self.query_key_value(hidden_states)
         query, kv = qkv.split(
@@ -256,45 +239,33 @@ class FlashLlamaAttention(torch.nn.Module):
             ],
             dim=1,
         )
+
         query = query.view(-1, self.num_heads, self.head_size)
         kv = kv.view(-1, 2, self.num_key_value_heads, self.head_size)
+        key = torch.select(kv, dim=1, index=0)
+        value = torch.select(kv, dim=1, index=1)
 
         self.rotary_emb(query, cos, sin)
-        self.rotary_emb(torch.select(kv, dim=1, index=0), cos, sin)
+        self.rotary_emb(key, cos, sin)
+        key_after_store, value_after_store = cache_data_layer.store(key, value)
 
         # Prefill
-        if layer_past_present_indices is None:
-            # Copy to layer past
-            layer_past[...] = kv
+        if not cache_data_layer.is_filled():
 
             # flash attention
             attn_output = attention(
                 query,
-                torch.select(kv, dim=1, index=0),
-                torch.select(kv, dim=1, index=1),
-                cu_seqlens,
-                max_s,
+                key,
+                value,
+                cache_data_layer.context_lengths.int(),
+                cache_data_layer.max_sequence_length,
                 self.softmax_scale,
             )
+            return self.o_proj(attn_output.reshape(-1, self.num_heads * self.head_size))
         # Decode
         else:
-            # Add present to the layer_past tensor at the correct indices
-            layer_past[layer_past_present_indices] = kv
-
-            # flash attention
-            attn_output = attention(
-                query,
-                layer_past[:, 0],
-                layer_past[:, 1],
-                cu_seqlens,
-                max_s,
-                self.softmax_scale,
-                cu_seqlens_q,
-                1,
-                False,
-            )
-
-        return self.o_proj(attn_output.reshape(-1, self.num_heads * self.head_size))
+            attn_output = cache_data_layer.attend(query)
+            return self.o_proj(attn_output.view(-1, self.num_heads * self.head_size))
 
 
 class LlamaMLP(nn.Module):
@@ -335,11 +306,11 @@ class LlamaMLP(nn.Module):
         return self.down_proj(self.act(gate_up_states[:, 0]) * gate_up_states[:, 1])
 
 
-class FlashLlamaLayer(nn.Module):
+class PagedLlamaLayer(nn.Module):
     def __init__(self, layer_id, config, weights):
         super().__init__()
         prefix = f"model.layers.{layer_id}"
-        self.self_attn = FlashLlamaAttention(
+        self.self_attn = PagedLlamaAttention(
             prefix=f"{prefix}.self_attn", config=config, weights=weights
         )
         self.mlp = LlamaMLP(prefix=f"{prefix}.mlp", config=config, weights=weights)
@@ -359,11 +330,7 @@ class FlashLlamaLayer(nn.Module):
         residual,
         cos,
         sin,
-        cu_seqlens,
-        max_s,
-        layer_past,
-        layer_past_present_indices,
-        cu_seqlens_q,
+        cache_data_layer: PagedAttentionCacheDataLayer
     ):
         normed_hidden_states, res = self.input_layernorm(hidden_states, residual)
 
@@ -372,11 +339,7 @@ class FlashLlamaLayer(nn.Module):
             normed_hidden_states,
             cos,
             sin,
-            cu_seqlens,
-            max_s,
-            layer_past,
-            layer_past_present_indices,
-            cu_seqlens_q,
+            cache_data_layer,
         )
 
         # faster post attention rms norm
@@ -389,7 +352,7 @@ class FlashLlamaLayer(nn.Module):
         return mlp_output, attn_res
 
 
-class FlashLlamaModel(torch.nn.Module):
+class PagedLlamaModel(torch.nn.Module):
     def __init__(self, config, weights):
         super().__init__()
         self.config = config
@@ -402,7 +365,7 @@ class FlashLlamaModel(torch.nn.Module):
         )
         self.layers = nn.ModuleList(
             [
-                FlashLlamaLayer(
+                PagedLlamaLayer(
                     layer_id,
                     config,
                     weights,
@@ -426,87 +389,53 @@ class FlashLlamaModel(torch.nn.Module):
         self,
         input_ids,
         position_ids,
-        cu_seqlens,
-        cu_seqlens_q,
-        max_s,
+        cache_data: PagedAttentionCacheData,
         inputs_embeds: Optional[torch.Tensor] = None,
-        past_key_values: Optional[torch.Tensor] = None,
-        pre_allocate_past_size: Optional[int] = None,
     ):
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError(
                 "You cannot specify both input_ids and inputs_embeds at the same time"
             )
-        
+
         if inputs_embeds is not None:
             hidden_states = inputs_embeds
         else:
             hidden_states = self.embed_tokens(input_ids)
 
-        # Prefill
-        if past_key_values is None:
-            # Create past tensor
-            past_key_values = hidden_states.new_empty(
-                (
-                    len(self.layers),
-                    len(hidden_states)
-                    if pre_allocate_past_size is None
-                    else pre_allocate_past_size,
-                    2,
-                    self.num_key_value_heads,
-                    self.head_size,
-                )
-            )
-            layer_past_present_indices = None
-            slice_past_index = len(hidden_states)
-        # Decode
-        else:
-            # Create indices from cumulative sequence lengths
-            layer_past_present_indices = cu_seqlens[1:] - 1
-            slice_past_index = None
-
         # Get rotary cos and sin for this forward
         # Avoid to index in each layer
         cos, sin = self.layers[0].self_attn.rotary_emb.get_cos_sin(
-            position_ids, max_s, hidden_states.dtype
+            position_ids, cache_data.max_sequence_length, hidden_states.dtype
         )
 
         residual = None
         for i, layer in enumerate(self.layers):
-            # We added padding that we now need to slice
-            layer_past_key_values = (
-                past_key_values[i]
-                if slice_past_index is None
-                else past_key_values[i, :slice_past_index]
-            )
-
             hidden_states, residual = layer(
                 hidden_states,
                 residual,
                 cos,
                 sin,
-                cu_seqlens,
-                max_s,
-                layer_past_key_values,
-                layer_past_present_indices,
-                cu_seqlens_q,
+                cache_data.get_layer(i),
             )
 
         hidden_states, _ = self.norm(hidden_states, residual)
 
-        return hidden_states, past_key_values
+        return hidden_states
 
 
-class FlashLlamaForCausalLM(torch.nn.Module):
+class PagedLlamaForCausalLM(torch.nn.Module):
     def __init__(self, config, weights):
         super().__init__()
 
-        self.model = FlashLlamaModel(config, weights)
+        self.model = PagedLlamaModel(config, weights)
         self.lm_head = TensorParallelHead.load(
             config,
             prefix="lm_head",
             weights=weights,
         )
+
+    def get_kv_cache_block_size(self, block_size: int) -> int:
+        return block_size * self.model.num_key_value_heads * self.model.head_size * 2
 
     def get_input_embeddings(self) -> nn.Module:
         return self.model.embed_tokens
@@ -515,26 +444,19 @@ class FlashLlamaForCausalLM(torch.nn.Module):
         self,
         input_ids,
         position_ids,
-        cu_seqlens,
-        cu_seqlens_q,
-        max_s,
+        cache_data: Optional[PagedAttentionCacheData],
         inputs_embeds: Optional[torch.Tensor] = None,
-        past_key_values: Optional[torch.Tensor] = None,
-        pre_allocate_past_size: Optional[int] = None,
-        lm_head_indices: Optional[torch.Tensor] = None,
+        return_embeds: bool = False,
     ):
 
-        hidden_states, present = self.model(
+        hidden_states = self.model(
             input_ids,
             position_ids,
-            cu_seqlens,
-            cu_seqlens_q,
-            max_s,
+            cache_data,
             inputs_embeds,
-            past_key_values,
-            pre_allocate_past_size,
         )
-        if lm_head_indices is not None:
-            hidden_states = hidden_states[lm_head_indices]
         logits = self.lm_head(hidden_states)
-        return logits, present
+        if return_embeds:
+            return logits, hidden_states
+        else:
+            return logits

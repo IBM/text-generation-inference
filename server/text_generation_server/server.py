@@ -15,8 +15,9 @@ from pathlib import Path
 from typing import List, Optional
 
 from text_generation_server.cache import Cache
-from text_generation_server.models import Model, get_model, Seq2SeqLM, PT2_COMPILE
+from text_generation_server.models import Model, get_model, Seq2SeqLM, PT2_COMPILE, PAGED_ATTENTION
 from text_generation_server.models.flash_causal_lm import FlashCausalLM
+from text_generation_server.models.types import Batch
 from text_generation_server.pb import generate_pb2_grpc, generate_pb2
 from text_generation_server.pb.generate_pb2 import ModelInfoResponse
 from text_generation_server.pb.generate_pb2 import MemoryScalingModel as MemoryScalingModelPB
@@ -55,7 +56,7 @@ def log_rpc_handler_errors(func):
 
 
 class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
-    def __init__(self, model: Model, cache: Cache, server_urls: List[str], memory_scaling_model: MemoryScalingModelPB):
+    def __init__(self, model: Model, cache: Cache, server_urls: List[str], memory_scaling_model: MemoryScalingModel):
         self.cache = cache
         self.model = model
         self.server_urls = server_urls
@@ -78,9 +79,9 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
         return generate_pb2.ModelInfoResponse(
             model_type=ModelInfoResponse.ModelType.SEQ2SEQ_LM
                 if isinstance(self.model, Seq2SeqLM) else ModelInfoResponse.ModelType.CAUSAL_LM,
-            eos_token=self.model.config.eos_token_id,
+            eos_token=getattr(self.model.tokenizer, 'model_eos_token_id', self.model.tokenizer.eos_token_id),
             batch_padding=not isinstance(self.model, FlashCausalLM),
-            memory_scaling_model=self.memory_scaling_model,
+            memory_scaling_model=self.memory_scaling_model.as_pb(),
         )
 
     @log_rpc_handler_errors
@@ -109,9 +110,13 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
                 if batch_to_prune is None:
                     raise ValueError(f"Batch ID {cbatch.batch_id} not found in cache.")
 
-                if cbatch.HasField("status"):
-                    pruned_batch = self.model.batch_type.prune(batch_to_prune, cbatch.status.completed_ids)
+                completed_ids = cbatch.status.completed_ids if cbatch.HasField("status") else None
+                self._free_paged_sequences(batch_to_prune, completed_ids)
+                if completed_ids is not None:
+                    completed_ids = cbatch.status.completed_ids
+                    pruned_batch = self.model.batch_type.prune(batch_to_prune, completed_ids)
                     self.cache.set(pruned_batch)
+                # else entire batch is completed
 
                 # Ensure completed batches are garbage collected before calling prefill
                 del batch_to_prune
@@ -136,13 +141,22 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
             batch_id = 0
             if batch is not None:
                 for_concat = len(self.cache) > 0
-                # Prefill and generate first token
-                output_tokens, input_token_info, decode_errors, forward_time_ns = self.model.generate_token(
-                    batch, first=True, for_concat=for_concat,
-                )
-                clean_attribute("past_key_values", batch.past_key_values)
+                try:
+                    # Prefill and generate first token
+                    output_tokens, input_token_info, decode_errors, forward_time_ns = self.model.generate_token(
+                        batch, first=True, for_concat=for_concat,
+                    )
+                except:
+                    self._free_paged_sequences(batch, None)
+                    raise
+
+                if hasattr(batch, "past_key_values"):
+                    clean_attribute("past_key_values", batch.past_key_values)
                 if not is_healthcheck:
                     self.cache.set(batch)
+                else:
+                    self._free_paged_sequences(batch, None)
+
                 batch_id = batch.get_id()
                 if errors:
                     errors.extend(decode_errors)
@@ -174,12 +188,15 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
             batches = []
             for cbatch in request.batches:
                 batch = self.cache.pop(cbatch.batch_id)
-                if cbatch.HasField("status"):
+                completed_ids = cbatch.status.completed_ids if cbatch.HasField("status") else None
+                self._free_paged_sequences(batch, completed_ids)
+                if completed_ids is not None:
                     if batch is None:
                         raise ValueError(f"Batch ID {cbatch.batch_id} not found in cache.")
-                    batch = self.model.batch_type.prune(batch, cbatch.status.completed_ids)
+                    batch = self.model.batch_type.prune(batch, completed_ids)
                     if batch is not None:
                         batches.append(batch)
+                # else entire batch is completed
 
             if len(self.cache) > 0:
                 print(f"WARN: Clearing additional batches found in cache: {self.cache.keys()}")
@@ -194,7 +211,12 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
             # Ensure batches are garbage-collected post-concatenation
             del batches
 
-            output_tokens, _, errors, forward_time_ns = self.model.generate_token(batch)
+            try:
+                output_tokens, _, errors, forward_time_ns = self.model.generate_token(batch)
+            except:
+                self._free_paged_sequences(batch, None)
+                raise
+
             self.cache.set(batch)
 
             return generate_pb2.NextTokenResponse(
@@ -208,6 +230,23 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
                 )
             )
 
+    def _free_paged_sequences(self, batch: "Batch", completed_ids: Optional[List[int]]):
+        """completed_ids == None means free entire batch"""
+        if not hasattr(self.model, "kv_cache_manager") or batch is None:
+            return
+        # Here we assume that the batch type is PagedCausalLMBatch
+        if completed_ids is None:
+            sequence_ids_to_free = batch.sequence_ids  # free all
+        elif completed_ids:
+            sequence_ids_to_free = [
+                batch.sequence_ids[i] for i, request in enumerate(batch.requests)
+                if request.id in completed_ids
+            ]
+        else:
+            return
+
+        if sequence_ids_to_free is not None:
+            self.model.kv_cache_manager.free_sequences(sequence_ids_to_free, recursive=True)
 
 def serve(
     model_name: str,
@@ -235,6 +274,38 @@ def serve(
         batch_safety_margin: int,
         sharded: bool = False,
     ):
+        if quantize not in [None, "gptq", "bitsandbytes"]:
+            raise ValueError(f"Unrecognized quantization method specified: {quantize}")
+
+        if quantize is None and dtype_str == "int8":
+            print_rank_n("Inferring quantize = bitsandbytes because dtype == int8")
+            quantize = "bitsandbytes"
+
+        cuda_available = torch.cuda.is_available()
+
+        # Default dtype based on device if not provided
+        if dtype_str is None:
+            dtype_str = "float16" if cuda_available else "float32"
+
+        if quantize is not None and not cuda_available:
+            raise ValueError("Quantization requires CUDA")
+
+        if ESTIMATE_MEMORY == "auto" and PAGED_ATTENTION:
+            # fit memory model using flash model in separate process (ensures GPU memory is entirely cleaned up)
+            from text_generation_server.utils.paged import fit_memory_scaling_model
+            from multiprocessing import get_context
+            mp = get_context("spawn")
+            q_out = mp.Queue(1)
+            proc = mp.Process(target=fit_memory_scaling_model, args=(
+                model_name, revision, deployment_framework, dtype_str, quantize,
+                max_sequence_length, batch_safety_margin, cuda_process_memory_fraction, q_out
+            ))
+            proc.start()
+            memory_scaling_model_ext = q_out.get()
+            proc.join()
+        else:
+            memory_scaling_model_ext = None
+
         unix_socket_template = "unix://{}-{}"
         world_size = int(os.getenv("WORLD_SIZE", "1"))
         local_rank = int(os.getenv("RANK", "0"))
@@ -244,28 +315,12 @@ def serve(
         ]
         local_url = server_urls[local_rank]
 
-        if quantize not in [None, "gptq", "bitsandbytes"]:
-            raise ValueError(f"Unrecognized quantization method specified: {quantize}")
-
-        # Default dtype based on device if not provided
-        if dtype_str is None:
-            dtype_str = "float16" if torch.cuda.is_available() else "float32"
-
-        if quantize is None and dtype_str == "int8":
-            print_rank_n("Inferring quantize = bitsandbytes because dtype == int8")
-            quantize = "bitsandbytes"
-
-        cuda_available = torch.cuda.is_available()
-
-        if quantize is not None and not cuda_available:
-            raise ValueError("Quantization requires CUDA")
-
         # Set the fraction of cuda/gpu mem available to this process, then load the model
         if cuda_available and cuda_process_memory_fraction < 1:
             torch.cuda.set_per_process_memory_fraction(cuda_process_memory_fraction)
 
         model = get_model(
-            model_name, revision, deployment_framework, dtype_str, quantize, max_sequence_length
+            model_name, revision, deployment_framework, dtype_str, quantize, max_sequence_length, memory_scaling_model_ext,
         )
 
         device = model.engine.get_device()
@@ -277,21 +332,19 @@ def serve(
             print(model.config.__str__())
 
         if quantize == "gptq" and deployment_framework == "tgis_native":
-            from text_generation_server.utils.layers import HAS_EXLLAMA, EXLLAMA_VERSION
-            if HAS_EXLLAMA:
+            from text_generation_server.utils.layers import HAS_GPTQ_CUDA, EXLLAMA_VERSION
+            if HAS_GPTQ_CUDA and EXLLAMA_VERSION is not None:
                 try:
                     # When using GPTQ, Exllama kernels need some global kernels
                     # For which we have the final shapes only after the model has loaded
                     # This will allocate those buffers.
-
                     if EXLLAMA_VERSION == "1":
                         from text_generation_server.utils.gptq.exllama import (
                             create_exllama_buffers, set_device,
                         )
                         set_device(device)
                         create_exllama_buffers(max_sequence_length)
-                    else:
-                        assert EXLLAMA_VERSION == "2"
+                    elif EXLLAMA_VERSION == "2":
                         from text_generation_server.utils.gptq.exllamav2 import (
                             set_device, Ex4bitLinearV2,
                         )
@@ -299,7 +352,8 @@ def serve(
                         for _, submodule in model.model.named_modules():
                             if isinstance(submodule, Ex4bitLinearV2):
                                 submodule.post_init()  # make q matrix and set scratch space
-
+                    else:
+                        raise ValueError(f"Unsupported {EXLLAMA_VERSION=}") 
                 except ImportError:
                     print("WARN: Error setting up GPTQ exllama buffers")
 
@@ -344,7 +398,10 @@ def serve(
         run_estimate = PT2_COMPILE or ESTIMATE_MEMORY == "auto"
         memory_scaling_model = MemoryScalingModel.disabled()
 
-        if run_estimate:
+        if run_estimate and PAGED_ATTENTION:
+            # use memory scaling model learned in separate process
+            memory_scaling_model = memory_scaling_model_ext
+        elif run_estimate:
             memory_scaling_model = estimate_memory()
 
             if PT2_COMPILE:
@@ -370,7 +427,7 @@ def serve(
 
         server = aio.server()
         generate_pb2_grpc.add_TextGenerationServiceServicer_to_server(
-            TextGenerationService(model, Cache(), server_urls, memory_scaling_model.as_pb()), server
+            TextGenerationService(model, Cache(), server_urls, memory_scaling_model), server
         )
         # SERVICE_NAMES = (
         #     generate_pb2.DESCRIPTOR.services_by_name["TextGenerationService"].full_name,

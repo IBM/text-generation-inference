@@ -1,14 +1,25 @@
+use std::{
+    fs::File,
+    io,
+    io::Write,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+};
+
 /// Text Generation Inference external gRPC server entrypoint
 use clap::Parser;
-use std::fs::File;
-use std::io;
-use std::io::Write;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use opentelemetry::{
+    global,
+    KeyValue,
+};
+use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
+use opentelemetry_sdk::{Resource, trace};
+use opentelemetry_sdk::trace::Sampler;
 use text_generation_client::ShardedClient;
-use text_generation_router::server;
+use text_generation_router::{server, server::ServerRunArgs};
 use tokenizers::Tokenizer;
 use tracing::warn;
-use text_generation_router::server::ServerRunArgs;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
 /// App Configuration
 #[derive(Parser, Debug)]
@@ -48,6 +59,14 @@ struct Args {
     output_special_tokens: bool,
     #[clap(long, env)]
     default_include_stop_seqs: bool,
+    #[clap(long, env)]
+    otlp_endpoint: Option<String>,
+    #[clap(
+        long,
+        env = "OTEL_SERVICE_NAME",
+        default_value = "text-generation-inference.router"
+    )]
+    otlp_service_name: String,
 }
 
 fn main() -> Result<(), std::io::Error> {
@@ -67,18 +86,12 @@ fn main() -> Result<(), std::io::Error> {
     // Get args
     let args = Args::parse();
 
-    if args.json_output {
-        tracing_subscriber::fmt().json().with_current_span(false).init();
-    } else {
-        tracing_subscriber::fmt().compact().init();
-    }
-
     // Validate args
     validate_args(&args);
 
     // Instantiate tokenizer
-    let mut tokenizer = Tokenizer::from_file(args.tokenizer_path)
-        .expect("Problem loading tokenizer for model");
+    let mut tokenizer =
+        Tokenizer::from_file(args.tokenizer_path).expect("Problem loading tokenizer for model");
 
     if let Some(tp) = tokenizer.get_truncation() {
         if tp.max_length < args.max_sequence_length {
@@ -99,6 +112,7 @@ fn main() -> Result<(), std::io::Error> {
         .build()
         .unwrap()
         .block_on(async {
+            init_logging(args.otlp_endpoint, args.json_output, args.otlp_service_name);
             // Instantiate sharded client from the master unix socket
             let mut sharded_client = ShardedClient::connect_uds(args.master_shard_uds_path)
                 .await
@@ -114,17 +128,16 @@ fn main() -> Result<(), std::io::Error> {
             tracing::info!("Using pool of {tokenization_workers} threads for tokenization");
 
             // Clear the cache; useful if this process rebooted
-            sharded_client.clear_cache().await.expect("Unable to clear cache");
+            sharded_client
+                .clear_cache()
+                .await
+                .expect("Unable to clear cache");
             tracing::info!("Connected");
 
-            let grpc_addr = SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), args.grpc_port
-            );
+            let grpc_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), args.grpc_port);
 
             // Binds on localhost
-            let addr = SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), args.port
-            );
+            let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), args.port);
 
             // Run server
             server::run(ServerRunArgs {
@@ -139,7 +152,9 @@ fn main() -> Result<(), std::io::Error> {
                 tokenization_workers,
                 addr,
                 grpc_addr,
-                tls_key_pair: args.tls_cert_path.map(|cp| (cp, args.tls_key_path.unwrap())),
+                tls_key_pair: args
+                    .tls_cert_path
+                    .map(|cp| (cp, args.tls_key_path.unwrap())),
                 tls_client_ca_cert: args.tls_client_ca_cert_path,
                 output_special_tokens: args.output_special_tokens,
                 default_include_stop_seqs: args.default_include_stop_seqs,
@@ -188,7 +203,62 @@ fn validate_args(args: &Args) {
 fn write_termination_log(msg: &str) -> Result<(), io::Error> {
     // Writes a message to the termination log.
     // Creates the logfile if it doesn't exist.
-    let mut f = File::options().write(true).create(true).truncate(true).open("/dev/termination-log")?;
+    let mut f = File::options()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open("/dev/termination-log")?;
     writeln!(f, "{}", msg)?;
     Ok(())
+}
+
+fn init_logging(otlp_endpoint: Option<String>, json_output: bool, otlp_service_name: String) {
+    let mut layers = Vec::new();
+
+    // STDOUT/STDERR layer
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_file(true)
+        .with_line_number(true);
+
+    let fmt_layer = match json_output {
+        true => fmt_layer.json().flatten_event(true).boxed(),
+        false => fmt_layer.boxed(),
+    };
+    layers.push(fmt_layer);
+
+    // OpenTelemetry tracing layer
+    if let Some(otlp_endpoint) = otlp_endpoint {
+        global::set_text_map_propagator(TraceContextPropagator::new());
+
+        let tracer = opentelemetry_otlp::new_pipeline()
+            .tracing()
+            .with_exporter(
+                opentelemetry_otlp::new_exporter()
+                    .tonic()
+                    .with_endpoint(otlp_endpoint),
+            )
+            .with_trace_config(
+                trace::config()
+                    .with_resource(Resource::new(vec![KeyValue::new(
+                        "service.name",
+                        otlp_service_name,
+                    )]))
+                    .with_sampler(Sampler::AlwaysOn),
+            )
+            .install_batch(opentelemetry_sdk::runtime::Tokio);
+
+        if let Ok(tracer) = tracer {
+            layers.push(tracing_opentelemetry::layer().with_tracer(tracer).boxed());
+            axum_tracing_opentelemetry::init_propagator().unwrap();
+        };
+    }
+
+    // Filter events with LOG_LEVEL
+    let env_filter =
+        EnvFilter::try_from_env("LOG_LEVEL").unwrap_or_else(|_| EnvFilter::new("info"));
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(layers)
+        .init();
 }

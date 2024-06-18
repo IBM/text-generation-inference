@@ -1,8 +1,8 @@
-use std::cmp::max;
-use std::collections::BTreeSet;
-use nohash_hasher::IntMap;
-use crate::queue::Entry;
+use std::{cmp::max, collections::BTreeSet};
 
+use nohash_hasher::IntMap;
+
+use crate::queue::Entry;
 
 pub(crate) trait BatchType: Send + Sync + Clone + 'static {
     type Stats: Default;
@@ -19,24 +19,26 @@ pub(crate) trait BatchType: Send + Sync + Clone + 'static {
     fn percent_padding(prefill_stats: &Self::Stats, batch_size: usize) -> f32;
     /// Indicate whether a hypothetical batch will exceed the combined weight limit
     fn exceeds_weight(
-        &self, tree: &BTreeSet<(usize, usize, usize)>, max_total_weight: usize, current_output_len: usize
+        &self,
+        tree: &BTreeSet<(usize, usize, usize)>,
+        max_total_weight: usize,
+        current_output_len: usize,
     ) -> bool;
     /// Provide a count of tokens for a given batch, including padding tokens if applicable
-    fn count_tokens(input_lengths: impl Iterator<Item=usize>, batch_size: usize) -> usize;
+    fn count_tokens(input_lengths: impl Iterator<Item = usize>, batch_size: usize) -> usize;
 
     /// Compute batch statistics given map of entries
     fn compute_stats(entries: &IntMap<u64, Entry>) -> Self::Stats {
-        entries.iter().fold(
-            Self::Stats::default(),
-            |stats, (_, entry)| {
+        entries
+            .iter()
+            .fold(Self::Stats::default(), |stats, (_, entry)| {
                 let generated_count = entry.generated_tokens;
                 Self::update_stats(
                     &stats,
                     entry.input_length + entry.prefix_length + generated_count as usize,
                     (entry.request.parameters.max_new_tokens - generated_count) as usize,
                 )
-            }
-        )
+            })
     }
 }
 
@@ -52,10 +54,15 @@ impl BatchType for FlashBatch {
     type Stats = (usize, usize);
 
     fn update_stats(
-        total_tokens: &Self::Stats, input_length: usize, output_length: usize
+        total_tokens: &Self::Stats,
+        input_length: usize,
+        output_length: usize,
     ) -> Self::Stats {
         let (total_in_tokens, total_out_tokens) = total_tokens;
-        (total_in_tokens + input_length, total_out_tokens + output_length)
+        (
+            total_in_tokens + input_length,
+            total_out_tokens + output_length,
+        )
     }
 
     fn batch_max_weight(&self, total_tokens: &Self::Stats, _batch_size: usize) -> usize {
@@ -63,7 +70,11 @@ impl BatchType for FlashBatch {
         ((*total_in_tokens + *total_out_tokens) as f64 * self.nexttoken_gradient) as usize
     }
 
-    fn batch_initial_weight(&self, (total_in_tokens, _): &Self::Stats, _batch_size: usize) -> usize {
+    fn batch_initial_weight(
+        &self,
+        (total_in_tokens, _): &Self::Stats,
+        _batch_size: usize,
+    ) -> usize {
         (*total_in_tokens as f64 * self.nexttoken_gradient) as usize
     }
 
@@ -76,7 +87,10 @@ impl BatchType for FlashBatch {
     }
 
     fn exceeds_weight(
-        &self, tree: &BTreeSet<(usize, usize, usize)>, max_total_weight: usize, current_output_len: usize
+        &self,
+        tree: &BTreeSet<(usize, usize, usize)>,
+        max_total_weight: usize,
+        current_output_len: usize,
     ) -> bool {
         let mut in_sum = 0;
         // Work backwards from longest projected entry
@@ -90,17 +104,16 @@ impl BatchType for FlashBatch {
                 // Check if we breach max space for this segment
                 let seg_max_tokens = in_sum + (batch_size + 1) * this_out_len;
                 if seg_max_tokens as f64 * self.nexttoken_gradient > total_weight_limit {
-                    return true
+                    return true;
                 }
             }
         }
         false
     }
 
-    fn count_tokens(input_lengths: impl Iterator<Item=usize>, _: usize) -> usize {
+    fn count_tokens(input_lengths: impl Iterator<Item = usize>, _: usize) -> usize {
         input_lengths.sum()
     }
-
 }
 
 /// Regular rectangular padded
@@ -117,13 +130,15 @@ impl BatchType for PaddedBatch {
     type Stats = (usize, usize, usize);
 
     fn update_stats(
-        max_in_out_lengths: &Self::Stats, input_length: usize, output_length: usize
+        max_in_out_lengths: &Self::Stats,
+        input_length: usize,
+        output_length: usize,
     ) -> Self::Stats {
         let (max_input_length, max_output_length, total_in_tokens) = max_in_out_lengths;
         (
             max(*max_input_length, input_length),
             max(*max_output_length, output_length),
-            total_in_tokens + input_length
+            total_in_tokens + input_length,
         )
     }
 
@@ -133,7 +148,11 @@ impl BatchType for PaddedBatch {
         ((seq_len_upper_bound * batch_size) as f64 * self.nexttoken_gradient) as usize
     }
 
-    fn batch_initial_weight(&self, (max_input_length, _, _): &Self::Stats, batch_size: usize) -> usize {
+    fn batch_initial_weight(
+        &self,
+        (max_input_length, _, _): &Self::Stats,
+        batch_size: usize,
+    ) -> usize {
         ((*max_input_length * batch_size) as f64 * self.nexttoken_gradient) as usize
     }
 
@@ -143,13 +162,16 @@ impl BatchType for PaddedBatch {
         let quad_input_tokens = (input_tokens * max_input_length) as f64;
         let input_tokens = input_tokens as f64;
         let linear = input_tokens * self.prefill_linear_coef1;
-        let quadratic = input_tokens * self.prefill_quadratic_coef1 +
-            quad_input_tokens * self.prefill_quadratic_coef2;
+        let quadratic = input_tokens * self.prefill_quadratic_coef1
+            + quad_input_tokens * self.prefill_quadratic_coef2;
 
         f64::max(linear, quadratic) as usize
     }
 
-    fn percent_padding((max_input_length, _, total_in_tokens): &Self::Stats, batch_size: usize) -> f32 {
+    fn percent_padding(
+        (max_input_length, _, total_in_tokens): &Self::Stats,
+        batch_size: usize,
+    ) -> f32 {
         let total_toks = max_input_length * batch_size;
         match total_toks {
             0 => 0.0,
@@ -158,7 +180,10 @@ impl BatchType for PaddedBatch {
     }
 
     fn exceeds_weight(
-        &self, tree: &BTreeSet<(usize, usize, usize)>, max_total_weight: usize, current_output_len: usize
+        &self,
+        tree: &BTreeSet<(usize, usize, usize)>,
+        max_total_weight: usize,
+        current_output_len: usize,
     ) -> bool {
         let total_weight_limit = max_total_weight as f64;
         let mut max_in_len = 0;
@@ -170,14 +195,14 @@ impl BatchType for PaddedBatch {
                 // Check if we breach max space for this segment
                 let seg_max_tokens = (max_in_len + this_out_len) * (batch_size + 1);
                 if seg_max_tokens as f64 * self.nexttoken_gradient > total_weight_limit {
-                    return true
+                    return true;
                 }
             }
         }
         false
     }
 
-    fn count_tokens(input_lengths: impl Iterator<Item=usize>, batch_size: usize) -> usize {
+    fn count_tokens(input_lengths: impl Iterator<Item = usize>, batch_size: usize) -> usize {
         input_lengths.max().unwrap_or(0) * batch_size
     }
 }
