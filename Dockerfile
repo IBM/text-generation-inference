@@ -32,55 +32,6 @@ RUN dnf remove -y --disableplugin=subscription-manager \
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
 
-## CUDA Base ###################################################################
-FROM base as cuda-base
-
-# Ref: https://docs.nvidia.com/cuda/archive/12.1.0/cuda-toolkit-release-notes/
-ENV CUDA_VERSION=12.1.0 \
-    NV_CUDA_LIB_VERSION=12.1.0-1 \
-    NVIDIA_VISIBLE_DEVICES=all \
-    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
-    NV_CUDA_CUDART_VERSION=12.1.55-1 \
-    NV_CUDA_COMPAT_VERSION=530.30.02-1
-
-RUN dnf config-manager \
-       --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo \
-    && dnf install -y \
-        cuda-cudart-12-1-${NV_CUDA_CUDART_VERSION} \
-        cuda-compat-12-1-${NV_CUDA_COMPAT_VERSION} \
-    && echo "/usr/local/nvidia/lib" >> /etc/ld.so.conf.d/nvidia.conf \
-    && echo "/usr/local/nvidia/lib64" >> /etc/ld.so.conf.d/nvidia.conf \
-    && dnf clean all
-
-ENV CUDA_HOME="/usr/local/cuda" \
-    PATH="/usr/local/nvidia/bin:${CUDA_HOME}/bin:${PATH}" \
-    LD_LIBRARY_PATH="/usr/local/nvidia/lib:/usr/local/nvidia/lib64:$CUDA_HOME/lib64:$CUDA_HOME/extras/CUPTI/lib64:${LD_LIBRARY_PATH}"
-
-## CUDA Development ############################################################
-FROM cuda-base as cuda-devel
-
-# Ref: https://developer.nvidia.com/nccl/nccl-legacy-downloads
-ENV NV_CUDA_CUDART_DEV_VERSION=12.1.55-1 \
-    NV_NVML_DEV_VERSION=12.1.55-1 \
-    NV_LIBCUBLAS_DEV_VERSION=12.1.0.26-1 \
-    NV_LIBNPP_DEV_VERSION=12.0.2.50-1 \
-    NV_LIBNCCL_DEV_PACKAGE_VERSION=2.18.3-1+cuda12.1
-
-RUN dnf config-manager \
-       --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo \
-    && dnf install -y \
-        cuda-command-line-tools-12-1-${NV_CUDA_LIB_VERSION} \
-        cuda-libraries-devel-12-1-${NV_CUDA_LIB_VERSION} \
-        cuda-minimal-build-12-1-${NV_CUDA_LIB_VERSION} \
-        cuda-cudart-devel-12-1-${NV_CUDA_CUDART_DEV_VERSION} \
-        cuda-nvml-devel-12-1-${NV_NVML_DEV_VERSION} \
-        libcublas-devel-12-1-${NV_LIBCUBLAS_DEV_VERSION} \
-        libnpp-devel-12-1-${NV_LIBNPP_DEV_VERSION} \
-        libnccl-devel-${NV_LIBNCCL_DEV_PACKAGE_VERSION} \
-    && dnf clean all
-
-ENV LIBRARY_PATH="$CUDA_HOME/lib64/stubs"
-
 ## Rust builder ################################################################
 # Using bookworm for compilation so the rust binaries get linked against libssl.so.3
 FROM rust:1.78-bookworm as rust-builder
@@ -173,7 +124,7 @@ COPY integration_tests integration_tests
 RUN cd integration_tests && make install
 
 ## Python builder #############################################################
-FROM cuda-devel as python-builder
+FROM base as python-builder
 ARG PYTORCH_INDEX
 ARG PYTORCH_VERSION
 ARG PYTHON_VERSION
@@ -249,7 +200,7 @@ COPY server server
 RUN cd server && make gen-server && pip install ".[quantize]" --no-cache-dir
 
 # temp: install newer transformers lib that optimum clashes with
-RUN pip install transformers==4.40.0 tokenizers==0.19.1 --no-cache-dir
+RUN pip install transformers==4.40.0 tokenizers==0.19.1 'numpy<2' --no-cache-dir
 
 # Patch codegen model changes into transformers 4.35
 RUN cp server/transformers_patch/modeling_codegen.py ${SITE_PACKAGES}/transformers/models/codegen/modeling_codegen.py
