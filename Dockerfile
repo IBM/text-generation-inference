@@ -5,11 +5,7 @@ ARG PYTORCH_INDEX="https://download.pytorch.org/whl"
 # ARG PYTORCH_INDEX="https://download.pytorch.org/whl/nightly"
 ARG AUTO_GPTQ_VERSION=0.7.1
 
-# match PyTorch version that was used to compile flash-attention v2 pre-built wheels
-# e.g. flash-attn v2.5.2 => torch ['1.12.1', '1.13.1', '2.0.1', '2.1.2', '2.2.0', '2.3.0.dev20240126']
-# https://github.com/Dao-AILab/flash-attention/blob/v2.5.2/.github/workflows/publish.yml#L47
-# use nightly build index for torch .dev pre-release versions
-ARG PYTORCH_VERSION=2.2.1
+ARG PYTORCH_VERSION=2.1.2
 
 ARG PYTHON_VERSION=3.11
 
@@ -202,7 +198,7 @@ ENV PATH=/opt/tgis/bin/:$PATH
 RUN pip install ninja==1.11.1.1 --no-cache-dir
 RUN pip install packaging --no-cache-dir
 # There is no rocm 6.0 wheel in the python repo as of March 1st 2023
-RUN pip install "https://repo.radeon.com/rocm/manylinux/rocm-rel-6.0/torch-${PYTORCH_VERSION}+rocm6.0-cp311-cp311-linux_x86_64.whl" --no-cache-dir
+RUN pip install "https://repo.radeon.com/rocm/manylinux/rocm-rel-6.1/torch-${PYTORCH_VERSION}+rocm6.1-cp311-cp311-linux_x86_64.whl" "https://repo.radeon.com/rocm/manylinux/rocm-rel-6.1/pytorch_triton_rocm-2.1.0+rocm6.1.4d510c3a44-cp311-cp311-linux_x86_64.whl" --no-cache-dir
 
 ## Install auto-gptq ###########################################################
 ## Uncomment if a custom autogptq build is required
@@ -250,7 +246,7 @@ RUN pip install auto-gptq=="${AUTO_GPTQ_VERSION}" --no-cache-dir
 RUN dnf install -y git && dnf clean all
 COPY proto proto
 COPY server server
-RUN cd server && make gen-server && pip install ".[accelerate, ibm-fms, quantize]" --no-cache-dir
+RUN cd server && make gen-server && pip install ".[quantize]" --no-cache-dir
 
 # temp: install newer transformers lib that optimum clashes with
 RUN pip install transformers==4.40.0 tokenizers==0.19.1 --no-cache-dir
