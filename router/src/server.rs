@@ -222,7 +222,7 @@ impl<'a, B: BatchType> BatchConfigValidator<'a, B> {
             self.batch_type.prefill_weight(&single_request_stats, 1);
         if max_batch_weight < single_request_prefill_weight {
             panic!(
-                "The provided max_sequence length ({}) results in a prefill batch weight that exceeds the estimated capacity (max_batch_weight: {})",
+                "The provided max_sequence length ({}) results in a prefill batch weight that exceeds the estimated capacity ({})",
                 max_sequence_length, max_batch_weight
             )
         }
