@@ -232,7 +232,7 @@ impl<'a, B: BatchType> BatchConfigValidator<'a, B> {
             .batch_initial_weight(&single_request_stats, 1);
         if max_batch_weight < single_request_nexttoken_weight {
             panic!(
-                "The provided max_sequence length ({}) results in a next-token batch weight that exceeds the estimated capacity (max_batch_weight: {})",
+                "The provided max_sequence length ({}) results in a next-token batch weight that exceeds the estimated capacity ({})",
                 max_sequence_length, max_batch_weight
             )
         }
