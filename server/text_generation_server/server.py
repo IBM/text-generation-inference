@@ -409,13 +409,15 @@ def serve(
                 memory_scaling_model = estimate_memory()
                 compile()
 
-            max_input = memory_scaling_model.max_input_len_for_nt(1, max_sequence_length-1, sys.maxsize)
-            max_output = memory_scaling_model.max_output_len_for_nt(1, max_sequence_length-1, sys.maxsize)
-
             if local_rank == 0:
+                # For a batch of size 1 and an output of 1, get max input limited by max_sequence_length
+                max_input  = memory_scaling_model.max_input_len_for_nt(1, 1, max_sequence_length)
+                # For a batch of size 1 and an input of 1, get max output limited by max_sequence_length
+                max_output = memory_scaling_model.max_output_len_for_nt(1, 1, max_sequence_length)
+                max_theoretical_len = min(max_input, max_output) + 1
                 print(
                     "Maximum possible sequence length given available memory (for batch size 1): "
-                    f"{min(max_input, max_output)}"
+                    f"{max_theoretical_len}"
                 )
 
         elif ESTIMATE_MEMORY == "manual":

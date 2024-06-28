@@ -222,8 +222,8 @@ impl<'a, B: BatchType> BatchConfigValidator<'a, B> {
             self.batch_type.prefill_weight(&single_request_stats, 1);
         if max_batch_weight < single_request_prefill_weight {
             panic!(
-                "max_batch_weight ({}) not large enough for (prefill) max_sequence_length ({})",
-                max_batch_weight, max_sequence_length
+                "The provided max_sequence length ({}) results in a prefill batch weight that exceeds the estimated capacity ({})",
+                max_sequence_length, max_batch_weight
             )
         }
 
@@ -232,8 +232,8 @@ impl<'a, B: BatchType> BatchConfigValidator<'a, B> {
             .batch_initial_weight(&single_request_stats, 1);
         if max_batch_weight < single_request_nexttoken_weight {
             panic!(
-                "max_batch_weight ({}) not large enough for (next-token) max_sequence_length ({})",
-                max_batch_weight, max_sequence_length
+                "The provided max_sequence length ({}) results in a next-token batch weight that exceeds the estimated capacity ({})",
+                max_sequence_length, max_batch_weight
             )
         }
     }
