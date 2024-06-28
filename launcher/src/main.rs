@@ -522,7 +522,7 @@ fn get_max_sequence_length(max_sequence_length: Option<usize>, config_path: &Pat
         source = "default";
         DEFAULT_MAX_SEQUENCE_LENGTH
     });
-    info!("Using {} max_sequence_length: {}",source, result);
+    info!("Using {} max_sequence_length: {}", source, result);
     return result;    
 }
 
