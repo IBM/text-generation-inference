@@ -22,8 +22,7 @@ safetensors = "^0.4.3"
 sentencepiece = "^0.2.0"
 datasets = { version = "^2.15.0", optional = true }
 texttable = { version = "^1.7.0", optional = true }
-# optimum 1.19 clashes with this atm
-# transformers = "4.40.0"
+transformers = "^4.40.0"
 optimum = { version = "^1.19.0", extras = ["onnxruntime-gpu"], optional = true }
 onnxruntime = { version = "1.18.0", optional = true }
 onnxruntime-gpu = { version = "1.18.0", optional = true }
