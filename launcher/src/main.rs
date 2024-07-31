@@ -870,19 +870,24 @@ fn save_fast_tokenizer(
     info!("Saving fast tokenizer for `{model_name}` to `{save_path}`");
     let model_name = model_name.escape_default();
     let revision = revision.map(|v| v.escape_default());
-    let code = if let Some(revision) = revision {
-        format!(
-            "from transformers import AutoTokenizer; \
-            AutoTokenizer.from_pretrained(\"{model_name}\", \
-            revision=\"{revision}\", local_files_only=True).save_pretrained(\"{save_path}\")"
-        )
+    let revision_arg = if let Some(revision) = revision {
+        format!("revision=\"{revision}\", ")
     } else {
-        format!(
-            "from transformers import AutoTokenizer; \
-            AutoTokenizer.from_pretrained(\"{model_name}\").save_pretrained(\"{save_path}\")"
-        )
+        "".to_string()
     };
-    match Command::new("python").args(["-c", &code]).status() {
+    let code = format!(
+        "from transformers import AutoTokenizer; \
+        AutoTokenizer.from_pretrained( \
+            \"{model_name}\", \
+            {revision_arg} \
+            local_files_only=True \
+        ).save_pretrained(\"{save_path}\")"
+    );
+    match Command::new("python")
+        .args(["-c", &code])
+        .env("HF_HUB_OFFLINE", "1")
+        .status()
+    {
         Ok(status) => {
             if status.success() {
                 Ok(())
