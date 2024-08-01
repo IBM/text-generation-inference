@@ -1419,14 +1419,13 @@ files = [
 
 [[package]]
 name = "nvidia-nvjitlink-cu12"
-version = "12.5.82"
+version = "12.6.20"
 description = "Nvidia JIT LTO Library"
 optional = true
 python-versions = ">=3"
 files = [
-    {file = "nvidia_nvjitlink_cu12-12.5.82-py3-none-manylinux2014_aarch64.whl", hash = "sha256:98103729cc5226e13ca319a10bbf9433bbbd44ef64fe72f45f067cacc14b8d27"},
-    {file = "nvidia_nvjitlink_cu12-12.5.82-py3-none-manylinux2014_x86_64.whl", hash = "sha256:f9b37bc5c8cf7509665cb6ada5aaa0ce65618f2332b7d3e78e9790511f111212"},
-    {file = "nvidia_nvjitlink_cu12-12.5.82-py3-none-win_amd64.whl", hash = "sha256:e782564d705ff0bf61ac3e1bf730166da66dd2fe9012f111ede5fc49b64ae697"},
+    {file = "nvidia_nvjitlink_cu12-12.6.20-py3-none-manylinux2014_x86_64.whl", hash = "sha256:562ab97ea2c23164823b2a89cb328d01d45cb99634b8c65fe7cd60d14562bd79"},
+    {file = "nvidia_nvjitlink_cu12-12.6.20-py3-none-win_amd64.whl", hash = "sha256:ed3c43a17f37b0c922a919203d2d36cbef24d41cc3e6b625182f8b58203644f6"},
 ]
 
 [[package]]
@@ -1553,13 +1552,13 @@ sympy = "*"
 
 [[package]]
 name = "optimum"
-version = "1.21.2"
+version = "1.20.0"
 description = "Optimum Library is an extension of the Hugging Face Transformers library, providing a framework to integrate third-party libraries from Hardware Partners and interface with their specific functionality."
 optional = true
 python-versions = ">=3.7.0"
 files = [
-    {file = "optimum-1.21.2-py3-none-any.whl", hash = "sha256:8b3633b9312413ceac5156294a2a0cd221268baf5a2c593f4d54ec20bff296d8"},
-    {file = "optimum-1.21.2.tar.gz", hash = "sha256:037e65d265237809fac69e9003215c60cf6de56e97c62ff7565abab4a94a64ce"},
+    {file = "optimum-1.20.0-py3-none-any.whl", hash = "sha256:0c0d0746043c95e22cf3586946d7408d353f10c0486f1c7d2d11084a5cfc0ede"},
+    {file = "optimum-1.20.0.tar.gz", hash = "sha256:b64c7536fe738db9b56605105efe72006401ad2aa00cb499ae407f2e06f3043b"},
 ]
 
 [package.dependencies]
@@ -1571,14 +1570,14 @@ datasets = [
 ]
 evaluate = {version = "*", optional = true, markers = "extra == \"onnxruntime-gpu\""}
 huggingface-hub = ">=0.8.0"
-numpy = "<2.0"
+numpy = "*"
 onnx = {version = "*", optional = true, markers = "extra == \"onnxruntime-gpu\""}
 onnxruntime-gpu = {version = ">=1.11.0", optional = true, markers = "extra == \"onnxruntime-gpu\""}
 packaging = "*"
 protobuf = {version = ">=3.20.1", optional = true, markers = "extra == \"onnxruntime-gpu\""}
 sympy = "*"
 torch = ">=1.11"
-transformers = {version = ">=4.26.0,<4.43.0", extras = ["sentencepiece"]}
+transformers = {version = ">=4.26.0,<4.42.0", extras = ["sentencepiece"]}
 
 [package.extras]
 amd = ["optimum-amd"]
@@ -1591,16 +1590,15 @@ exporters-gpu = ["onnx", "onnxruntime-gpu", "timm"]
 exporters-tf = ["h5py", "numpy (<1.24.0)", "onnx", "onnxruntime", "tensorflow (>=2.4,<=2.12.1)", "tf2onnx", "timm", "transformers[sentencepiece] (>=4.26.0,<4.38.0)"]
 furiosa = ["optimum-furiosa"]
 graphcore = ["optimum-graphcore"]
-habana = ["optimum-habana", "transformers (>=4.40.0,<4.41.0)"]
-intel = ["optimum-intel (>=1.18.0)"]
-ipex = ["optimum-intel[ipex] (>=1.18.0)"]
-neural-compressor = ["optimum-intel[neural-compressor] (>=1.18.0)"]
+habana = ["optimum-habana", "transformers (>=4.38.0,<4.39.0)"]
+intel = ["optimum-intel (>=1.16.0)"]
+neural-compressor = ["optimum-intel[neural-compressor] (>=1.16.0)"]
 neuron = ["optimum-neuron[neuron] (>=0.0.20)", "transformers (>=4.36.2,<4.42.0)"]
 neuronx = ["optimum-neuron[neuronx] (>=0.0.20)", "transformers (>=4.36.2,<4.42.0)"]
-nncf = ["optimum-intel[nncf] (>=1.18.0)"]
+nncf = ["optimum-intel[nncf] (>=1.16.0)"]
 onnxruntime = ["datasets (>=1.2.1)", "evaluate", "onnx", "onnxruntime (>=1.11.0)", "protobuf (>=3.20.1)"]
 onnxruntime-gpu = ["accelerate", "datasets (>=1.2.1)", "evaluate", "onnx", "onnxruntime-gpu (>=1.11.0)", "protobuf (>=3.20.1)"]
-openvino = ["optimum-intel[openvino] (>=1.18.0)"]
+openvino = ["optimum-intel[openvino] (>=1.16.0)"]
 quality = ["black (>=23.1,<24.0)", "ruff (==0.1.5)"]
 tests = ["Pillow", "accelerate", "diffusers (>=0.17.0)", "einops", "invisible-watermark", "parameterized", "pytest (<=8.0.0)", "pytest-xdist", "requests", "rjieba", "sacremoses", "scikit-learn", "timm", "torchaudio", "torchvision"]
 
@@ -2962,4 +2960,4 @@ quantize = ["datasets", "texttable"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.11.0,<3.13"
-content-hash = "dc99409af48bbee6a7c60969cd2b0a4186223c267ac0c450858ec0aad5c1d84a"
+content-hash = "cef67e9c46253c6da3b7b63c8c79c1b880a5831f339c003eb25124e05c9e05b3"
