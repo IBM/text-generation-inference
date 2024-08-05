@@ -22,15 +22,21 @@ safetensors = "^0.4.3"
 sentencepiece = "^0.2.0"
 datasets = { version = "^2.15.0", optional = true }
 texttable = { version = "^1.7.0", optional = true }
-# optimum 1.19 clashes with this atm
-# transformers = "4.40.0"
-optimum = { version = "^1.19.0", extras = ["onnxruntime-gpu"], optional = true }
-onnxruntime = { version = "^1.17.3", optional = true }
-onnxruntime-gpu = { version = "^1.17.1", optional = true }
+# transformers pinned due to breakage from using `Cache` class for KV cache
+transformers = "4.40.2"
+# optimum pinned until transformers can be updated to avoid
+#    cannot import name 'OfflineModeIsEnabled' from 'huggingface_hub.errors'
+optimum = { version = "1.20.0", extras = ["onnxruntime-gpu"], optional = true }
+# onnxruntime pinned to <1.18.1 which uses cuDNN 9 until we upgrade torch to 2.4
+onnxruntime = { version = "1.18.0", optional = true }
+onnxruntime-gpu = { version = "1.18.0", optional = true }
 onnx = { version = "^1.16.0", optional = true }
 einops = "^0.7.0"
 ibm-fms = { version = "^0.0", optional = true }
 fms-extras = { git = "https://github.com/foundation-model-stack/fms-extras", rev = "d41f8a34c9841aa3c4c59f17b5e7f3cb365f49de", optional = true }
+
+# Hold back breaking changes from numpy 2.0
+numpy = "<2.0"
 
 # Explicitly install some transitive dependencies to avoid CVEs
 jinja2 = ">=3.1.3"
