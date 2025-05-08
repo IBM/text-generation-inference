@@ -23,7 +23,7 @@ sentencepiece = "^0.2.0"
 datasets = { version = "^2.15.0", optional = true }
 texttable = { version = "^1.7.0", optional = true }
 # transformers pinned due to breakage from using `Cache` class for KV cache
-transformers = "4.48.0"
+transformers = "4.50.0"
 # optimum pinned until transformers can be updated to avoid
 #    cannot import name 'OfflineModeIsEnabled' from 'huggingface_hub.errors'
 # optimum = { version = "1.20.0", extras = ["onnxruntime-gpu"], optional = true }

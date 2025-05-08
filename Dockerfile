@@ -44,7 +44,8 @@ ENV CUDA_VERSION=12.1.0 \
     NV_CUDA_CUDART_VERSION=12.1.55-1 \
     NV_CUDA_COMPAT_VERSION=530.30.02-1
 
-RUN dnf config-manager \
+RUN dnf install -y dnf-plugins-core && \
+    dnf config-manager \
        --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo \
     && dnf install -y \
         cuda-cudart-12-1-${NV_CUDA_CUDART_VERSION} \
