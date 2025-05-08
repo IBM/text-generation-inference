@@ -44,7 +44,8 @@ ENV CUDA_VERSION=12.1.0 \
     NV_CUDA_CUDART_VERSION=12.1.55-1 \
     NV_CUDA_COMPAT_VERSION=530.30.02-1
 
-RUN dnf config-manager \
+RUN dnf install -y dnf-plugins-core && \
+    dnf config-manager \
        --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo \
     && dnf install -y \
         cuda-cudart-12-1-${NV_CUDA_CUDART_VERSION} \
@@ -187,7 +188,7 @@ ARG MINIFORGE_VERSION=23.11.0-0
 # consistent arch support anywhere we compile CUDA code
 ENV TORCH_CUDA_ARCH_LIST="8.0;8.6+PTX;8.9"
 
-RUN dnf install -y unzip git ninja-build && dnf clean all
+RUN dnf install -y unzip git ninja-build which && dnf clean all
 
 RUN curl -fsSL -v -o ~/miniforge3.sh -O  "https://github.com/conda-forge/miniforge/releases/download/${MINIFORGE_VERSION}/Miniforge3-$(uname)-$(uname -m).sh" && \
     chmod +x ~/miniforge3.sh && \
@@ -211,6 +212,7 @@ ARG FLASH_ATT_VERSION=v2.5.6
 
 WORKDIR /usr/src/flash-attention-v2
 
+RUN pip install -U packaging --no-cache-dir
 # Download the wheel or build it if a pre-compiled release doesn't exist
 # MAX_JOBS: For CI, limit number of parallel compilation threads otherwise the github runner goes OOM
 RUN MAX_JOBS=2  pip --verbose wheel --no-deps flash-attn==${FLASH_ATT_VERSION} \

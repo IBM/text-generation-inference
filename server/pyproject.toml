@@ -39,7 +39,7 @@ fms-extras = { git = "https://github.com/foundation-model-stack/fms-extras", rev
 numpy = "<2.0"
 
 # Explicitly install some transitive dependencies to avoid CVEs
-jinja2 = ">=3.1.4"
+jinja2 = ">=3.1.5"
 aiohttp = ">=3.10.2"
 mpmath = ">=1.3.0"
 requests = ">=2.31.0"
