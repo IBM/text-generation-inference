@@ -188,7 +188,7 @@ ARG MINIFORGE_VERSION=23.11.0-0
 # consistent arch support anywhere we compile CUDA code
 ENV TORCH_CUDA_ARCH_LIST="8.0;8.6+PTX;8.9"
 
-RUN dnf install -y unzip git ninja-build && dnf clean all
+RUN dnf install -y unzip git ninja-build which && dnf clean all
 
 RUN curl -fsSL -v -o ~/miniforge3.sh -O  "https://github.com/conda-forge/miniforge/releases/download/${MINIFORGE_VERSION}/Miniforge3-$(uname)-$(uname -m).sh" && \
     chmod +x ~/miniforge3.sh && \
