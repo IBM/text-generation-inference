@@ -8,7 +8,7 @@ from typing import Optional, Any
 from transformers.models.auto.auto_factory import _BaseAutoModelClass
 
 from text_generation_server.models import FLASH_ATTENTION, PAGED_ATTENTION
-from text_generation_server.utils import Weights
+from text_generation_server.utils import Weights, FastWeights
 
 from text_generation_server.inference_engine import BaseInferenceEngine
 from text_generation_server.utils.dist import initialize_torch_distributed
@@ -123,9 +123,15 @@ class InferenceEngine(BaseInferenceEngine):
         if not filenames:
             raise ValueError("No safetensors weights found - required for tgis_native engine")
 
-        weights = Weights(
-            filenames, device=self.device, dtype=dtype, process_group=self.process_group, aliases=aliases
-        )
+        use_fst = os.getenv("USE_FST")
+        if use_fst is not None and use_fst == "1":
+            weights = FastWeights(
+                filenames, device=self.device, dtype=dtype, pg=self.process_group, aliases=aliases,
+            )
+        else:
+            weights = Weights(
+                filenames, device=self.device, dtype=dtype, process_group=self.process_group, aliases=aliases
+            )
 
         if quantize == "gptq":
             weights._set_gptq_params(model_config, model_path)
